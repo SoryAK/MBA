@@ -1,0 +1,24 @@
+{
+  "name": "mba",
+  "version": "0.1.0",
+  "description": "Model Behavioral Adapter (MBA) — per-model behavior framework, BCB/TCB engine, global config service, and MCP control plane",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run build --workspaces --if-present",
+    "start:service": "npm run start --workspace @mba-ai/core"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}
