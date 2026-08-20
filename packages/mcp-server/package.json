@@ -1,0 +1,38 @@
+{
+  "name": "@mba-ai/mcp-server",
+  "version": "0.1.0",
+  "description": "MBA MCP control plane — read and tune the global MBA config from any MCP host (VS Code Copilot, Cline, Claude Desktop)",
+  "type": "module",
+  "main": "./dist/server.js",
+  "bin": {
+    "mba-mcp-server": "./dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx src/server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "SoryAK",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

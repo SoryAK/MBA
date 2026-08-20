@@ -1,0 +1,48 @@
+{
+  "name": "@mba-ai/core",
+  "version": "0.1.0",
+  "description": "Model Behavioral Adapter (MBA) framework — per-model behavior resolution, BCB/TCB tool-circuit-breaker engine, and the global MBA config service",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./bcb/rules/repeat-run.js": {
+      "types": "./dist/bcb/rules/repeat-run.d.ts",
+      "import": "./dist/bcb/rules/repeat-run.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx src/service/main.ts",
+    "start": "tsx src/service/main.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "SoryAK",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
