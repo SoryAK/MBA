@@ -289,7 +289,7 @@ process** (not per-project). Files are truth under `~/.mba/`:
 └── mba/service.json                 # discovery: { port, pid, startedAt }
 ```
 
-- **Run it:** `npm run dev -w @the original project/mba` (or `start`). Binds
+- **Run it:** `npm run start:service` from the MBA repo root. Binds
   `127.0.0.1:0` (OS-assigned port) and writes `service.json` for discovery.
   Env: `MBA_BASE_DIR` (default `~/.mba`), `LEGACY_MBA_LEGACY_TCB`
   (explicit legacy file for first-boot migration).
