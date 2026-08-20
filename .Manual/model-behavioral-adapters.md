@@ -289,7 +289,7 @@ process** (not per-project). Files are truth under `~/.cyard/`:
 └── mba/service.json                 # discovery: { port, pid, startedAt }
 ```
 
-- **Run it:** `npm run dev -w @c-yard/mba` (or `start`). Binds
+- **Run it:** `npm run start:service` from the MBA repo root. Binds
   `127.0.0.1:0` (OS-assigned port) and writes `service.json` for discovery.
   Env: `CYARD_MBA_BASE_DIR` (default `~/.cyard`), `CYARD_MBA_LEGACY_TCB`
   (explicit legacy file for first-boot migration).
