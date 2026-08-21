@@ -1,6 +1,6 @@
 # 0093 — Model plane ownership: MBA owns the model, the proxy is a DNA-gated tenant
 
-- **Status:** Proposed
+- **Status:** Proposed — Phase 3 (proxy DNA gate / 409) superseded by [ADR-0094](0094-proxy-dna-gate-dropped.md); Phases 1, 2, 4 retained
 - **Date:** 2026-08-20
 - **Deciders:** user + agent
 - **Tags:** infra, proxy, local-llm, mba, model-management, layering
