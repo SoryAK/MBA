@@ -8,8 +8,10 @@
  *   - mba_resolve_config  — effective global MBA config from the service
  *   - mba_set_rules       — update global TCB rules via the service
  *   - mba_server_status   — service health/liveness probe
+ *   - mba_list_models     — model plane listing + live loaded state (ADR-0093)
+ *   - mba_ensure_model    — user-triggered model switch (ADR-0093, OFF by default)
  *
- * The three service tools are thin HTTP wrappers: the global MBA service
+ * The service tools are thin HTTP wrappers: the global MBA service
  * (ADR-0092) stays the single source of truth and the only file writer.
  */
 
@@ -23,7 +25,9 @@ import {
 import { resolve } from "node:path";
 import { loadAdapters } from "./adapter/loader.js";
 import { resolveServiceBaseUrl } from "./service-client.js";
+import { createEnsureModelHandler } from "./tools/ensure-model.js";
 import { createFileMetadataHandler } from "./tools/file-metadata.js";
+import { createListModelHandler } from "./tools/list-models.js";
 import { createModelRegistryHandler } from "./tools/model-registry.js";
 import { createResolveConfigHandler } from "./tools/resolve-config.js";
 import { createServerStatusHandler } from "./tools/server-status.js";
@@ -138,6 +142,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
+      {
+        name: "mba_list_models",
+        description:
+          "List the switchable models from the central model home (~/models/adapters) " +
+          "with their live loaded state, as seen by the MBA service. Each entry: id, " +
+          "name, family, modelFile, and loaded (true if that model is what the " +
+          "upstream llama-server currently has loaded). Read-only. Requires the MBA " +
+          "service to be running; returns a clear error if it is unreachable.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "mba_ensure_model",
+        description:
+          "Ask the MBA service to make sure a specific model is the loaded one " +
+          "(ADR-0093). Idempotent: if the model is already loaded this is a no-op. " +
+          "Model switching is OFF by default — until the service is armed with " +
+          "MBA_MODEL_SWITCH=on, this returns a 409 'disabled' error. Unknown model " +
+          "ids return 404. This is the user-triggered switch; the proxy never " +
+          "switches models on its own.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Model id from the adapter tree (see mba_list_models)",
+            },
+          },
+          required: ["id"],
+        },
+      },
     ],
   };
 });
@@ -147,6 +184,8 @@ const handleModelRegistry = createModelRegistryHandler(adapters);
 const handleResolveConfig = createResolveConfigHandler();
 const handleSetRules = createSetRulesHandler();
 const handleServerStatus = createServerStatusHandler();
+const handleListModels = createListModelHandler();
+const handleEnsureModel = createEnsureModelHandler();
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const args = (request.params.arguments ?? {}) as Record<string, unknown>;
@@ -176,6 +215,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     case "mba_server_status": {
       result = await handleServerStatus();
+      break;
+    }
+    case "mba_list_models": {
+      result = await handleListModels();
+      break;
+    }
+    case "mba_ensure_model": {
+      result = await handleEnsureModel({
+        id: typeof args.id === "string" ? args.id : "",
+      });
       break;
     }
     default:

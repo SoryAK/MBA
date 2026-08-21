@@ -4,6 +4,8 @@ import { createResolveConfigHandler } from "./resolve-config.js";
 import { createSetRulesHandler } from "./set-rules.js";
 import { createServerStatusHandler } from "./server-status.js";
 import { createModelRegistryHandler } from "./model-registry.js";
+import { createListModelHandler } from "./list-models.js";
+import { createEnsureModelHandler } from "./ensure-model.js";
 
 function okJson(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -138,5 +140,76 @@ describe("mba_server_status", () => {
     });
     const out = await handle();
     expect(out.error).toMatch(/service unreachable/);
+  });
+});
+
+describe("mba_list_models", () => {
+  it("returns the model plane listing on success", async () => {
+    const handle = createListModelHandler({
+      baseUrl: "http://x",
+      fetchImpl: (async () =>
+        okJson({
+          models: [
+            { id: "qwen3-coder-30b", name: "Qwen3 Coder 30B", family: "qwen3-coder", modelFile: "/m.gguf", loaded: true },
+            { id: "llama3-8b", name: "Llama 3 8B", family: "llama3", modelFile: "/l.gguf", loaded: false },
+          ],
+        })) as typeof fetch,
+    });
+    const out = await handle();
+    expect(out.error).toBeUndefined();
+    if (out.error !== undefined) throw new Error("unreachable");
+    expect(out.models).toHaveLength(2);
+    expect(out.models[0]).toMatchObject({ id: "qwen3-coder-30b", loaded: true });
+  });
+
+  it("surfaces a structured error when the service is unreachable", async () => {
+    const handle = createListModelHandler({
+      baseUrl: "http://x",
+      fetchImpl: (async () => {
+        throw new Error("fetch failed");
+      }) as typeof fetch,
+    });
+    const out = await handle();
+    expect(out.error).toMatch(/service unreachable/);
+  });
+});
+
+describe("mba_ensure_model", () => {
+  it("returns the ensure result on success", async () => {
+    const handle = createEnsureModelHandler({
+      baseUrl: "http://x",
+      fetchImpl: (async () => okJson({ status: "loaded", id: "qwen3-coder-30b" })) as typeof fetch,
+    });
+    const out = await handle({ id: "qwen3-coder-30b" });
+    expect(out.error).toBeUndefined();
+    expect(out).toMatchObject({ status: "loaded", id: "qwen3-coder-30b" });
+  });
+
+  it("surfaces the 409 disabled message", async () => {
+    const handle = createEnsureModelHandler({
+      baseUrl: "http://x",
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({ error: "model switching is disabled (set MBA_MODEL_SWITCH=on to arm)" }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        )) as typeof fetch,
+    });
+    const out = await handle({ id: "qwen3-coder-30b" });
+    expect(out.error).toMatch(/HTTP 409/);
+    expect(out.error).toMatch(/disabled/);
+  });
+
+  it("surfaces the 404 unknown-id message", async () => {
+    const handle = createEnsureModelHandler({
+      baseUrl: "http://x",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ status: "unknown", id: "gpt-9" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+    const out = await handle({ id: "gpt-9" });
+    expect(out.error).toMatch(/HTTP 404/);
+    expect(out.error).toMatch(/gpt-9/);
   });
 });

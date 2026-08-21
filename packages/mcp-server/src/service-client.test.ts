@@ -8,6 +8,8 @@ import {
   fetchResolveConfig,
   fetchSetRules,
   fetchStatus,
+  fetchModels,
+  fetchEnsureModel,
 } from "./service-client.js";
 
 function okJson(body: unknown): Response {
@@ -183,6 +185,78 @@ describe("service-client", () => {
       });
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.error).toMatch(/service unreachable/);
+    });
+  });
+
+  describe("model plane calls (ADR-0093 Phase 2)", () => {
+    it("fetchModels returns the parsed catalog on 200", async () => {
+      const res = await fetchModels({
+        baseUrl: "http://x",
+        fetchImpl: (async () =>
+          okJson({
+            models: [
+              { id: "qwen3-coder-30b", name: "Qwen3 Coder 30B", family: "qwen3-coder", modelFile: "/m.gguf", loaded: true },
+            ],
+          })) as typeof fetch,
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.data.models[0]?.id).toBe("qwen3-coder-30b");
+    });
+
+    it("fetchEnsureModel POSTs the id and returns the result on 200", async () => {
+      let seenInit: RequestInit | undefined;
+      const res = await fetchEnsureModel(
+        {
+          baseUrl: "http://x",
+          fetchImpl: (async (_url: string, init?: RequestInit) => {
+            seenInit = init;
+            return okJson({ status: "switched", id: "qwen3-coder-30b" });
+          }) as typeof fetch,
+        },
+        "qwen3-coder-30b",
+      );
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.data.status).toBe("switched");
+      expect(seenInit?.method).toBe("POST");
+      expect(JSON.parse(String(seenInit?.body))).toEqual({ id: "qwen3-coder-30b" });
+    });
+
+    it("fetchEnsureModel surfaces a 409 disabled body as a structured error", async () => {
+      const res = await fetchEnsureModel(
+        {
+          baseUrl: "http://x",
+          fetchImpl: (async () =>
+            new Response(
+              JSON.stringify({ error: "model switching is disabled (set MBA_MODEL_SWITCH=on to arm)" }),
+              { status: 409, headers: { "content-type": "application/json" } },
+            )) as typeof fetch,
+        },
+        "qwen3-coder-30b",
+      );
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error).toMatch(/HTTP 409/);
+        expect(res.error).toMatch(/disabled/);
+      }
+    });
+
+    it("fetchEnsureModel surfaces a 404 unknown-id body as a structured error", async () => {
+      const res = await fetchEnsureModel(
+        {
+          baseUrl: "http://x",
+          fetchImpl: (async () =>
+            new Response(JSON.stringify({ status: "unknown", id: "gpt-9" }), {
+              status: 404,
+              headers: { "content-type": "application/json" },
+            })) as typeof fetch,
+        },
+        "gpt-9",
+      );
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error).toMatch(/HTTP 404/);
+        expect(res.error).toMatch(/gpt-9/);
+      }
     });
   });
 });

@@ -53,6 +53,22 @@ export interface MbaStatusResult {
   };
 }
 
+export interface MbaModelEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly family?: string;
+  readonly modelFile?: string;
+  readonly loaded: boolean;
+}
+
+export interface MbaModelsResult {
+  readonly models: MbaModelEntry[];
+}
+
+export type MbaEnsureModelResult =
+  | { readonly status: "loaded"; readonly id: string }
+  | { readonly status: "switched"; readonly id: string };
+
 export type ServiceCallResult<T> =
   | { readonly ok: true; readonly data: T }
   | { readonly ok: false; readonly error: string };
@@ -167,4 +183,20 @@ export function fetchStatus(
   opts: MbaServiceClientOptions,
 ): Promise<ServiceCallResult<MbaStatusResult>> {
   return callService<MbaStatusResult>(opts, "/status");
+}
+
+export function fetchModels(
+  opts: MbaServiceClientOptions,
+): Promise<ServiceCallResult<MbaModelsResult>> {
+  return callService<MbaModelsResult>(opts, "/models");
+}
+
+export function fetchEnsureModel(
+  opts: MbaServiceClientOptions,
+  id: string,
+): Promise<ServiceCallResult<MbaEnsureModelResult>> {
+  return callService<MbaEnsureModelResult>(opts, "/models/ensure", {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
 }
