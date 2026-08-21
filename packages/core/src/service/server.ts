@@ -16,6 +16,14 @@
  *        the version. 400 on invalid shape.
  *   GET  /status                     → { version, uptimeMs, paths }
  *
+ * Model plane (ADR-0093 Phase 1):
+ *   GET  /models                     → { models: [{ id, name, family, modelFile, loaded }] }
+ *        Always on, read-only. Catalog from the adapter tree + live loaded
+ *        state probed from the upstream llama-server.
+ *   POST /models/ensure              → { status: loaded|switched|disabled|unknown|failed, id }
+ *        OFF by default (409 "disabled") — armed via `switchEnabled`
+ *        (env `MBA_MODEL_SWITCH=on`). Idempotent: a loaded model is a no-op.
+ *
  * The app is exported separately from the listener so tests can drive it
  * with `app.request()` without binding a port.
  */
@@ -31,11 +39,23 @@ import {
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
+import { readModelCatalog } from "./model-catalog.js";
+import { ensureModel, probeLoadedModel, type SwitchExecutor } from "./model-switch.js";
 
 export interface MbaServiceAppOptions {
   readonly paths?: MbaStorePaths;
   /** Per-project TCB path to migrate from on first boot (Option A). */
   readonly legacyTcbPath?: string;
+  /** Adapter tree root (default `~/models/adapters`). */
+  readonly adapterDir?: string;
+  /** Upstream llama-server base URL (e.g. `http://127.0.0.1:8080`). */
+  readonly upstreamUrl?: string;
+  /** Arm model switching (ADR-0093: OFF by default). */
+  readonly switchEnabled?: boolean;
+  /** Switch executor — injectable for tests; default shells to the boot script. */
+  readonly switchExecutor?: SwitchExecutor;
+  /** Injectable fetch for the upstream probe (tests). */
+  readonly fetch?: typeof fetch;
 }
 
 export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
@@ -94,7 +114,85 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     });
   });
 
+  // --- Model plane (ADR-0093 Phase 1) -------------------------------------
+
+  app.get("/models", async (c) => {
+    const catalog = readModelCatalog(opts.adapterDir ?? "");
+    const loaded = opts.upstreamUrl
+      ? await probeLoadedModel(opts.upstreamUrl, opts.fetch)
+      : null;
+    return c.json({
+      models: catalog.map((e) => ({
+        id: e.id,
+        name: e.name,
+        family: e.family,
+        modelFile: e.modelFile,
+        loaded: loaded === e.id,
+      })),
+    });
+  });
+
+  app.post("/models/ensure", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { id?: unknown };
+    if (!input || typeof input.id !== "string" || input.id.length === 0) {
+      return c.json({ error: "body.id must be a non-empty string" }, 400);
+    }
+    const result = await ensureModel({
+      catalog: readModelCatalog(opts.adapterDir ?? ""),
+      requestedId: input.id,
+      upstreamUrl: opts.upstreamUrl ?? "",
+      switchEnabled: opts.switchEnabled ?? false,
+      executor: opts.switchExecutor ?? defaultSwitchExecutor,
+      fetch: opts.fetch,
+    });
+    if (result.status === "unknown") {
+      return c.json(result, 404);
+    }
+    if (result.status === "disabled") {
+      return c.json(
+        { error: "model switching is disabled (set MBA_MODEL_SWITCH=on to arm)" },
+        409,
+      );
+    }
+    if (result.status === "failed") {
+      return c.json(result, 500);
+    }
+    return c.json(result);
+  });
+
   return app;
+}
+
+/**
+ * Default switch executor: shells out to the boot script. Kept at module
+ * level (not inlined) so tests can always inject a fake and the production
+ * path stays inspectable in one place.
+ */
+async function defaultSwitchExecutor(ctx: {
+  id: string;
+  modelFile?: string;
+  upstreamUrl: string;
+}): Promise<void> {
+  const { spawn } = await import("node:child_process");
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  const script =
+    process.env.MBA_BOOT_SCRIPT ?? join(homedir(), "Dev_Projects/C-Yard/scripts/llama-server-up.sh");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("bash", [script, "-Model", ctx.id], {
+      stdio: "inherit",
+    });
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`boot script exited ${code}`)),
+    );
+  });
 }
 
 export interface MbaServiceHandle {
