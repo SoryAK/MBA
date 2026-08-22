@@ -1,7 +1,8 @@
 # CI — Jenkins Pipeline
 
 MBA builds on every push to `main` via a Jenkins declarative pipeline defined in
-[`Jenkinsfile`](../Jenkinsfile) at the repo root.
+[`Jenkinsfile`](../Jenkinsfile) at the repo root. The job polls GitHub every 5
+minutes (Poll SCM) and builds automatically when a new commit lands on `main`.
 
 ## What a build does
 
@@ -37,7 +38,26 @@ The pipeline references a NodeJS tool named **`node-22`**.
    - **Script Path:** `Jenkinsfile`
 3. **Save** → **Build Now** to verify the first run is green.
 
-### 3. Trigger on push (optional but recommended)
+### 3. Trigger on push — Poll SCM (active)
+
+The job uses **Poll SCM**: Jenkins checks GitHub every 5 minutes and builds
+when a new commit lands on `main`.
+
+- Job **Configure** → **Triggers** → tick **Poll SCM**
+- **Schedule:** `H/5 * * * *` (every 5 min; `H` staggers the exact minute)
+- **Save**
+
+Verify it's working: the job page gains a **Git Polling Log** link
+(`/job/MBA/scmPollLog`). Each poll should end with `No changes` until you push
+a new commit, at which point the next poll triggers a build.
+
+> **Why polling and not a webhook?** Jenkins runs on `localhost`, which GitHub
+> can't reach. A webhook would need a public tunnel (ngrok/cloudflared) kept
+> running. Polling needs no internet exposure and is the robust choice for a
+> local Jenkins. If Jenkins ever moves to a server, switch to the webhook below
+> for near-instant triggers.
+
+### 4. (Future) GitHub webhook — only if Jenkins is publicly reachable
 
 GitHub → repo **Settings → Webhooks → Add webhook**:
 
@@ -45,11 +65,8 @@ GitHub → repo **Settings → Webhooks → Add webhook**:
 - **Content type:** `application/json`
 - **Events:** *Only selected events* → **Pushes**
 
-Requires the **GitHub plugin** (Manage Jenkins → Plugins). After that, every
-push to `main` triggers a build automatically — no polling.
-
-Alternative without the webhook: tick **Build Triggers → Poll SCM** with
-`H/5 * * * *` (checks every 5 min).
+Requires the **GitHub plugin** (Manage Jenkins → Plugins) and a Jenkins
+instance reachable from the internet.
 
 ## Local parity
 
