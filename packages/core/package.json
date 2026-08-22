@@ -24,7 +24,9 @@
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run build",
     "dev": "tsx src/service/main.ts",
-    "start": "tsx src/service/main.ts"
+    "start": "tsx src/service/main.ts",
+    "sync-endpoints": "tsx src/service/sync-endpoints.ts",
+    "resolve-server-recipe": "tsx src/service/resolve-server-recipe.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",

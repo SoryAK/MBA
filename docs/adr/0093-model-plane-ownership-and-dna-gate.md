@@ -180,3 +180,61 @@ PROXY (2nd layer) — pure gatekeeper
 4. **VS Code config update.** `id` values become canonical adapter-tree ids.
 
 Each phase gets `get_errors` + targeted tests before the next.
+
+### Phase 4 refinement — Option C: context size inherits from the server recipe (2026-08-21)
+
+The endpoint sync (`model-endpoint-sync.ts`) originally took the advertised
+context window from the adapter YAML's `client.contextSize`, falling back to a
+hard-coded 128k default. That duplicated the server's `ctxSize` (from
+`server_setup.json`, resolved through the 4-rung merge) in a second place — a
+drift foot-gun: the endpoint could advertise a window the server never boots
+with.
+
+**Decision:** `client.contextSize` is now optional. When omitted, the sync
+falls back to the resolved server-recipe `ctxSize` (the same
+`resolveMbaConfig` + `sanitizeLlamaCppServerFlags` path the boot script and
+`resolve-server-recipe.ts` use); when set, the YAML value wins. Precedence:
+YAML `contextSize` → resolved recipe `ctxSize` → 128k default. The resolver is
+injected as an optional callback (`CtxSizeResolver`) so the sync module stays
+pure/filesystem-only; the one-shot CLI supplies the resolver-backed
+implementation, and the service watcher passes nothing (preserving the
+historical default on the debounced hot path).
+
+### Phase 4b refinement — the `client` block is a set of optional overrides (2026-08-21)
+
+Option C solved the context-window drift, but `maxOutputTokens` was still a
+number carried around in every YAML (always 16384) with no reason to differ
+per model. The `client` block is now treated uniformly as *optional
+overrides*: you write only what you want to change.
+
+**Field table (final):**
+
+| Field             | Required | Fallback when omitted                              |
+| ----------------- | -------- | -------------------------------------------------- |
+| `url`             | **Yes**  | — (no default; models may run on different ports)  |
+| `contextSize`     | No       | resolved server-recipe `ctxSize` → 128000          |
+| `maxOutputTokens` | No       | 16384                                              |
+| `toolCalling`     | No       | true                                               |
+| `vision`          | No       | true                                               |
+
+**Decisions:**
+
+- `url` stays **required** with no default. A wrong-port default is a silent
+  foot-gun (a model that omits `url` would quietly point at 8080 and hit the
+  wrong server). The user runs models on different ports, so the endpoint must
+  always be explicit.
+- `maxOutputTokens` default is **16384** (previously 20000) — matching the
+  value actually carried in every adapter YAML, so dropping the per-model
+  value does not silently change behaviour.
+- The `client` block as a whole is optional in the sense that only `url` is
+  mandatory; a model with no `client` block at all is simply not surfaced as
+  an endpoint (unchanged behaviour).
+
+**Boot-script fix (same day):** the endpoint sync in `llama-server-up.sh` was
+positioned *after* the foreground `exec llama-server`, which replaces the
+shell process and never returns — so in the default (foreground) mode the sync
+was dead code and the real `chatLanguageModels.json` kept a stale
+`maxInputTokens`. The sync block was moved to *before* the launch branch so it
+runs in both foreground and background modes. It is a pure filesystem
+operation (reads adapter YAMLs, writes `chatLanguageModels.json`) and does not
+need the server to be healthy.

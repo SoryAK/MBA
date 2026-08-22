@@ -6,7 +6,7 @@ import { probeLoadedModel, ensureModel, type SwitchExecutor } from "./model-swit
 import type { CatalogEntry } from "./model-catalog.js";
 
 function entry(id: string, modelFile: string): CatalogEntry {
-  return { id, name: id, family: undefined, modelFile };
+  return { id, name: id, family: undefined, modelFile, yamlPath: `${id}.yaml` };
 }
 
 describe("probeLoadedModel", () => {

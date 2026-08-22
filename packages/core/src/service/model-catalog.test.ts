@@ -62,6 +62,7 @@ describe("readModelCatalog", () => {
           root,
           "qwen/qwen3-coder/qwen3-coder-30b/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
         ),
+        yamlPath: join(root, "qwen/qwen3-coder/qwen3-coder-30b/qwen3-coder-30b.yaml"),
       },
     ]);
   });
@@ -83,6 +84,12 @@ describe("readModelCatalog", () => {
     writeAdapter(root, "a/b/b.yaml", { id: "b", file: "./b.gguf" });
     const entries = readModelCatalog(root);
     expect(entries[0]?.name).toBe("b");
+  });
+
+  it("exposes the adapter YAML path on each entry", () => {
+    writeAdapter(root, "qwen/a/a.yaml", { id: "a", file: "./a.gguf" });
+    const entries = readModelCatalog(root);
+    expect(entries[0]?.yamlPath).toBe(join(root, "qwen/a/a.yaml"));
   });
 
   it("throws on a YAML file that is not a valid adapter", () => {
