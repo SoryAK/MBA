@@ -1,11 +1,15 @@
 # MBA — Model Behavioral Adapter
 
+![WIP](https://img.shields.io/badge/status-work%20in%20progress-orange?style=for-the-badge)
+
+> **Work in progress** — the concept is still actively developing. APIs, package layout, and config formats may change without notice.
+
 MBA is a framework for giving local LLMs **per-model behavioral profiles**: each model gets its own adapter (context budget, tool-circuit-breaker rules, server setup) resolved from a lineage tree of YAML files, and a real-time engine enforces the behavioral rules on tool calls.
 
 It ships as two npm packages under the `@mba-ai` scope:
 
 | Package | What it is |
-|---|---|
+| --- | --- |
 | [`@mba-ai/core`](packages/core) | The framework: adapter resolution (B1–B4), the BCB/TCB tool-circuit-breaker engine, and the global MBA config service |
 | [`@mba-ai/mcp-server`](packages/mcp-server) | The MCP control plane: read and tune the global config from any MCP host (VS Code Copilot, Cline, Claude Desktop) |
 
