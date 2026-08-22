@@ -25,6 +25,8 @@ export interface CatalogEntry {
   readonly family?: string;
   /** Absolute path to the weights file, or undefined if undeclared. */
   readonly modelFile?: string;
+  /** Absolute path to the adapter YAML file itself. */
+  readonly yamlPath: string;
 }
 
 function isAdapter(value: unknown): value is {
@@ -86,6 +88,7 @@ export function readModelCatalog(adapterDir: string): CatalogEntry[] {
       name: meta.name ?? meta.id,
       family: meta.family,
       modelFile: isAbsolute(modelFile) ? modelFile : resolve(dirname(file), modelFile),
+      yamlPath: file,
     });
   }
   return entries;
