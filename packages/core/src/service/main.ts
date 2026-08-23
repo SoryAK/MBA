@@ -21,7 +21,12 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultStorePaths, readGlobalConfig, writeServiceInfo } from "./config-store.js";
+import {
+  defaultStorePaths,
+  migrateLegacyBaseDir,
+  readGlobalConfig,
+  writeServiceInfo,
+} from "./config-store.js";
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { startMbaService } from "./server.js";
@@ -38,6 +43,15 @@ const vscodeLmConfig =
   join(homedir(), ".config", "Code", "User", "profiles", "<REDACTED>", "chatLanguageModels.json");
 const vscodeLmApiKeyRef =
   process.env.MBA_VSCODE_LM_API_KEY_REF ?? "${input:chat.lm.secret.<REDACTED>}";
+
+// One-time migration from the legacy `~/.mba` base dir. Only when the
+// default location is in use — an explicit MBA_BASE_DIR is the user's choice.
+if (!baseDir) {
+  const migrated = migrateLegacyBaseDir();
+  if (migrated.length > 0) {
+    console.log(`[mba] migrated ${migrated.length} file(s) from ~/.mba to ~/.mba`);
+  }
+}
 
 // First-boot seed happens here so the store is warm before the first request.
 const initial = readGlobalConfig(paths);

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   defaultStorePaths,
+  migrateLegacyBaseDir,
   readGlobalConfig,
   setRules,
   writeServiceInfo,
@@ -97,5 +98,45 @@ describe("config-store", () => {
     }
     // The file is always valid JSON.
     JSON.parse(readFileSync(paths.tcbPath, "utf8"));
+  });
+});
+
+describe("migrateLegacyBaseDir", () => {
+  let legacyDir: string;
+  let newDir: string;
+
+  beforeEach(() => {
+    legacyDir = mkdtempSync(join(tmpdir(), "mba-legacy-"));
+    newDir = mkdtempSync(join(tmpdir(), "mba-new-"));
+  });
+
+  it("copies legacy files preserving layout, without overwriting new files", () => {
+    // Legacy state: TCB config + a version file.
+    mkdirSync(join(legacyDir, "bcb"), { recursive: true });
+    writeFileSync(join(legacyDir, "bcb", "tool-circuit-breakers.json"), "{}\n", "utf8");
+    mkdirSync(join(legacyDir, "mba"), { recursive: true });
+    writeFileSync(join(legacyDir, "mba", "version.json"), "{\n  \"version\": 7\n}\n", "utf8");
+    // New dir already has a TCB file — it must win.
+    mkdirSync(join(newDir, "bcb"), { recursive: true });
+    writeFileSync(join(newDir, "bcb", "tool-circuit-breakers.json"), "EXISTING\n", "utf8");
+
+    const copied = migrateLegacyBaseDir(legacyDir, newDir);
+
+    expect(copied).toEqual(["mba/version.json"]);
+    // Existing file untouched.
+    expect(readFileSync(join(newDir, "bcb", "tool-circuit-breakers.json"), "utf8")).toBe(
+      "EXISTING\n",
+    );
+    // Missing file copied.
+    expect(readFileSync(join(newDir, "mba", "version.json"), "utf8")).toBe(
+      "{\n  \"version\": 7\n}\n",
+    );
+    // Legacy files left in place.
+    expect(existsSync(join(legacyDir, "bcb", "tool-circuit-breakers.json"))).toBe(true);
+  });
+
+  it("is a no-op when the legacy dir does not exist", () => {
+    const missing = join(tmpdir(), "mba-does-not-exist-");
+    expect(migrateLegacyBaseDir(missing, newDir)).toEqual([]);
   });
 });

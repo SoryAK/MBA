@@ -300,6 +300,10 @@ process** (not per-project). Files are truth under `~/.mba/`:
   the built-in defaults. (The one-time migration from the legacy per-project
   `.legacy-store/bcb/tool-circuit-breakers.json` location shipped with the
   first global-store release and was removed once migration was complete.)
+- **Base-dir migration:** the store originally lived under `~/.mba` (MBA's
+  the original project origin). On first boot with the default location, any state found
+  there is copied into `~/.mba` (copy, never overwrite; legacy files are
+  left in place). Skipped when `MBA_BASE_DIR` is set explicitly.
 - **Writes are atomic** (temp file → rename); every mutation bumps
   `version.json`.
 - **Consumers fail open:** the proxy's `MbaClient` caches the last good
