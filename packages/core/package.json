@@ -1,6 +1,6 @@
 {
   "name": "@mba-ai/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Model Behavioral Adapter (MBA) framework — per-model behavior resolution, BCB/TCB tool-circuit-breaker engine, and the global MBA config service",
   "repository": {
     "type": "git",
