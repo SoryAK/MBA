@@ -46,7 +46,7 @@ const adapters = loadAdapters(resolve(mbaDir, "adapters"), workspaceRoot);
 const server = new Server(
   {
     name: "mba-mcp-server",
-    version: "0.1.0",
+    version: "0.1.1",
   },
   {
     capabilities: {

@@ -1,6 +1,6 @@
 {
   "name": "@mba-ai/mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MBA MCP control plane — read and tune the global MBA config from any MCP host (VS Code Copilot, Cline, Claude Desktop)",
   "repository": {
     "type": "git",
