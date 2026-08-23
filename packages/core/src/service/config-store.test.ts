@@ -6,7 +6,6 @@ import {
   defaultStorePaths,
   readGlobalConfig,
   setRules,
-  legacyProjectTcbPath,
   writeServiceInfo,
   readServiceInfoOrNull,
 } from "./config-store.js";
@@ -59,37 +58,6 @@ describe("config-store", () => {
     });
     const cfg = readGlobalConfig(paths);
     expect(cfg.ruleClasses).toEqual(BUILTIN_RULE_CLASSES);
-  });
-
-  it("migrates a legacy per-project TCB file on first boot (Option A)", () => {
-    // Simulate a pre-existing per-project config.
-    const projectRoot = mkdtempSync(join(tmpdir(), "mba-proj-"));
-    const legacyPath = legacyProjectTcbPath(projectRoot);
-    mkdirSync(join(projectRoot, ".cyard-store", "bcb"), { recursive: true });
-    const legacyTcb = { ...defaultToolCircuitBreakerConfig() };
-    writeFileSync(legacyPath, JSON.stringify(legacyTcb));
-
-    const cfg = readGlobalConfig(paths, { legacyTcbPath: legacyPath });
-    expect(cfg.tcb).toEqual(legacyTcb);
-    // Copied into the global location.
-    expect(existsSync(paths.tcbPath)).toBe(true);
-    expect(JSON.parse(readFileSync(paths.tcbPath, "utf8"))).toEqual(legacyTcb);
-  });
-
-  it("prefers the global file over the legacy file once present", () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "mba-proj-"));
-    const legacyPath = legacyProjectTcbPath(projectRoot);
-    mkdirSync(join(projectRoot, ".cyard-store", "bcb"), { recursive: true });
-    writeFileSync(legacyPath, JSON.stringify(defaultToolCircuitBreakerConfig()));
-
-    // First boot migrates.
-    readGlobalConfig(paths, { legacyTcbPath: legacyPath });
-    // Now mutate the global file; the legacy file must no longer win.
-    const mutated = { ...defaultToolCircuitBreakerConfig() };
-    setRules(paths, { tcb: mutated });
-
-    const cfg = readGlobalConfig(paths, { legacyTcbPath: legacyPath });
-    expect(cfg.tcb).toEqual(mutated);
   });
 
   it("throws on an invalid TCB shape in set_rules", () => {

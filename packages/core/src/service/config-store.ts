@@ -21,17 +21,16 @@
  *   mba/rule-classes.json           — global rule-class layer
  *   mba/version.json                — { version: number }
  *
- * First-boot migration (Option A): if the global TCB file is missing, copy an
- * existing per-project `.cyard-store/bcb/tool-circuit-breakers.json` (the
- * user's live config) so nothing changes for them; if that's missing too,
- * seed from the built-in defaults.
+ * First-boot seed: if the global TCB file is missing, seed it from the
+ * built-in defaults. (The one-time migration from the legacy per-project
+ * `.cyard-store/bcb/tool-circuit-breakers.json` location shipped with the
+ * first global-store release and was removed once migration was complete.)
  *
  * Pure-ish: all fs I/O is explicit and injected-friendly via the `paths`
  * parameter so tests can point at a temp dir. No globals, no implicit DB.
  */
 
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -104,14 +103,6 @@ export function readServiceInfoOrNull(paths: MbaStorePaths): MbaServiceInfo | nu
   return { port: raw.port, pid: raw.pid, startedAt: raw.startedAt };
 }
 
-/**
- * The per-project TCB config path the proxy used before the global store
- * existed. Used only as a first-boot migration source (Option A).
- */
-export function legacyProjectTcbPath(projectRoot: string): string {
-  return join(projectRoot, ".cyard-store", "bcb", "tool-circuit-breakers.json");
-}
-
 function atomicWriteJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
@@ -129,28 +120,18 @@ function readJsonOrNull(path: string): unknown {
 }
 
 /**
- * Read the global config, migrating/seeding on first boot.
+ * Read the global config, seeding on first boot.
  *
- * - TCB: global file → (if missing) legacy per-project file (copied in) →
- *   (if missing) built-in defaults (written).
+ * - TCB: global file → (if missing) built-in defaults (written).
  * - Rule classes: global file → (if missing) empty registry.
  * - Version: version file → (if missing) 0.
  */
-export function readGlobalConfig(
-  paths: MbaStorePaths,
-  opts: { readonly legacyTcbPath?: string } = {},
-): MbaGlobalConfig {
-  // TCB config with first-boot migration.
+export function readGlobalConfig(paths: MbaStorePaths): MbaGlobalConfig {
+  // TCB config with first-boot seed.
   let tcb: ToolCircuitBreakerConfig | undefined;
   const globalTcb = readJsonOrNull(paths.tcbPath);
   if (isToolCircuitBreakerConfig(globalTcb)) {
     tcb = globalTcb;
-  } else if (opts.legacyTcbPath && existsSync(opts.legacyTcbPath)) {
-    const legacy = readJsonOrNull(opts.legacyTcbPath);
-    if (isToolCircuitBreakerConfig(legacy)) {
-      tcb = legacy;
-      atomicWriteJson(paths.tcbPath, legacy); // Option A: move the user's live config.
-    }
   }
   if (!tcb) {
     tcb = defaultToolCircuitBreakerConfig();

@@ -35,7 +35,7 @@ npm run start:service
 ```
 
 The service binds `127.0.0.1:<port>` and writes `~/.cyard/mba/service.json`.
-Env: `CYARD_MBA_BASE_DIR` (store base dir, default `~/.cyard`), `CYARD_MBA_LEGACY_TCB` (per-project TCB path to migrate from on first boot).
+Env: `MBA_BASE_DIR` (store base dir, default `~/.cyard`; `CYARD_MBA_BASE_DIR` is a deprecated alias).
 
 ## MCP control plane
 
@@ -68,7 +68,7 @@ Requires Node ≥ 20.
 ## Documentation
 
 - [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — the full system manual
-- [`docs/adr/`](docs/adr/) — architecture decision records (0084–0092)
+- [`docs/adr/`](docs/adr/) — architecture decision records (0084–0095)
 
 ## License
 

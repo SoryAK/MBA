@@ -8,8 +8,7 @@
  * Run with: `npm run dev -w @mba-ai/core` (or `npm start -w @mba-ai/core`).
  *
  * Env:
- *   CYARD_MBA_BASE_DIR   — store base dir (default `~/.cyard`)
- *   CYARD_MBA_LEGACY_TCB — per-project TCB path to migrate from on first boot
+ *   MBA_BASE_DIR         — store base dir (default `~/.cyard`; `CYARD_MBA_BASE_DIR` is a deprecated alias)
  *   MBA_ADAPTER_DIR      — adapter tree root (default `~/models/adapters`)
  *   MBA_UPSTREAM_URL     — upstream llama-server base URL (e.g. http://127.0.0.1:8080)
  *   MBA_MODEL_SWITCH     — "on" arms model switching (ADR-0093: OFF by default)
@@ -27,9 +26,9 @@ import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { startMbaService } from "./server.js";
 
-const baseDir = process.env.CYARD_MBA_BASE_DIR;
+// `CYARD_MBA_BASE_DIR` is a deprecated alias kept for existing setups.
+const baseDir = process.env.MBA_BASE_DIR ?? process.env.CYARD_MBA_BASE_DIR;
 const paths = defaultStorePaths(baseDir);
-const legacyTcbPath = process.env.CYARD_MBA_LEGACY_TCB;
 const adapterDir = process.env.MBA_ADAPTER_DIR ?? join(homedir(), "models", "adapters");
 const upstreamUrl = process.env.MBA_UPSTREAM_URL;
 const switchEnabled = process.env.MBA_MODEL_SWITCH === "on";
@@ -40,13 +39,11 @@ const vscodeLmConfig =
 const vscodeLmApiKeyRef =
   process.env.MBA_VSCODE_LM_API_KEY_REF ?? "${input:chat.lm.secret.11180837}";
 
-// First-boot migration/seed happens here so the store is warm before the
-// first request.
-const initial = readGlobalConfig(paths, { legacyTcbPath });
+// First-boot seed happens here so the store is warm before the first request.
+const initial = readGlobalConfig(paths);
 
 const handle = await startMbaService({
   paths,
-  legacyTcbPath,
   adapterDir,
   upstreamUrl,
   switchEnabled,

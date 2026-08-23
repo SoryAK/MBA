@@ -44,8 +44,6 @@ import { ensureModel, probeLoadedModel, type SwitchExecutor } from "./model-swit
 
 export interface MbaServiceAppOptions {
   readonly paths?: MbaStorePaths;
-  /** Per-project TCB path to migrate from on first boot (Option A). */
-  readonly legacyTcbPath?: string;
   /** Adapter tree root (default `~/models/adapters`). */
   readonly adapterDir?: string;
   /** Upstream llama-server base URL (e.g. `http://127.0.0.1:8080`). */
@@ -66,7 +64,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 
   app.get("/resolve_config", (c) => {
     const model = c.req.query("model");
-    const cfg = readGlobalConfig(paths, { legacyTcbPath: opts.legacyTcbPath });
+    const cfg = readGlobalConfig(paths);
     return c.json({
       version: cfg.version,
       model: model ?? null,
@@ -101,7 +99,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   });
 
   app.get("/status", (c) => {
-    const cfg = readGlobalConfig(paths, { legacyTcbPath: opts.legacyTcbPath });
+    const cfg = readGlobalConfig(paths);
     return c.json({
       version: cfg.version,
       uptimeMs: Date.now() - startedAt,
