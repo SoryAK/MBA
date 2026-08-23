@@ -17,7 +17,7 @@ It ships as two npm packages under the `@mba-ai` scope:
 
 - **Adapters** are YAML files in a lineage folder tree (e.g. `vendor/family/model.yaml`). The resolver scores and merges them least-specific-first into a single resolved config per model.
 - **TCB (Tool Circuit Breaker)** is a real-time watchdog over the model's tool calls. Rules are notice-only detectors with an escalation ladder (nudge → mask → kill). Rule classes bundle detectors; state persists in SQLite.
-- **The global service** owns the resolved config and rule state on one machine. It binds `127.0.0.1` on an OS-assigned port and writes a discovery file (`~/.cyard/mba/service.json`) so consumers can find it.
+- **The global service** owns the resolved config and rule state on one machine. It binds `127.0.0.1` on an OS-assigned port and writes a discovery file (`~/.mba/mba/service.json`) so consumers can find it.
 - **The MCP server** is a thin client over that service — it has zero dependency on the framework, so it can run in any MCP host.
 
 ## Install
@@ -34,8 +34,8 @@ npx @mba-ai/core
 npm run start:service
 ```
 
-The service binds `127.0.0.1:<port>` and writes `~/.cyard/mba/service.json`.
-Env: `MBA_BASE_DIR` (store base dir, default `~/.cyard`; `CYARD_MBA_BASE_DIR` is a deprecated alias).
+The service binds `127.0.0.1:<port>` and writes `~/.mba/mba/service.json`.
+Env: `MBA_BASE_DIR` (store base dir, default `~/.mba`; `CYARD_MBA_BASE_DIR` is a deprecated alias).
 
 ## MCP control plane
 

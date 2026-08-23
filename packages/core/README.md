@@ -17,7 +17,7 @@ behavioral rules on the model's tool calls.
   SQLite.
 - **The global service.** Owns the resolved config and rule state on one
   machine. It binds `127.0.0.1` on an OS-assigned port and writes a
-  discovery file (`~/.cyard/mba/service.json`) so consumers can find it.
+  discovery file (`~/.mba/mba/service.json`) so consumers can find it.
 
 The companion package [`@mba-ai/mcp-server`](../mcp-server) is a thin MCP
 client over this service — it has zero dependency on the framework.
@@ -36,13 +36,13 @@ npx @mba-ai/core
 npm run start:service
 ```
 
-The service binds `127.0.0.1:<port>` and writes `~/.cyard/mba/service.json`.
+The service binds `127.0.0.1:<port>` and writes `~/.mba/mba/service.json`.
 
 ## Environment variables
 
 |Variable|Description|Default|
 |---|---|---|
-|`MBA_BASE_DIR`|Store base dir (service discovery + SQLite state)|`~/.cyard`|
+|`MBA_BASE_DIR`|Store base dir (service discovery + SQLite state)|`~/.mba`|
 |`MBA_ADAPTER_DIR`|Directory containing the adapter lineage tree|`~/models/adapters`|
 |`MBA_UPSTREAM_URL`|Upstream model endpoint the service fronts|—|
 

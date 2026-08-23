@@ -16,29 +16,34 @@
  *   - VERSION COUNTER. Bumped on every mutation the store performs. The proxy
  *     caches the merged config and re-fetches when the version changes.
  *
- * Layout under the base dir (default `~/.cyard`):
+ * Layout under the base dir (default `~/.mba`):
  *   bcb/tool-circuit-breakers.json  — global TCB config
  *   mba/rule-classes.json           — global rule-class layer
  *   mba/version.json                — { version: number }
  *
  * First-boot seed: if the global TCB file is missing, seed it from the
- * built-in defaults. (The one-time migration from the legacy per-project
- * `.cyard-store/bcb/tool-circuit-breakers.json` location shipped with the
- * first global-store release and was removed once migration was complete.)
+ * built-in defaults.
+ *
+ * Base-dir migration: the store originally lived under `~/.cyard` (MBA's
+ * C-Yard origin). `migrateLegacyBaseDir` copies any state found there into
+ * the new `~/.mba` location on first boot — copy, never overwrite, and the
+ * legacy files are left in place.
  *
  * Pure-ish: all fs I/O is explicit and injected-friendly via the `paths`
  * parameter so tests can point at a temp dir. No globals, no implicit DB.
  */
 
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { defaultToolCircuitBreakerConfig } from "../bcb/default-config.js";
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
@@ -67,7 +72,7 @@ export interface MbaSetRulesResult {
   readonly tcb: ToolCircuitBreakerConfig;
 }
 
-export function defaultStorePaths(baseDir: string = join(homedir(), ".cyard")): MbaStorePaths {
+export function defaultStorePaths(baseDir: string = join(homedir(), ".mba")): MbaStorePaths {
   return {
     baseDir,
     tcbPath: join(baseDir, "bcb", "tool-circuit-breakers.json"),
@@ -75,6 +80,41 @@ export function defaultStorePaths(baseDir: string = join(homedir(), ".cyard")): 
     versionPath: join(baseDir, "mba", "version.json"),
     serviceInfoPath: join(baseDir, "mba", "service.json"),
   };
+}
+
+/**
+ * One-time migration from the legacy `~/.cyard` base dir to `~/.mba`.
+ *
+ * Copies every file under the legacy dir into the new one, preserving the
+ * relative layout. Copy, never overwrite: files already present in the new
+ * dir win. Legacy files are left in place (no delete) so a rollback is
+ * trivial. No-op when the legacy dir does not exist.
+ *
+ * Returns the list of files copied (empty when nothing to migrate).
+ */
+export function migrateLegacyBaseDir(
+  legacyBaseDir: string = join(homedir(), ".cyard"),
+  newBaseDir: string = join(homedir(), ".mba"),
+): string[] {
+  if (!existsSync(legacyBaseDir) || legacyBaseDir === newBaseDir) return [];
+  const copied: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const src = join(dir, entry.name);
+      const rel = relative(legacyBaseDir, src);
+      const dest = join(newBaseDir, rel);
+      if (entry.isDirectory()) {
+        mkdirSync(dest, { recursive: true });
+        walk(src);
+      } else if (entry.isFile() && !existsSync(dest)) {
+        mkdirSync(dirname(dest), { recursive: true });
+        copyFileSync(src, dest);
+        copied.push(rel);
+      }
+    }
+  };
+  walk(legacyBaseDir);
+  return copied;
 }
 
 /** Discovery record the service writes on boot (port + pid). */

@@ -2,13 +2,13 @@
  * MBA service entry point (ADR-0092 Step 2).
  *
  * Boots the global MBA service: binds 127.0.0.1 on an OS-assigned port,
- * writes a discovery file (`~/.cyard/mba/service.json`) so consumers (the
+ * writes a discovery file (`~/.mba/mba/service.json`) so consumers (the
  * proxy) can find it, and stays up until SIGINT/SIGTERM.
  *
  * Run with: `npm run dev -w @mba-ai/core` (or `npm start -w @mba-ai/core`).
  *
  * Env:
- *   MBA_BASE_DIR         — store base dir (default `~/.cyard`; `CYARD_MBA_BASE_DIR` is a deprecated alias)
+ *   MBA_BASE_DIR         — store base dir (default `~/.mba`; `CYARD_MBA_BASE_DIR` is a deprecated alias)
  *   MBA_ADAPTER_DIR      — adapter tree root (default `~/models/adapters`)
  *   MBA_UPSTREAM_URL     — upstream llama-server base URL (e.g. http://127.0.0.1:8080)
  *   MBA_MODEL_SWITCH     — "on" arms model switching (ADR-0093: OFF by default)
@@ -21,7 +21,12 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultStorePaths, readGlobalConfig, writeServiceInfo } from "./config-store.js";
+import {
+  defaultStorePaths,
+  migrateLegacyBaseDir,
+  readGlobalConfig,
+  writeServiceInfo,
+} from "./config-store.js";
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { startMbaService } from "./server.js";
@@ -38,6 +43,15 @@ const vscodeLmConfig =
   join(homedir(), ".config", "Code", "User", "profiles", "51cf1714", "chatLanguageModels.json");
 const vscodeLmApiKeyRef =
   process.env.MBA_VSCODE_LM_API_KEY_REF ?? "${input:chat.lm.secret.11180837}";
+
+// One-time migration from the legacy `~/.cyard` base dir. Only when the
+// default location is in use — an explicit MBA_BASE_DIR is the user's choice.
+if (!baseDir) {
+  const migrated = migrateLegacyBaseDir();
+  if (migrated.length > 0) {
+    console.log(`[mba] migrated ${migrated.length} file(s) from ~/.cyard to ~/.mba`);
+  }
+}
 
 // First-boot seed happens here so the store is warm before the first request.
 const initial = readGlobalConfig(paths);

@@ -279,10 +279,10 @@ bindings:
 ## Global MBA Service (ADR-0092)
 
 The global TCB layer and rule-class registry live in one **global service
-process** (not per-project). Files are truth under `~/.cyard/`:
+process** (not per-project). Files are truth under `~/.mba/`:
 
 ```text
-~/.cyard/
+~/.mba/
 ├── bcb/tool-circuit-breakers.json   # global TCB rules
 ├── mba/rule-classes.json            # global rule-class registry
 ├── mba/version.json                 # monotonic version counter
@@ -291,7 +291,7 @@ process** (not per-project). Files are truth under `~/.cyard/`:
 
 - **Run it:** `npm run start:service` from the MBA repo root. Binds
   `127.0.0.1:0` (OS-assigned port) and writes `service.json` for discovery.
-  Env: `MBA_BASE_DIR` (default `~/.cyard`; `CYARD_MBA_BASE_DIR` is a
+  Env: `MBA_BASE_DIR` (default `~/.mba`; `CYARD_MBA_BASE_DIR` is a
   deprecated alias).
 - **Endpoints:** `GET /resolve_config?model=` → `{ version, model, tcb,
   ruleClasses }`; `POST /set_rules` (validates shapes, atomic write, version
@@ -300,6 +300,10 @@ process** (not per-project). Files are truth under `~/.cyard/`:
   the built-in defaults. (The one-time migration from the legacy per-project
   `.cyard-store/bcb/tool-circuit-breakers.json` location shipped with the
   first global-store release and was removed once migration was complete.)
+- **Base-dir migration:** the store originally lived under `~/.cyard` (MBA's
+  C-Yard origin). On first boot with the default location, any state found
+  there is copied into `~/.mba` (copy, never overwrite; legacy files are
+  left in place). Skipped when `MBA_BASE_DIR` is set explicitly.
 - **Writes are atomic** (temp file → rename); every mutation bumps
   `version.json`.
 - **Consumers fail open:** the proxy's `MbaClient` caches the last good
@@ -314,7 +318,7 @@ MBA also ships a standalone MCP (Model Context Protocol) server at
 Copilot, Cline, Claude Desktop, etc.) so adapter behavior is not locked
 inside the c-yard proxy. It is the **control plane** for the global service:
 the service tools are thin HTTP wrappers — the MCP server never edits the
-`~/.cyard/` JSON files directly, so the service stays the single writer.
+`~/.mba/` JSON files directly, so the service stays the single writer.
 
 ### Registering in VS Code
 
@@ -376,7 +380,7 @@ exist and which binding sections they carry. For a per-model full report
 
 **Service tools** discover the service in this order: explicit `baseUrl` →
 `MBA_SERVICE_URL` env (deprecated alias: `CYARD_MBA_SERVICE_URL`) →
-`~/.cyard/mba/service.json` discovery file.
+`~/.mba/mba/service.json` discovery file.
 Each call has a 1500 ms timeout. When the service is down, the tool returns a
 clear `service unreachable: …` error (with `isError: true`) instead of
 crashing — the MCP server itself keeps running for the offline tools.

@@ -3,13 +3,13 @@
  *
  * The service is the single source of truth for global TCB rules and the
  * rule-class registry. This client is a thin, standalone wrapper — it never
- * touches the JSON files under ~/.cyard/ directly, so the service stays the
+ * touches the JSON files under ~/.mba/ directly, so the service stays the
  * only writer.
  *
  * Discovery order for the base URL:
  *   1. explicit `baseUrl` option
  *   2. MBA_SERVICE_URL env var (deprecated alias: CYARD_MBA_SERVICE_URL)
- *   3. ~/.cyard/mba/service.json discovery file (written by the service)
+ *   3. ~/.mba/mba/service.json discovery file (written by the service)
  *
  * Every call is fail-soft: a down/unreachable service yields a structured
  * `{ ok: false, error }` result instead of throwing, so MCP tool handlers
@@ -76,7 +76,7 @@ export type ServiceCallResult<T> =
 export interface MbaServiceClientOptions {
   /** Explicit base URL (e.g. http://127.0.0.1:4321). Skips discovery. */
   readonly baseUrl?: string;
-  /** Base dir holding mba/service.json. Default: ~/.cyard */
+  /** Base dir holding mba/service.json. Default: ~/.mba */
   readonly baseDir?: string;
   /** Injectable fetch for tests. Default: global fetch. */
   readonly fetchImpl?: typeof fetch;
@@ -86,12 +86,12 @@ export interface MbaServiceClientOptions {
 
 const DEFAULT_TIMEOUT_MS = 1500;
 
-export function defaultServiceInfoPath(baseDir: string = join(homedir(), ".cyard")): string {
+export function defaultServiceInfoPath(baseDir: string = join(homedir(), ".mba")): string {
   return join(baseDir, "mba", "service.json");
 }
 
 export function readServiceInfoOrNull(
-  baseDir: string = join(homedir(), ".cyard"),
+  baseDir: string = join(homedir(), ".mba"),
 ): MbaServiceInfo | null {
   const path = defaultServiceInfoPath(baseDir);
   if (!existsSync(path)) return null;
@@ -134,7 +134,7 @@ async function callService<T>(
     return {
       ok: false,
       error:
-        "service unreachable: no base URL (set MBA_SERVICE_URL or start the MBA service so ~/.cyard/mba/service.json exists)",
+        "service unreachable: no base URL (set MBA_SERVICE_URL or start the MBA service so ~/.mba/mba/service.json exists)",
     };
   }
 
