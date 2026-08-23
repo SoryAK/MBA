@@ -2,6 +2,25 @@
   "name": "@mba-ai/core",
   "version": "0.1.0",
   "description": "Model Behavioral Adapter (MBA) framework — per-model behavior resolution, BCB/TCB tool-circuit-breaker engine, and the global MBA config service",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SoryAK/MBA.git",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "llm",
+    "local-llm",
+    "model-adapter",
+    "tool-circuit-breaker",
+    "mcp",
+    "behavioral-profile", 
+    "bcb",
+    "ai-safety",
+    "ai-tools",
+    "ampi",
+    "mba",
+    "behavioral-adapter"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

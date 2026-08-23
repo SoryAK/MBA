@@ -44,12 +44,12 @@ npx -y @mba-ai/mcp-server
 
 ## Environment variables
 
-| Variable | Description | Default |
+|Variable|Description|Default|
 |---|---|---|
-| `MBA_DIR` | Directory containing `.MBA/adapters/` | `./.MBA` |
-| `MBA_WORKSPACE_ROOT` | Workspace root for file path scoping | `process.cwd()` |
-| `MBA_SERVICE_URL` | Explicit service base URL (skips discovery) | — |
-| `MBA_BASE_DIR` | Base dir for service discovery file | `~/.mba` |
+|`MBA_DIR`|Directory containing `.MBA/adapters/`|`./.MBA`|
+|`MBA_WORKSPACE_ROOT`|Workspace root for file path scoping|`process.cwd()`|
+|`MBA_SERVICE_URL`|Explicit service base URL (skips discovery)|—|
+|`MBA_BASE_DIR`|Base dir for service discovery file|`~/.mba`|
 
 ## Example tool call
 

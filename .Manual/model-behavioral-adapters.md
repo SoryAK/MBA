@@ -291,14 +291,15 @@ process** (not per-project). Files are truth under `~/.mba/`:
 
 - **Run it:** `npm run start:service` from the MBA repo root. Binds
   `127.0.0.1:0` (OS-assigned port) and writes `service.json` for discovery.
-  Env: `MBA_BASE_DIR` (default `~/.mba`), `LEGACY_MBA_LEGACY_TCB`
-  (explicit legacy file for first-boot migration).
+  Env: `MBA_BASE_DIR` (default `~/.mba`; `MBA_BASE_DIR` is a
+  deprecated alias).
 - **Endpoints:** `GET /resolve_config?model=` → `{ version, model, tcb,
   ruleClasses }`; `POST /set_rules` (validates shapes, atomic write, version
   bump) → `{ version, tcb }`; `GET /status` → `{ version, uptimeMs, paths }`.
-- **First-boot migration (Option A):** if the global TCB file is missing but a
-  legacy per-project `.legacy-store/bcb/tool-circuit-breakers.json` exists, it
-  is copied in once.
+- **First-boot seed:** if the global TCB file is missing, it is seeded from
+  the built-in defaults. (The one-time migration from the legacy per-project
+  `.legacy-store/bcb/tool-circuit-breakers.json` location shipped with the
+  first global-store release and was removed once migration was complete.)
 - **Writes are atomic** (temp file → rename); every mutation bumps
   `version.json`.
 - **Consumers fail open:** the proxy's `MbaClient` caches the last good
@@ -374,7 +375,8 @@ exist and which binding sections they carry. For a per-model full report
 `mba_resolve_config` with the model id; the registry does not duplicate that.
 
 **Service tools** discover the service in this order: explicit `baseUrl` →
-`MBA_SERVICE_URL` env → `~/.mba/mba/service.json` discovery file.
+`MBA_SERVICE_URL` env (deprecated alias: `MBA_SERVICE_URL`) →
+`~/.mba/mba/service.json` discovery file.
 Each call has a 1500 ms timeout. When the service is down, the tool returns a
 clear `service unreachable: …` error (with `isError: true`) instead of
 crashing — the MCP server itself keeps running for the offline tools.

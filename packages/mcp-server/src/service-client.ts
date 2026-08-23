@@ -8,7 +8,7 @@
  *
  * Discovery order for the base URL:
  *   1. explicit `baseUrl` option
- *   2. MBA_SERVICE_URL env var
+ *   2. MBA_SERVICE_URL env var (deprecated alias: MBA_SERVICE_URL)
  *   3. ~/.mba/mba/service.json discovery file (written by the service)
  *
  * Every call is fail-soft: a down/unreachable service yields a structured
@@ -116,7 +116,8 @@ export function readServiceInfoOrNull(
  */
 export function resolveServiceBaseUrl(opts: MbaServiceClientOptions = {}): string | null {
   if (opts.baseUrl) return opts.baseUrl;
-  const envUrl = process.env.MBA_SERVICE_URL;
+  // `MBA_SERVICE_URL` is a deprecated alias kept for existing setups.
+  const envUrl = process.env.MBA_SERVICE_URL ?? process.env.MBA_SERVICE_URL;
   if (envUrl && envUrl.length > 0) return envUrl;
   const info = readServiceInfoOrNull(opts.baseDir);
   if (info) return `http://127.0.0.1:${info.port}`;
