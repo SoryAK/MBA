@@ -69,7 +69,7 @@ import type { LifecycleSeams } from "../mba/index.js";
 
 export interface MbaServiceAppOptions {
   readonly paths?: MbaStorePaths;
-  /** Adapter tree root (default `~/models/adapters`). */
+  /** Adapter tree root (default: OS-aware model store, see service/paths.ts). */
   readonly adapterDir?: string;
   /** Upstream llama-server base URL (e.g. `http://127.0.0.1:8080`). */
   readonly upstreamUrl?: string;

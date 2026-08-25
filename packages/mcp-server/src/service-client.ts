@@ -16,8 +16,8 @@
  * can surface a clean "service unreachable" message.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { defaultStateDir } from "./paths.js";
 
 export interface MbaServiceInfo {
   readonly port: number;
@@ -122,12 +122,12 @@ export interface MbaServiceClientOptions {
 
 const DEFAULT_TIMEOUT_MS = 1500;
 
-export function defaultServiceInfoPath(baseDir: string = join(homedir(), ".mba")): string {
+export function defaultServiceInfoPath(baseDir: string = defaultStateDir()): string {
   return join(baseDir, "mba", "service.json");
 }
 
 export function readServiceInfoOrNull(
-  baseDir: string = join(homedir(), ".mba"),
+  baseDir: string = defaultStateDir(),
 ): MbaServiceInfo | null {
   const path = defaultServiceInfoPath(baseDir);
   if (!existsSync(path)) return null;

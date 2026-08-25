@@ -14,9 +14,11 @@
  *     engine and its consumers
  *   - `./service/config-store.js` — global rule-state store (files are truth)
  *   - `./service/server.js` — the global MBA service (hono app + listener)
+ *   - `./service/paths.js` — OS-aware state/store dir resolution (ADR-0097 P4)
  */
 export * from "./mba/index.js";
 export * from "./bcb/tool-circuit-breaker.js";
 export type { ChatMessage } from "./chat-message.js";
 export * from "./service/config-store.js";
 export * from "./service/server.js";
+export * from "./service/paths.js";
