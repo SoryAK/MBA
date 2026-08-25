@@ -5,11 +5,11 @@
  * metadata section. This is intentionally minimal: it does not interpret
  * tensors or quantization, only the header key/value store.
  *
- * DUPLICATED FILE (ADR-0098): @mba-ai/core carries a copy at
- * `packages/core/src/model/gguf-metadata.ts` for the model-pull feature.
- * mcp-server is standalone (ADR-0092) and must not import @mba-ai/core, so
- * the duplication is deliberate. The parser logic below this header must
- * stay identical in both files; if you change one, change the other.
+ * DUPLICATED FILE (ADR-0098): the canonical copy lives in
+ * `packages/mcp-server/src/model/gguf-metadata.ts`. mcp-server is
+ * standalone (ADR-0092) and must not import @mba-ai/core, so core carries
+ * its own copy. The parser logic below this header must stay identical in
+ * both files; if you change one, change the other.
  */
 
 import { openSync, readSync, closeSync, statSync } from "node:fs";
