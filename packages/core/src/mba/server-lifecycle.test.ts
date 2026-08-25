@@ -6,7 +6,272 @@
  */
 
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { waitForHealth, sendWarmupRequest } from "./server-lifecycle.js";
+import type { ChildProcess } from "node:child_process";
+import {
+  waitForHealth,
+  sendWarmupRequest,
+  bootLlamaServer,
+  stopLlamaServer,
+  killProcessGroup,
+  killAllOwnedGroups,
+  trackOwnedGroup,
+  ownedGroupCount,
+  type LifecycleSeams,
+} from "./server-lifecycle.js";
+
+/** A fake ChildProcess: records the pid, swallows events, no real process. */
+function fakeChild(pid: number): ChildProcess {
+  return {
+    pid,
+    kill: vi.fn(),
+    on: vi.fn(),
+    once: vi.fn(),
+    unref: vi.fn(),
+    stdout: null,
+    stderr: null,
+    stdin: null,
+  } as unknown as ChildProcess;
+}
+
+/** Build a spawn seam that returns a fixed fake child and records the options. */
+function spawnSeam(pid: number) {
+  const calls: Array<{ binary: string; args: string[]; opts: unknown }> = [];
+  const spawnImpl = vi.fn((_binary: string, args: string[], opts: unknown) => {
+    calls.push({ binary: _binary, args, opts });
+    return fakeChild(pid);
+  });
+  return { spawnImpl, calls };
+}
+
+describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the CHILD pid, not the daemon pid", async () => {
+    const { spawnImpl, calls } = spawnSeam(424242);
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+
+    const state = await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 8080,
+        flags: ["--ctx-size", "1000"],
+        fork: "upstream",
+        warmupTokens: 0,
+      },
+      { spawnImpl: spawnImpl as never, fetchImpl },
+    );
+
+    expect(state.pid).toBe(424242);
+    expect(state.pid).not.toBe(process.pid);
+    // -m <model> is prepended to the recipe flags (deployment facts may also be present)
+    const args = calls[0]!.args;
+    const mIdx = args.indexOf("-m");
+    expect(mIdx).toBeGreaterThanOrEqual(0);
+    expect(args[mIdx + 1]).toBe("/models/qwen.gguf");
+    // The recipe tuning flags are preserved after the model.
+    expect(args).toContain("--ctx-size");
+    expect(args).toContain("1000");
+  });
+
+  it("spawns detached so the server owns its own process group (G1)", async () => {
+    const { spawnImpl, calls } = spawnSeam(424242);
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+
+    await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 8080,
+        flags: [],
+        fork: "upstream",
+        warmupTokens: 0,
+      },
+      { spawnImpl: spawnImpl as never, fetchImpl },
+    );
+
+    expect((calls[0]!.opts as { detached?: boolean }).detached).toBe(true);
+  });
+
+  it("prepends --host 127.0.0.1 and --port from the boot context", async () => {
+    const { spawnImpl, calls } = spawnSeam(424242);
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+
+    await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 9123,
+        flags: ["--ctx-size", "1000"],
+        fork: "upstream",
+        warmupTokens: 0,
+      },
+      { spawnImpl: spawnImpl as never, fetchImpl },
+    );
+
+    const args = calls[0]!.args;
+    expect(args).toContain("--host");
+    expect(args).toContain("127.0.0.1");
+    expect(args).toContain("--port");
+    expect(args).toContain("9123");
+  });
+
+  it("on health timeout, kills the CHILD group — never the daemon", async () => {
+    const { spawnImpl } = spawnSeam(424242);
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch;
+    // First liveness probe: alive (so SIGTERM is sent); second: gone (fast exit).
+    let probes = 0;
+    const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) {
+        probes++;
+        return probes === 1;
+      }
+      return true;
+    });
+
+    await expect(
+      bootLlamaServer(
+        {
+          binaryPath: "/bin/llama-server",
+          modelPath: "/models/qwen.gguf",
+          port: 8080,
+          flags: [],
+          fork: "upstream",
+          warmupTokens: 0,
+        },
+        {
+          spawnImpl: spawnImpl as never,
+          fetchImpl,
+          killImpl: killImpl as never,
+          now: () => Date.now(),
+          healthDeadlineMs: 100, // short deadline so the timeout fires fast
+        },
+      ),
+    ).rejects.toThrow(/timed out/);
+
+    // The cleanup must target the child's group (-424242), not the daemon.
+    expect(killImpl).toHaveBeenCalledWith(-424242, "SIGTERM");
+    expect(killImpl).not.toHaveBeenCalledWith(process.pid, expect.anything());
+    expect(killImpl).not.toHaveBeenCalledWith("SIGTERM"); // no-arg kill (old bug)
+  });
+
+  it("waits for warmup to complete before resolving (Perf #2)", async () => {
+    const { spawnImpl } = spawnSeam(424242);
+    let warmupCalled = false;
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/health")) return { ok: true, status: 200 };
+      if (u.endsWith("/completion")) {
+        warmupCalled = true;
+        return { ok: true, status: 200 };
+      }
+      return { ok: false, status: 404 };
+    }) as unknown as typeof fetch;
+
+    const state = await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 8080,
+        flags: [],
+        fork: "upstream",
+        warmupTokens: 350,
+      },
+      { spawnImpl: spawnImpl as never, fetchImpl },
+    );
+
+    expect(warmupCalled).toBe(true);
+    expect(state.pid).toBe(424242);
+  });
+});
+
+describe("stopLlamaServer (group kill, G1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it(
+    "sends SIGTERM to the process group (-pid), then SIGKILL if it lingers",
+    async () => {
+      // The group never dies: every liveness probe reports "alive", so the
+      // 2s grace window fully elapses and SIGKILL is issued.
+      const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) =>
+        signal === 0 ? true : true,
+      );
+
+      await stopLlamaServer(424242, { killImpl: killImpl as never });
+
+      // Graceful group kill first…
+      expect(killImpl).toHaveBeenCalledWith(-424242, "SIGTERM");
+      // …and a force group kill because it lingered past the 2s window.
+      expect(killImpl).toHaveBeenCalledWith(-424242, "SIGKILL");
+    },
+    5000, // the 2s grace window runs in real time
+  );
+
+  it("resolves immediately when the group is already gone", async () => {
+    const killImpl = vi.fn(() => false); // signal 0 → not found
+
+    await stopLlamaServer(999999, { killImpl: killImpl as never });
+
+    // No SIGTERM/SIGKILL issued — only the liveness probe.
+    expect(killImpl).toHaveBeenCalledTimes(1);
+    expect(killImpl).toHaveBeenCalledWith(-999999, 0);
+  });
+});
+
+describe("killProcessGroup / killAllOwnedGroups (G1 daemon-exit handler)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it(
+    "killProcessGroup sends SIGTERM to -pid and SIGKILL after the grace window",
+    async () => {
+      // The group never dies: every liveness probe reports "alive", so the
+      // 2s grace window fully elapses and SIGKILL is issued.
+      const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) =>
+        signal === 0 ? true : true,
+      );
+
+      await killProcessGroup(424242, { killImpl: killImpl as never });
+
+      expect(killImpl).toHaveBeenCalledWith(-424242, "SIGTERM");
+      expect(killImpl).toHaveBeenCalledWith(-424242, "SIGKILL");
+    },
+    5000, // the 2s grace window runs in real time
+  );
+
+  it(
+    "killAllOwnedGroups kills every tracked group and clears the set",
+    async () => {
+      // Both groups are alive (probe → true) so each gets a SIGTERM; they
+      // linger, so each also gets a SIGKILL after the grace window.
+      const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) =>
+        signal === 0 ? true : true,
+      );
+      const seams: LifecycleSeams = { killImpl: killImpl as never };
+
+      // Track two groups, then shut them all down.
+      trackOwnedGroup(111, seams);
+      trackOwnedGroup(222, seams);
+
+      await killAllOwnedGroups(seams);
+
+      expect(killImpl).toHaveBeenCalledWith(-111, "SIGTERM");
+      expect(killImpl).toHaveBeenCalledWith(-222, "SIGTERM");
+      // Set is cleared after the sweep.
+      expect(ownedGroupCount(seams)).toBe(0);
+    },
+    5000, // two sequential 2s grace windows run in real time
+  );
+});
+
+
 
 describe("waitForHealth", () => {
   afterEach(() => {

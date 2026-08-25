@@ -258,6 +258,8 @@ export interface LlamaCppServerFlags {
   readonly cacheRam?: number;
   /** --reasoning-budget. Reasoning token cap. */
   readonly reasoningBudget?: number;
+  /** --reasoning-preserve. Preserve thinking trace in context history. Boot script default is on. */
+  readonly reasoningPreserve?: boolean;
   /** --flash-attn. FlashAttention on/off. */
   readonly flashAttn?: "on" | "off";
   /** Post-boot warm-up generation length (tokens). */

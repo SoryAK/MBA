@@ -69,6 +69,42 @@ export type MbaEnsureModelResult =
   | { readonly status: "loaded"; readonly id: string }
   | { readonly status: "switched"; readonly id: string };
 
+export type MbaModelDialFile = "server_setup" | "client";
+
+export interface MbaModelDial {
+  readonly field: string;
+  readonly file: MbaModelDialFile;
+  readonly current: unknown;
+  readonly restartRequired: boolean;
+}
+
+export interface MbaModelConfigResult {
+  readonly modelId: string;
+  readonly files: {
+    readonly yamlPath: string;
+    readonly serverSetupPath: string;
+    readonly envSetupPaths: string[];
+    readonly blockCount?: number;
+  };
+  readonly fields: MbaModelDial[];
+}
+
+export interface MbaSetModelConfigInput {
+  readonly id: string;
+  readonly file: MbaModelDialFile;
+  readonly field: string;
+  readonly value: unknown;
+}
+
+export interface MbaSetModelConfigResult {
+  readonly file: MbaModelDialFile;
+  readonly field: string;
+  readonly before: unknown;
+  readonly after: unknown;
+  readonly restartRequired: boolean;
+  readonly modelLoaded: boolean;
+}
+
 export type ServiceCallResult<T> =
   | { readonly ok: true; readonly data: T }
   | { readonly ok: false; readonly error: string };
@@ -200,4 +236,24 @@ export function fetchEnsureModel(
     method: "POST",
     body: JSON.stringify({ id }),
   });
+}
+
+export function fetchSetModelConfig(
+  opts: MbaServiceClientOptions,
+  input: MbaSetModelConfigInput,
+): Promise<ServiceCallResult<MbaSetModelConfigResult>> {
+  return callService<MbaSetModelConfigResult>(opts, "/models/config", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function fetchModelConfig(
+  opts: MbaServiceClientOptions,
+  id: string,
+): Promise<ServiceCallResult<MbaModelConfigResult>> {
+  return callService<MbaModelConfigResult>(
+    opts,
+    `/models/config?id=${encodeURIComponent(id)}`,
+  );
 }

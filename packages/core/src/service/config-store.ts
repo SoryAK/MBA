@@ -57,6 +57,8 @@ export interface MbaStorePaths {
   readonly versionPath: string;
   /** Discovery file the service writes on boot so consumers can find it. */
   readonly serviceInfoPath: string;
+  /** Upstream model-server registry (ADR-0097 Phase 1). */
+  readonly upstreamsPath: string;
 }
 
 /** Result of a store read. */
@@ -79,6 +81,7 @@ export function defaultStorePaths(baseDir: string = join(homedir(), ".mba")): Mb
     ruleClassesPath: join(baseDir, "mba", "rule-classes.json"),
     versionPath: join(baseDir, "mba", "version.json"),
     serviceInfoPath: join(baseDir, "mba", "service.json"),
+    upstreamsPath: join(baseDir, "mba", "upstreams.json"),
   };
 }
 

@@ -25,6 +25,12 @@ export interface CatalogEntry {
   readonly family?: string;
   /** Absolute path to the weights file, or undefined if undeclared. */
   readonly modelFile?: string;
+  /**
+   * Adapter `client.url` (e.g. `http://127.0.0.1:8080/v1`) — the YAML rung
+   * of the probe fallback (registry → YAML → env). May carry a trailing
+   * `/v1`; `resolveProbeTarget` strips it before probing.
+   */
+  readonly clientUrl?: string;
   /** Absolute path to the adapter YAML file itself. */
   readonly yamlPath: string;
 }
@@ -32,6 +38,7 @@ export interface CatalogEntry {
 function isAdapter(value: unknown): value is {
   metadata: { id: string; name?: string; family?: string };
   identity: { model?: { file?: unknown } | null };
+  client?: { url?: unknown } | null;
 } {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -83,11 +90,13 @@ export function readModelCatalog(adapterDir: string): CatalogEntry[] {
       continue; // lineage-level adapter, not a switchable model
     }
     const meta = raw.metadata;
+    const clientUrl = raw.client?.url;
     entries.push({
       id: meta.id,
       name: meta.name ?? meta.id,
       family: meta.family,
       modelFile: isAbsolute(modelFile) ? modelFile : resolve(dirname(file), modelFile),
+      clientUrl: typeof clientUrl === "string" && clientUrl.length > 0 ? clientUrl : undefined,
       yamlPath: file,
     });
   }

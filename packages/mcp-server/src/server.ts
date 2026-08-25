@@ -10,6 +10,7 @@
  *   - mba_server_status   — service health/liveness probe
  *   - mba_list_models     — model plane listing + live loaded state (ADR-0093)
  *   - mba_ensure_model    — user-triggered model switch (ADR-0093, OFF by default)
+ *   - mba_set_model_config — set one dial on a model's server_setup/client config
  *
  * The service tools are thin HTTP wrappers: the global MBA service
  * (ADR-0092) stays the single source of truth and the only file writer.
@@ -31,6 +32,7 @@ import { createListModelHandler } from "./tools/list-models.js";
 import { createModelRegistryHandler } from "./tools/model-registry.js";
 import { createResolveConfigHandler } from "./tools/resolve-config.js";
 import { createServerStatusHandler } from "./tools/server-status.js";
+import { createSetModelConfigHandler } from "./tools/set-model-config.js";
 import { createSetRulesHandler } from "./tools/set-rules.js";
 
 const mbaDir = process.env.MBA_DIR
@@ -175,6 +177,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["id"],
         },
       },
+      {
+        name: "mba_set_model_config",
+        description:
+          "Set a single dial on a model's config via the MBA service. `file` is " +
+          "'server_setup' (llama.cpp boot flags: ctxSize, gpuLayers, threads, " +
+          "parallel, cacheReuse, cacheRam, specType, specDraftMax, " +
+          "reasoningBudget, flashAttn, warmupTokens — all require a model " +
+          "restart) or 'client' (url, contextSize, maxOutputTokens, " +
+          "toolCalling, vision — synced live, no restart). The service validates " +
+          "the value against the field's kind, writes atomically, and reports " +
+          "{ before, after, restartRequired, modelLoaded }. This tool never " +
+          "restarts the model — the caller decides. Requires the MBA service to " +
+          "be running.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Model id from the adapter tree (see mba_list_models)",
+            },
+            file: {
+              type: "string",
+              enum: ["server_setup", "client"],
+              description: "Which config file the field lives in",
+            },
+            field: {
+              type: "string",
+              description: "Field name within that file (e.g. ctxSize, vision)",
+            },
+            value: {
+              description: "New value (number, boolean, or string per the field's kind)",
+            },
+          },
+          required: ["id", "file", "field", "value"],
+        },
+      },
     ],
   };
 });
@@ -186,6 +224,7 @@ const handleSetRules = createSetRulesHandler();
 const handleServerStatus = createServerStatusHandler();
 const handleListModels = createListModelHandler();
 const handleEnsureModel = createEnsureModelHandler();
+const handleSetModelConfig = createSetModelConfigHandler();
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const args = (request.params.arguments ?? {}) as Record<string, unknown>;
@@ -224,6 +263,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "mba_ensure_model": {
       result = await handleEnsureModel({
         id: typeof args.id === "string" ? args.id : "",
+      });
+      break;
+    }
+    case "mba_set_model_config": {
+      result = await handleSetModelConfig({
+        id: typeof args.id === "string" ? args.id : "",
+        // Pass through verbatim — the service validates the enum and returns
+        // an accurate 400 for anything else.
+        file: args.file as "server_setup" | "client",
+        field: typeof args.field === "string" ? args.field : "",
+        value: args.value,
       });
       break;
     }

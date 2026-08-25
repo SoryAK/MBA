@@ -6,6 +6,7 @@ import { createServerStatusHandler } from "./server-status.js";
 import { createModelRegistryHandler } from "./model-registry.js";
 import { createListModelHandler } from "./list-models.js";
 import { createEnsureModelHandler } from "./ensure-model.js";
+import { createSetModelConfigHandler } from "./set-model-config.js";
 
 function okJson(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -13,6 +14,67 @@ function okJson(body: unknown): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+describe("mba_set_model_config", () => {
+  it("returns the service body on success", async () => {
+    const handle = createSetModelConfigHandler({
+      baseUrl: "http://x",
+      fetchImpl: (async () =>
+        okJson({
+          file: "server_setup",
+          field: "ctxSize",
+          before: 110000,
+          after: 120000,
+          restartRequired: true,
+          modelLoaded: true,
+        })) as typeof fetch,
+    });
+    const out = await handle({
+      id: "qwen3.8-27b",
+      file: "server_setup",
+      field: "ctxSize",
+      value: 120000,
+    });
+    expect(out).toEqual({
+      file: "server_setup",
+      field: "ctxSize",
+      before: 110000,
+      after: 120000,
+      restartRequired: true,
+      modelLoaded: true,
+    });
+    expect(out.error).toBeUndefined();
+  });
+
+  it("surfaces a service error as { error }", async () => {
+    const handle = createSetModelConfigHandler({
+      baseUrl: "http://x",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ error: "unknown model: nope" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+    const out = await handle({
+      id: "nope",
+      file: "server_setup",
+      field: "ctxSize",
+      value: 1000,
+    });
+    expect(out.error).toMatch(/unknown model/);
+  });
+
+  it("surfaces an unreachable service as { error }", async () => {
+    const handle = createSetModelConfigHandler({ baseDir: "/nonexistent" });
+    const out = await handle({
+      id: "qwen3.8-27b",
+      file: "client",
+      field: "vision",
+      value: false,
+    });
+    expect(out.error).toMatch(/no base URL|unreachable/);
+  });
+});
 
 const adapters: LoadedAdapter[] = [
   {

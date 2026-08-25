@@ -34,6 +34,10 @@ describe("config-store", () => {
     expect(existsSync(paths.tcbPath)).toBe(true);
   });
 
+  it("resolves the upstream registry path under the mba/ subdir", () => {
+    expect(paths.upstreamsPath).toBe(join(paths.baseDir, "mba", "upstreams.json"));
+  });
+
   it("reads back a persisted TCB config", () => {
     readGlobalConfig(paths); // seed
     const custom = { ...defaultToolCircuitBreakerConfig() };
