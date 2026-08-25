@@ -17,7 +17,7 @@ behavioral rules on the model's tool calls.
   SQLite.
 - **The global service.** Owns the resolved config and rule state on one
   machine. It binds `127.0.0.1` on an OS-assigned port and writes a
-  discovery file (`~/.mba/mba/service.json`) so consumers can find it.
+  discovery file (`<state dir>/mba/service.json`) so consumers can find it.
 
 The companion package [`@mba-ai/mcp-server`](../mcp-server) is a thin MCP
 client over this service — it has zero dependency on the framework.
@@ -36,14 +36,19 @@ npx @mba-ai/core
 npm run start:service
 ```
 
-The service binds `127.0.0.1:<port>` and writes `~/.mba/mba/service.json`.
+The service binds `127.0.0.1:<port>` and writes a discovery file
+(`<state dir>/mba/service.json`).
+
+Upgrading from a pre-0.1.1 install? Run `mba migrate-paths` once — it moves
+the legacy `~/.mba` state and `~/models/adapters` store to the OS-aware
+locations (local-only, works with the service stopped, never overwrites).
 
 ## Environment variables
 
 |Variable|Description|Default|
 |---|---|---|
-|`MBA_BASE_DIR`|Store base dir (service discovery + SQLite state)|`~/.mba`|
-|`MBA_ADAPTER_DIR`|Directory containing the adapter lineage tree|`~/models/adapters`|
+|`MBA_BASE_DIR`|State dir (service discovery + SQLite state)|OS-aware (see `src/service/paths.ts`)|
+|`MBA_ADAPTER_DIR`|Directory containing the adapter lineage tree|OS-aware model store (see `src/service/paths.ts`)|
 |`MBA_UPSTREAM_URL`|Upstream model endpoint the service fronts|—|
 
 ## Development

@@ -9,7 +9,7 @@ Desktop) read and tune the global MBA config.
 The server is a **thin client** over the global MBA service — it has zero
 dependency on the framework. It loads the adapter registry from a
 `.MBA/adapters/` directory and, for the service-backed tools, talks to the
-running global service (discovered via `~/.mba/mba/service.json`).
+running global service (discovered via `<state dir>/mba/service.json`).
 
 Tools:
 
@@ -49,7 +49,7 @@ npx -y @mba-ai/mcp-server
 |`MBA_DIR`|Directory containing `.MBA/adapters/`|`./.MBA`|
 |`MBA_WORKSPACE_ROOT`|Workspace root for file path scoping|`process.cwd()`|
 |`MBA_SERVICE_URL`|Explicit service base URL (skips discovery)|—|
-|`MBA_BASE_DIR`|Base dir for service discovery file|`~/.mba`|
+|`MBA_BASE_DIR`|Base dir for service discovery file|OS-aware (see `@mba-ai/core` `src/service/paths.ts`)|
 
 ## Example tool call
 
