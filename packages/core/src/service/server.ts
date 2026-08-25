@@ -58,13 +58,14 @@ import { readModelDials, setModelDial, type ModelDialFile } from "./model-config
 import {
   listUpstreams,
   readRegistry,
-  removeByPid,
+  removeById,
   resolveUpstream,
   upsertEntry,
   writeRegistry,
 } from "./upstream-registry.js";
 import { bootServer } from "./server-boot.js";
-import { stopLlamaServer, type LifecycleSeams } from "../mba/index.js";
+import { getServerTypeOps, type ServerType } from "./server-types.js";
+import type { LifecycleSeams } from "../mba/index.js";
 
 export interface MbaServiceAppOptions {
   readonly paths?: MbaStorePaths;
@@ -267,25 +268,39 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   app.get("/servers", async (c) => {
     const registry = readRegistry(paths.upstreamsPath);
     const fetchImpl = opts.fetch ?? fetch;
-    const health = new Map<number, boolean>();
+    // Per-type health (Phase 3): each entry is probed by its own type's
+    // capability block (llama.cpp → /health on its port, ollama → /api/tags
+    // on the daemon). Unknown types fall back to the port /health probe.
+    const health = new Map<string, boolean>();
     await Promise.all(
       registry.map(async (e) => {
-        health.set(e.port, await probeServerHealth(e.port, fetchImpl));
+        const ops = getServerTypeOps(e.serverType);
+        health.set(
+          e.id,
+          ops ? await ops.health(e, fetchImpl) : await probeServerHealth(e.port, fetchImpl),
+        );
       }),
     );
     const healthyIds = new Set(
-      registry.filter((e) => health.get(e.port)).map((e) => e.id),
+      registry.filter((e) => health.get(e.id)).map((e) => e.id),
     );
-    const servers = registry.map((e) => ({
-      id: e.id,
-      serverType: e.serverType,
-      modelFile: e.modelFile,
-      port: e.port,
-      pid: e.pid,
-      startedAt: e.startedAt,
-      healthy: health.get(e.port) ?? false,
-      resolved: resolveUpstream(registry, e.modelFile, healthyIds)?.id === e.id,
-    }));
+    const servers = registry.map((e) => {
+      const resolved = resolveUpstream(registry, e.modelFile, healthyIds)?.id === e.id;
+      // Q2 (Phase 3): a same-model entry that lost resolution is a labeled
+      // duplicate — the CLI can say "you have two <model> servers".
+      const duplicate = !resolved && listUpstreams(registry, e.modelFile).length > 1;
+      return {
+        id: e.id,
+        serverType: e.serverType,
+        modelFile: e.modelFile,
+        port: e.port,
+        pid: e.pid,
+        startedAt: e.startedAt,
+        healthy: health.get(e.id) ?? false,
+        resolved,
+        duplicate,
+      };
+    });
     return c.json({ servers });
   });
 
@@ -296,20 +311,33 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     } catch {
       return c.json({ error: "invalid JSON body" }, 400);
     }
-    const input = body as { modelFile?: unknown; port?: unknown; fork?: unknown };
+    const input = body as {
+      serverType?: unknown;
+      modelFile?: unknown;
+      modelRef?: unknown;
+      port?: unknown;
+      fork?: unknown;
+    };
+    const serverType: ServerType =
+      input.serverType === "ollama" ? "ollama" : "llama.cpp";
+    if (input.serverType !== undefined && input.serverType !== "llama.cpp" && input.serverType !== "ollama") {
+      return c.json({ error: "body.serverType must be 'llama.cpp' or 'ollama'" }, 400);
+    }
     if (
-      !input ||
-      typeof input.modelFile !== "string" ||
-      input.modelFile.length === 0 ||
       typeof input.port !== "number" ||
       !Number.isInteger(input.port) ||
       input.port <= 0 ||
       input.port > 65535
     ) {
-      return c.json(
-        { error: "body must be { modelFile: string, port: integer 1-65535 }" },
-        400,
-      );
+      return c.json({ error: "body.port must be an integer 1-65535" }, 400);
+    }
+    // llama.cpp needs modelFile; ollama needs modelRef.
+    if (serverType === "ollama") {
+      if (typeof input.modelRef !== "string" || input.modelRef.length === 0) {
+        return c.json({ error: "body.modelRef (model tag) is required for ollama" }, 400);
+      }
+    } else if (typeof input.modelFile !== "string" || input.modelFile.length === 0) {
+      return c.json({ error: "body.modelFile is required for llama.cpp" }, 400);
     }
     if (
       input.fork !== undefined &&
@@ -319,7 +347,9 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       return c.json({ error: "body.fork must be 'upstream' or 'cachyllama'" }, 400);
     }
     const result = await bootServer({
-      modelFile: input.modelFile,
+      serverType,
+      modelFile: input.modelFile as string | undefined,
+      modelRef: input.modelRef as string | undefined,
       port: input.port,
       fork: input.fork === "cachyllama" ? "cachyllama" : "upstream",
       adapterDir: opts.adapterDir ?? "",
@@ -328,7 +358,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     });
     if (!result.ok) {
       const status =
-        result.code === "port-busy" ? 409 : result.code === "unknown-model" ? 404 : 500;
+        result.code === "port-busy" || result.code === "duplicate-model"
+          ? 409
+          : result.code === "unknown-model"
+            ? 404
+            : 500;
       return c.json({ error: result.error }, status);
     }
     // Persist the entry (merge, never clobber).
@@ -344,23 +378,38 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     } catch {
       return c.json({ error: "invalid JSON body" }, 400);
     }
-    const input = body as { pid?: unknown };
-    if (
-      !input ||
-      typeof input.pid !== "number" ||
-      !Number.isInteger(input.pid) ||
-      input.pid <= 0
-    ) {
-      return c.json({ error: "body must be { pid: positive integer }" }, 400);
+    const input = body as { id?: unknown; pid?: unknown };
+    const hasId = typeof input?.id === "string" && (input.id as string).length > 0;
+    const hasPid =
+      typeof input?.pid === "number" &&
+      Number.isInteger(input.pid) &&
+      (input.pid as number) > 0;
+    if (!hasId && !hasPid) {
+      return c.json(
+        { error: "body must be { id: string } (or legacy { pid: positive integer })" },
+        400,
+      );
+    }
+    const registry = readRegistry(paths.upstreamsPath);
+    // Resolve the target entry: by id (type-agnostic) or by pid (legacy
+    // llama.cpp path — Ollama entries have no pid).
+    const entry = hasId
+      ? registry.find((e) => e.id === input.id)
+      : registry.find((e) => e.pid === input.pid);
+    if (!entry) {
+      return c.json({ error: `no registered server ${hasId ? `with id ${input.id}` : `with pid ${input.pid}`}` }, 404);
+    }
+    const ops = getServerTypeOps(entry.serverType);
+    if (!ops) {
+      return c.json({ error: `unknown server type ${entry.serverType}` }, 500);
     }
     try {
-      await stopLlamaServer(input.pid, opts.lifecycleSeams);
+      await ops.stop(entry, opts.lifecycleSeams);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "stop failed" }, 500);
     }
-    const registry = readRegistry(paths.upstreamsPath);
-    writeRegistry(paths.upstreamsPath, removeByPid(registry, input.pid));
-    return c.json({ stopped: input.pid });
+    writeRegistry(paths.upstreamsPath, removeById(registry, entry.id));
+    return c.json({ stopped: entry.id });
   });
 
   return app;

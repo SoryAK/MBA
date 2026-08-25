@@ -23,14 +23,13 @@ import { dirname, join } from "node:path";
 import YAML from "yaml";
 import {
   buildLlamaServerFlags,
-  bootLlamaServer,
   resolveMbaConfig,
   sanitizeLlamaCppServerFlags,
   type LifecycleSeams,
-  type LlamaCppServerFlags,
 } from "../mba/index.js";
 import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
-import { readRegistry, type UpstreamEntry } from "./upstream-registry.js";
+import { listUpstreams, readRegistry, type UpstreamEntry } from "./upstream-registry.js";
+import { getServerTypeOps, type ServerType } from "./server-types.js";
 
 /** The two llama.cpp fork variants (boot-script parity). */
 export type Fork = "upstream" | "cachyllama";
@@ -115,8 +114,12 @@ export function resolveBootRecipe(modelFile: string, adapterDir: string): BootRe
 
 /** Input to `bootServer`. */
 export interface BootServerInput {
-  /** Absolute GGUF path to boot. */
-  readonly modelFile: string;
+  /** Server type to boot (default `llama.cpp`). Selects the type-table row. */
+  readonly serverType?: ServerType;
+  /** llama.cpp: absolute GGUF path to boot. */
+  readonly modelFile?: string;
+  /** ollama: model tag (e.g. `qwen3.8:27b`). */
+  readonly modelRef?: string;
   /** TCP port to bind (127.0.0.1). The G2 decision input. */
   readonly port: number;
   /** Fork variant (default `upstream`). */
@@ -127,6 +130,8 @@ export interface BootServerInput {
   readonly registryPath: string;
   /** Explicit binary override (default: `defaultBinaryPath(fork)`). */
   readonly binaryPath?: string;
+  /** ollama: daemon base URL (default `OLLAMA_DEFAULT_HOST`). */
+  readonly host?: string;
   /** Lifecycle seams (spawn/fetch/kill) — injectable for tests. */
   readonly seams?: LifecycleSeams;
 }
@@ -136,7 +141,7 @@ export type BootServerResult =
   | { readonly ok: true; readonly entry: UpstreamEntry }
   | {
       readonly ok: false;
-      readonly code: "port-busy" | "unknown-model" | "boot-failed";
+      readonly code: "port-busy" | "duplicate-model" | "unknown-model" | "boot-failed";
       readonly error: string;
     };
 
@@ -144,57 +149,98 @@ export type BootServerResult =
  * Boot a model server in-daemon and return the registry entry to persist.
  *
  * G2 port rule: a port already present in the registry is refused
- * (`port-busy`); a new port for the same model is allowed (merge, never
- * clobber). The boot resolves only after health + warmup (Perf #2); a failed
- * boot is reported as `boot-failed` and leaves no registry entry.
+ * (`port-busy`). Q1 duplicate-model rule (Phase 3): a model file already
+ * served by a registered entry is refused (`duplicate-model`) — one server
+ * per model; stop the existing one first. The boot resolves only after
+ * health + warmup (Perf #2); a failed boot is reported as `boot-failed` and
+ * leaves no registry entry.
  */
 export async function bootServer(input: BootServerInput): Promise<BootServerResult> {
-  const fork = input.fork ?? "upstream";
-
-  // G2: refuse a port that is already in use. A new port is always allowed.
-  const registry = readRegistry(input.registryPath);
-  const busy = registry.find((e) => e.port === input.port);
-  if (busy) {
-    return {
-      ok: false,
-      code: "port-busy",
-      error: `port ${input.port} is already in use by ${busy.id}`,
-    };
-  }
-
-  // Resolve the recipe (404 when the model is not in the adapter tree).
-  let recipe: BootRecipe;
-  try {
-    recipe = resolveBootRecipe(input.modelFile, input.adapterDir);
-  } catch (err) {
+  const serverType = input.serverType ?? "llama.cpp";
+  const ops = getServerTypeOps(serverType);
+  if (!ops) {
     return {
       ok: false,
       code: "unknown-model",
-      error: err instanceof Error ? err.message : String(err),
+      error: `unknown server type ${serverType}`,
+    };
+  }
+  const fork = input.fork ?? "upstream";
+
+  // The model key for the Q1 duplicate check: GGUF path (llama.cpp) or
+  // model tag (ollama).
+  const modelKey = serverType === "ollama" ? input.modelRef : input.modelFile;
+  if (!modelKey) {
+    return {
+      ok: false,
+      code: "unknown-model",
+      error: `${serverType} boot requires ${serverType === "ollama" ? "modelRef" : "modelFile"}`,
     };
   }
 
-  // Boot (health + warmup). A failure kills the child group and reports.
+  const registry = readRegistry(input.registryPath);
+
+  // G2: refuse a port already bound by a process-per-model server. Ollama
+  // entries all share the daemon port, so the port check applies only to
+  // types that bind their own port (llama.cpp) — for Ollama the Q1
+  // duplicate check (one entry per tag) is the guard.
+  if (serverType !== "ollama") {
+    const busy = registry.find((e) => e.port === input.port);
+    if (busy) {
+      return {
+        ok: false,
+        code: "port-busy",
+        error: `port ${input.port} is already in use by ${busy.id}`,
+      };
+    }
+  }
+
+  // Q1: refuse a second server for the same model. `listUpstreams` carries
+  // the same path/basename tolerance as the resolve rule and sorts
+  // newest-first, so the named entry is the most recently booted one.
+  const duplicates = listUpstreams(registry, modelKey);
+  if (duplicates.length > 0) {
+    const existing = duplicates[0];
+    return {
+      ok: false,
+      code: "duplicate-model",
+      error:
+        `model ${modelKey} is already served by ${existing?.id ?? "an existing entry"} ` +
+        `on port ${existing?.port ?? "?"} — stop it first (mba servers stop ${existing?.id ?? "?"})`,
+    };
+  }
+
+  // Resolve the llama.cpp recipe (404 when the model is not in the adapter
+  // tree). Ollama has no recipe — the tag is the whole identity.
+  let recipe: BootRecipe | undefined;
+  if (serverType !== "ollama") {
+    try {
+      recipe = resolveBootRecipe(modelKey, input.adapterDir);
+    } catch (err) {
+      return {
+        ok: false,
+        code: "unknown-model",
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  // Dispatch to the type's boot (health + warmup for llama.cpp; load for
+  // ollama). A failure reports `boot-failed` and leaves no registry entry.
   try {
-    const state = await bootLlamaServer(
+    const entry = await ops.boot(
       {
-        binaryPath: input.binaryPath ?? defaultBinaryPath(fork),
-        modelPath: recipe.modelFile,
+        modelFile: recipe?.modelFile ?? modelKey,
+        modelRef: input.modelRef,
         port: input.port,
-        flags: recipe.cliArgs,
+        host: input.host,
         fork,
-        warmupTokens: recipe.warmupTokens,
+        binaryPath: input.binaryPath ?? (serverType !== "ollama" ? defaultBinaryPath(fork) : undefined),
+        cliArgs: recipe?.cliArgs,
+        warmupTokens: recipe?.warmupTokens,
       },
       input.seams,
     );
-    const entry: UpstreamEntry = {
-      id: `llama-cpp-${input.port}`,
-      serverType: "llama.cpp",
-      modelFile: recipe.modelFile,
-      port: input.port,
-      pid: state.pid,
-      startedAt: new Date().toISOString(),
-    };
     return { ok: true, entry };
   } catch (err) {
     return {

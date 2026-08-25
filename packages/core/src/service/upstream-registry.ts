@@ -38,8 +38,12 @@ export interface UpstreamEntry {
   readonly modelFile: string;
   /** TCP port the server listens on (127.0.0.1). */
   readonly port: number;
-  /** PID of the server process. */
-  readonly pid: number;
+  /**
+   * PID of the server process. Present for process-per-model types
+   * (llama.cpp — the G1 owned group); absent for API-managed types
+   * (ollama — the daemon owns the process, we only load/unload the model).
+   */
+  readonly pid?: number;
   /** ISO timestamp of the boot. Recency input for the resolve rule. */
   readonly startedAt: string;
   /** Server stdout log path (informational). */
@@ -62,7 +66,7 @@ function isUpstreamEntry(value: unknown): value is UpstreamEntry {
     typeof v.serverType === "string" &&
     typeof v.modelFile === "string" &&
     typeof v.port === "number" &&
-    typeof v.pid === "number" &&
+    (v.pid === undefined || typeof v.pid === "number") &&
     typeof v.startedAt === "string"
   );
 }
@@ -116,6 +120,11 @@ export function upsertEntry(
 /** Remove the entry with the given PID (stop path). No-op when absent. */
 export function removeByPid(entries: readonly UpstreamEntry[], pid: number): UpstreamEntry[] {
   return entries.filter((e) => e.pid !== pid);
+}
+
+/** Remove the entry with the given id (type-agnostic stop path). No-op when absent. */
+export function removeById(entries: readonly UpstreamEntry[], id: string): UpstreamEntry[] {
+  return entries.filter((e) => e.id !== id);
 }
 
 /**
