@@ -34,8 +34,26 @@ npx @mba-ai/core
 npm run start:service
 ```
 
-The service binds `127.0.0.1:<port>` and writes `~/.mba/mba/service.json`.
-Env: `MBA_BASE_DIR` (store base dir, default `~/.mba`; `CYARD_MBA_BASE_DIR` is a deprecated alias).
+The service binds `127.0.0.1:<port>` and writes a discovery file
+(`<state dir>/mba/service.json`) so consumers can find it.
+Env: `MBA_BASE_DIR` (state dir override) and `MBA_ADAPTER_DIR` (model store
+override). Both default to OS-aware locations (XDG dirs on Linux,
+`%APPDATA%`/`%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on
+macOS — see `packages/core/src/service/paths.ts`).
+
+Upgrading from a pre-0.1.1 install? Run `mba migrate-paths` once — it moves
+your legacy `~/.mba` state and `~/models/adapters` store to the OS-aware
+locations (local-only, works with the service stopped, never overwrites).
+
+## Model onboarding
+
+```sh
+mba pull <url> --id <id> --sha256 <digest> [--family <family>]
+```
+
+One-command onboarding (ADR-0098): downloads a GGUF (resume + sha256
+verify), parses its header into a profile, and scaffolds the two-tier
+adapter binding (family + adapter) with a TODO-marked draft adapter.
 
 ## MCP control plane
 
@@ -68,7 +86,7 @@ Requires Node ≥ 20.
 ## Documentation
 
 - [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — the full system manual
-- [`docs/adr/`](docs/adr/) — architecture decision records (0084–0095)
+- [`docs/adr/`](docs/adr/) — architecture decision records (0084–0098)
 
 ## License
 
