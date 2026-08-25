@@ -1,7 +1,8 @@
 /**
  * Model catalog reader (ADR-0093 Phase 1).
  *
- * Scans the central model home's adapter tree (`~/models/adapters`) and
+ * Scans the central model home's adapter tree (the OS-aware model store,
+ * see service/paths.ts) and
  * returns the switchable models: leaf adapters that declare a weights file
  * (`identity.model.file`). Lineage-level adapters (e.g. `family.yaml`) are
  * config, not switchable models, and are excluded.

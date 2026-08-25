@@ -34,8 +34,7 @@
  * Exit codes: 0 = ok, 2 = usage/service error (message on stderr).
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -45,6 +44,14 @@ import {
   type ModelDial,
   type ModelEntry,
 } from "./interactive.js";
+import {
+  defaultModelStoreRoot,
+  defaultStateDir,
+  ensureDir,
+  executeMigration,
+  legacyModelStoreRoot,
+  legacyStateDir,
+} from "../service/paths.js";
 
 // --- Service discovery (mirrors mcp-server's service-client) ---------------
 
@@ -55,7 +62,7 @@ interface ServiceInfo {
 function resolveServiceUrl(): string | null {
   const envUrl = process.env.MBA_SERVICE_URL ?? process.env.CYARD_MBA_SERVICE_URL;
   if (envUrl && envUrl.length > 0) return envUrl;
-  const infoPath = join(homedir(), ".mba", "mba", "service.json");
+  const infoPath = join(defaultStateDir(), "mba", "service.json");
   if (!existsSync(infoPath)) return null;
   try {
     const raw = JSON.parse(readFileSync(infoPath, "utf8")) as unknown;
@@ -509,6 +516,64 @@ async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<voi
   }
 }
 
+// --- Path migration (ADR-0097 Phase 4) ---------------------------------------
+
+/**
+ * Probe a directory: does it exist, and if so is it empty? These two facts
+ * drive the migration decision (see planMigration in service/paths.ts).
+ */
+function probeDir(dir: string): { exists: boolean; empty: boolean } {
+  const exists = existsSync(dir);
+  const empty = exists && readdirSync(dir).length === 0;
+  return { exists, empty };
+}
+
+/**
+ * `mba migrate-paths` — one-time move of MBA's two homes from the legacy
+ * hardcoded locations to the OS-aware ones. Local filesystem only: it does
+ * NOT talk to the service, so it works even while the service is stopped.
+ *
+ * For each home (state, then store): if the legacy source exists and the new
+ * destination is absent or empty, move it (rename when same-device, copy
+ * otherwise). A non-empty destination is refused — we never clobber data.
+ * Idempotent: a second run finds no source and reports nothing to move.
+ */
+function cmdMigratePaths(): void {
+  const homes: ReadonlyArray<{ label: string; from: string; to: string }> = [
+    { label: "state", from: legacyStateDir(), to: defaultStateDir() },
+    { label: "store", from: legacyModelStoreRoot(), to: defaultModelStoreRoot() },
+  ];
+  let moved = 0;
+  for (const home of homes) {
+    const src = probeDir(home.from);
+    const dst = probeDir(home.to);
+    const result = executeMigration(home.from, home.to, src.exists, dst.exists, dst.empty);
+    switch (result.status) {
+      case "moved":
+        moved += 1;
+        process.stdout.write(`[mba] ${home.label}: moved ${home.from} → ${home.to}\n`);
+        break;
+      case "skipped-missing-source":
+        process.stdout.write(`[mba] ${home.label}: nothing to move (no ${home.from})\n`);
+        break;
+      case "skipped-destination-exists":
+        process.stdout.write(
+          `[mba] ${home.label}: SKIPPED — ${home.to} already has data; not overwriting. ` +
+            `Move or merge ${home.from} by hand if you need it.\n`,
+        );
+        break;
+    }
+  }
+  // Guarantee the new homes exist even when there was nothing to move (fresh
+  // install), so the service has a ready-to-use location on next boot.
+  ensureDir(defaultStateDir());
+  ensureDir(defaultModelStoreRoot());
+  process.stdout.write(
+    `[mba] migrate-paths done — ${moved} home(s) moved. ` +
+      `State: ${defaultStateDir()}\n[mba] Store: ${defaultModelStoreRoot()}\n`,
+  );
+}
+
 // --- Entry point ---------------------------------------------------------------
 
 const USAGE = `mba — model config CLI (talks to the MBA service)
@@ -523,11 +588,16 @@ Usage:
   mba servers boot <ref> <port>    boot a model server in-daemon (waits for warmup)
                                    [--type ollama] boots an ollama model tag
   mba servers stop <id>            stop a registered server (by id)
+  mba migrate-paths                one-time move of state + model store from the
+                                   legacy locations to the OS-aware ones (local
+                                   only — does not need the service running)
   mba ... --yes                    skip the restart prompt (never restarts)
 
 Environment:
-  MBA_SERVICE_URL   explicit service base URL (default: ~/.mba/mba/service.json)
-  MBA_SWITCH_PORT   port for the in-daemon restart/boot (default: 8080)`;
+  MBA_SERVICE_URL   explicit service base URL (default: <state dir>/mba/service.json)
+  MBA_SWITCH_PORT   port for the in-daemon restart/boot (default: 8080)
+  MBA_ADAPTER_DIR   override the model store root (default: OS-aware, see
+                    'mba migrate-paths' / service/paths.ts)`;
 
 async function main(argv: readonly string[]): Promise<void> {
   const args = [...argv];
@@ -537,6 +607,13 @@ async function main(argv: readonly string[]): Promise<void> {
 
   if (!command || command === "help" || command === "--help" || command === "-h") {
     process.stdout.write(USAGE + "\n");
+    return;
+  }
+
+  // Local-only command: no service discovery needed. Handled before baseUrl so
+  // it works while the service is stopped (which is exactly when you migrate).
+  if (command === "migrate-paths") {
+    cmdMigratePaths();
     return;
   }
 

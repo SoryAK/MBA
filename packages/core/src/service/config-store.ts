@@ -45,6 +45,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { defaultToolCircuitBreakerConfig } from "../bcb/default-config.js";
+import { defaultStateDir } from "./paths.js";
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
@@ -74,7 +75,7 @@ export interface MbaSetRulesResult {
   readonly tcb: ToolCircuitBreakerConfig;
 }
 
-export function defaultStorePaths(baseDir: string = join(homedir(), ".mba")): MbaStorePaths {
+export function defaultStorePaths(baseDir: string = defaultStateDir()): MbaStorePaths {
   return {
     baseDir,
     tcbPath: join(baseDir, "bcb", "tool-circuit-breakers.json"),
@@ -97,7 +98,7 @@ export function defaultStorePaths(baseDir: string = join(homedir(), ".mba")): Mb
  */
 export function migrateLegacyBaseDir(
   legacyBaseDir: string = join(homedir(), ".cyard"),
-  newBaseDir: string = join(homedir(), ".mba"),
+  newBaseDir: string = defaultStateDir(),
 ): string[] {
   if (!existsSync(legacyBaseDir) || legacyBaseDir === newBaseDir) return [];
   const copied: string[] = [];

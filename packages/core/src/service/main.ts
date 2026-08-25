@@ -2,14 +2,15 @@
  * MBA service entry point (ADR-0092 Step 2).
  *
  * Boots the global MBA service: binds 127.0.0.1 on an OS-assigned port,
- * writes a discovery file (`~/.mba/mba/service.json`) so consumers (the
+ * writes a discovery file (`<state>/mba/service.json`) so consumers (the
  * proxy) can find it, and stays up until SIGINT/SIGTERM.
  *
  * Run with: `npm run dev -w @mba-ai/core` (or `npm start -w @mba-ai/core`).
  *
  * Env:
- *   MBA_BASE_DIR         — store base dir (default `~/.mba`; `CYARD_MBA_BASE_DIR` is a deprecated alias)
- *   MBA_ADAPTER_DIR      — adapter tree root (default `~/models/adapters`)
+ *   MBA_BASE_DIR         — store base dir (default: OS-aware, see service/paths.ts;
+ *                          `CYARD_MBA_BASE_DIR` is a deprecated alias)
+ *   MBA_ADAPTER_DIR      — adapter tree root (default: OS-aware model store, see service/paths.ts)
  *   MBA_UPSTREAM_URL     — upstream llama-server base URL (e.g. http://127.0.0.1:8080)
  *   MBA_MODEL_SWITCH     — "on" arms model switching (ADR-0093: OFF by default)
  *   MBA_SWITCH_PORT      — port for the in-daemon switch/boot (default 8080)
@@ -27,6 +28,7 @@ import {
   readGlobalConfig,
   writeServiceInfo,
 } from "./config-store.js";
+import { defaultModelStoreRoot, defaultStateDir, ensureDir } from "./paths.js";
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { startMbaService } from "./server.js";
@@ -35,7 +37,10 @@ import { killAllOwnedGroups, ownedGroupCount, type LifecycleSeams } from "../mba
 // `CYARD_MBA_BASE_DIR` is a deprecated alias kept for existing setups.
 const baseDir = process.env.MBA_BASE_DIR ?? process.env.CYARD_MBA_BASE_DIR;
 const paths = defaultStorePaths(baseDir);
-const adapterDir = process.env.MBA_ADAPTER_DIR ?? join(homedir(), "models", "adapters");
+const adapterDir = process.env.MBA_ADAPTER_DIR ?? defaultModelStoreRoot();
+// MBA owns the model store root: a fresh install gets a real directory on
+// first boot instead of a dangling default string (ADR-0097 Phase 4).
+ensureDir(adapterDir);
 const upstreamUrl = process.env.MBA_UPSTREAM_URL;
 const switchEnabled = process.env.MBA_MODEL_SWITCH === "on";
 const endpointSyncEnabled = process.env.MBA_ENDPOINT_SYNC !== "off";
@@ -50,7 +55,7 @@ const vscodeLmApiKeyRef =
 if (!baseDir) {
   const migrated = migrateLegacyBaseDir();
   if (migrated.length > 0) {
-    console.log(`[mba] migrated ${migrated.length} file(s) from ~/.cyard to ~/.mba`);
+    console.log(`[mba] migrated ${migrated.length} file(s) from ~/.cyard to ${defaultStateDir()}`);
   }
 }
 

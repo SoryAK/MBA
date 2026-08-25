@@ -18,7 +18,7 @@
  * Args:
  *   --model-file <path>   (required) Absolute path to the .gguf to boot.
  *   --adapter-dir <dir>   Adapters root (default: derived from --model-file,
- *                         falling back to ~/models/adapters).
+ *                         falling back to the OS-aware model store, see service/paths.ts).
  *   --harness <name>      Harness for env-folder selection (default: copilot).
  *   --ide <name>          IDE for env-folder selection (default: vscode).
  *   --runtime <name>      Inference runtime (default: llamacpp).
@@ -40,7 +40,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import YAML from "yaml";
 import {
@@ -50,6 +49,7 @@ import {
 } from "../mba/index.js";
 import { readClientBlock } from "./model-endpoint-sync.js";
 import { readModelCatalog } from "./model-catalog.js";
+import { defaultModelStoreRoot } from "./paths.js";
 
 interface CliArgs {
   modelFile: string;
@@ -130,7 +130,7 @@ function main(): void {
   }
 
   const adapterDir = resolve(
-    args.adapterDir ?? deriveAdaptersRoot(modelFile) ?? join(homedir(), "models", "adapters"),
+    args.adapterDir ?? deriveAdaptersRoot(modelFile) ?? defaultModelStoreRoot(),
   );
 
   // Resolve the exact adapter identity for this weights file. The catalog

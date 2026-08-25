@@ -8,7 +8,7 @@
  * Run with: `npm run sync-endpoints -w @mba-ai/core`
  *
  * Env:
- *   MBA_ADAPTER_DIR      — adapter tree root (default `~/models/adapters`)
+ *   MBA_ADAPTER_DIR      — adapter tree root (default: OS-aware model store, see service/paths.ts)
  *   MBA_VSCODE_LM_CONFIG — chatLanguageModels.json path (default: active profile)
  *   MBA_VSCODE_LM_API_KEY_REF — apiKey reference for the generated block
  *
@@ -22,8 +22,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints } from "./model-endpoint-sync.js";
+import { defaultModelStoreRoot, ensureDir } from "./paths.js";
 
-const adapterDir = process.env.MBA_ADAPTER_DIR ?? join(homedir(), "models", "adapters");
+const adapterDir = process.env.MBA_ADAPTER_DIR ?? defaultModelStoreRoot();
+ensureDir(adapterDir);
 const configPath =
   process.env.MBA_VSCODE_LM_CONFIG ??
   join(homedir(), ".config", "Code", "User", "profiles", "51cf1714", "chatLanguageModels.json");

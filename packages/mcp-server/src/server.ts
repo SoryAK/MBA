@@ -147,8 +147,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "mba_list_models",
         description:
-          "List the switchable models from the central model home (~/models/adapters) " +
-          "with their live loaded state, as seen by the MBA service. Each entry: id, " +
+          "List the switchable models from the central model home (the OS-aware " +
+          "model store) with their live loaded state, as seen by the MBA service. " +
+          "Each entry: id, " +
           "name, family, modelFile, and loaded (true if that model is what the " +
           "upstream llama-server currently has loaded). Read-only. Requires the MBA " +
           "service to be running; returns a clear error if it is unreachable.",
