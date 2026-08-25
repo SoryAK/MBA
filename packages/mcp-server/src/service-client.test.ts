@@ -10,6 +10,7 @@ import {
   fetchStatus,
   fetchModels,
   fetchEnsureModel,
+  fetchSetModelConfig,
 } from "./service-client.js";
 
 function okJson(body: unknown): Response {
@@ -262,6 +263,62 @@ describe("service-client", () => {
       if (!res.ok) {
         expect(res.error).toMatch(/HTTP 404/);
         expect(res.error).toMatch(/gpt-9/);
+      }
+    });
+
+    it("fetchSetModelConfig POSTs the dial write and returns the result on 200", async () => {
+      let seenUrl = "";
+      let seenInit: RequestInit | undefined;
+      const res = await fetchSetModelConfig(
+        {
+          baseUrl: "http://x",
+          fetchImpl: (async (url: string, init?: RequestInit) => {
+            seenUrl = url;
+            seenInit = init;
+            return okJson({
+              file: "server_setup",
+              field: "ctxSize",
+              before: 110000,
+              after: 120000,
+              restartRequired: true,
+              modelLoaded: true,
+            });
+          }) as typeof fetch,
+        },
+        { id: "qwen3.8-27b", file: "server_setup", field: "ctxSize", value: 120000 },
+      );
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.data.after).toBe(120000);
+        expect(res.data.restartRequired).toBe(true);
+        expect(res.data.modelLoaded).toBe(true);
+      }
+      expect(seenUrl).toBe("http://x/models/config");
+      expect(seenInit?.method).toBe("POST");
+      expect(JSON.parse(String(seenInit?.body))).toEqual({
+        id: "qwen3.8-27b",
+        file: "server_setup",
+        field: "ctxSize",
+        value: 120000,
+      });
+    });
+
+    it("fetchSetModelConfig surfaces a 400 validation body as a structured error", async () => {
+      const res = await fetchSetModelConfig(
+        {
+          baseUrl: "http://x",
+          fetchImpl: (async () =>
+            new Response(JSON.stringify({ error: "ctxSize must be an integer" }), {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            })) as typeof fetch,
+        },
+        { id: "qwen3.8-27b", file: "server_setup", field: "ctxSize", value: "big" },
+      );
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error).toMatch(/HTTP 400/);
+        expect(res.error).toMatch(/integer/);
       }
     });
   });

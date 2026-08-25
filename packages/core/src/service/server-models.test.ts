@@ -4,23 +4,45 @@ import { join } from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMbaServiceApp } from "./server.js";
 import { defaultStorePaths } from "./config-store.js";
+import { writeRegistry } from "./upstream-registry.js";
 
-function writeAdapter(dir: string, rel: string, id: string, file: string): void {
+function writeAdapter(
+  dir: string,
+  rel: string,
+  id: string,
+  file: string,
+  clientUrl?: string,
+): void {
   const yamlFile = join(dir, rel);
   mkdirSync(join(yamlFile, ".."), { recursive: true });
-  writeFileSync(
-    yamlFile,
-    [
-      "apiVersion: mba.c-yard.dev/v1alpha1",
-      "kind: ModelBehavioralAdapter",
-      "metadata:",
-      `  id: ${id}`,
-      "identity:",
-      "  model:",
-      `    file: "${file}"`,
-      "bindings: {}",
-    ].join("\n"),
-  );
+  const lines = [
+    "apiVersion: mba.c-yard.dev/v1alpha1",
+    "kind: ModelBehavioralAdapter",
+    "metadata:",
+    `  id: ${id}`,
+    "identity:",
+    "  model:",
+    `    file: "${file}"`,
+  ];
+  if (clientUrl) {
+    lines.push("client:", `  url: ${clientUrl}`);
+  }
+  lines.push("bindings: {}");
+  writeFileSync(yamlFile, lines.join("\n"));
+}
+
+/** A fetch mock that answers per base URL; unlisted URLs throw (ECONNREFUSED). */
+function urlFetch(routes: Record<string, string[]>): typeof fetch {
+  return vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    const base = url.replace(/\/v1\/models.*$/, "");
+    const ids = routes[base];
+    if (!ids) throw new Error(`ECONNREFUSED ${base}`);
+    return new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
 }
 
 function modelsFetch(ids: string[]): typeof fetch {
@@ -48,7 +70,9 @@ describe("mba service model plane (ADR-0093 Phase 1)", () => {
       paths,
       adapterDir,
       upstreamUrl: "http://127.0.0.1:8080",
-      fetch: modelsFetch(["qwen3-coder-30b"]),
+      // llama.cpp reports the model by the absolute path it was given via -m,
+      // not by the MBA id.
+      fetch: modelsFetch([join(adapterDir, "qwen", "qwen3-coder", "qwen3-coder-30b", "m.gguf")]),
     });
     const res = await app.request("/models");
     expect(res.status).toBe(200);
@@ -97,7 +121,8 @@ describe("mba service model plane (ADR-0093 Phase 1)", () => {
       upstreamUrl: "http://127.0.0.1:8080",
       switchEnabled: true,
       switchExecutor: executor,
-      fetch: modelsFetch(["qwen3-coder-30b"]),
+      // llama.cpp reports the model by the absolute path it was given via -m.
+      fetch: modelsFetch([join(adapterDir, "qwen", "qwen3-coder", "qwen3-coder-30b", "m.gguf")]),
     });
     const res = await app.request("/models/ensure", {
       method: "POST",
@@ -156,5 +181,79 @@ describe("mba service model plane (ADR-0093 Phase 1)", () => {
       body: JSON.stringify({ nope: true }),
     });
     expect(res.status).toBe(400);
+  });
+
+  describe("probe target resolution (ADR-0097 Phase 1)", () => {
+    const qwenRel = "qwen/qwen3-coder/qwen3-coder-30b/qwen3-coder-30b.yaml";
+    const qwenFile = (dir: string) =>
+      join(dir, "qwen", "qwen3-coder", "qwen3-coder-30b", "m.gguf");
+
+    it("GET /models resolves the probe target from the upstream registry (no env, no YAML url)", async () => {
+      writeRegistry(paths.upstreamsPath, [
+        {
+          id: "llama-cpp-8080",
+          serverType: "llama.cpp",
+          modelFile: qwenFile(adapterDir),
+          port: 8080,
+          pid: 4242,
+          startedAt: "2026-08-24T00:00:00.000Z",
+        },
+      ]);
+      const app = createMbaServiceApp({
+        paths,
+        adapterDir,
+        fetch: urlFetch({ "http://127.0.0.1:8080": [qwenFile(adapterDir)] }),
+      });
+      const res = await app.request("/models");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        models: Array<{ id: string; loaded: boolean }>;
+      };
+      expect(body.models.find((m) => m.id === "qwen3-coder-30b")?.loaded).toBe(true);
+      expect(body.models.find((m) => m.id === "llama3-8b")?.loaded).toBe(false);
+    });
+
+    it("GET /models falls back to the adapter's client.url when the registry has no match", async () => {
+      // Re-write the qwen adapter WITH a client.url; no registry file, no env.
+      writeAdapter(adapterDir, qwenRel, "qwen3-coder-30b", "./m.gguf", "http://127.0.0.1:9999/v1");
+      const app = createMbaServiceApp({
+        paths,
+        adapterDir,
+        fetch: urlFetch({ "http://127.0.0.1:9999": [qwenFile(adapterDir)] }),
+      });
+      const res = await app.request("/models");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        models: Array<{ id: string; loaded: boolean }>;
+      };
+      expect(body.models.find((m) => m.id === "qwen3-coder-30b")?.loaded).toBe(true);
+    });
+
+    it("GET /models drops a stale registry entry and falls through to the YAML rung (G2)", async () => {
+      writeAdapter(adapterDir, qwenRel, "qwen3-coder-30b", "./m.gguf", "http://127.0.0.1:9999/v1");
+      // Registry claims port 7777 — but that server is dead; the live one is
+      // the YAML rung's 9999.
+      writeRegistry(paths.upstreamsPath, [
+        {
+          id: "stale-7777",
+          serverType: "llama.cpp",
+          modelFile: qwenFile(adapterDir),
+          port: 7777,
+          pid: 1,
+          startedAt: "2026-08-24T00:00:00.000Z",
+        },
+      ]);
+      const app = createMbaServiceApp({
+        paths,
+        adapterDir,
+        fetch: urlFetch({ "http://127.0.0.1:9999": [qwenFile(adapterDir)] }),
+      });
+      const res = await app.request("/models");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        models: Array<{ id: string; loaded: boolean }>;
+      };
+      expect(body.models.find((m) => m.id === "qwen3-coder-30b")?.loaded).toBe(true);
+    });
   });
 });

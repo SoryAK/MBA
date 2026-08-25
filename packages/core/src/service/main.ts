@@ -12,7 +12,7 @@
  *   MBA_ADAPTER_DIR      — adapter tree root (default `~/models/adapters`)
  *   MBA_UPSTREAM_URL     — upstream llama-server base URL (e.g. http://127.0.0.1:8080)
  *   MBA_MODEL_SWITCH     — "on" arms model switching (ADR-0093: OFF by default)
- *   MBA_BOOT_SCRIPT      — boot script for the default switch executor
+ *   MBA_SWITCH_PORT      — port for the in-daemon switch/boot (default 8080)
  *   MBA_ENDPOINT_SYNC    — "off" disables VS Code endpoint auto-sync (default on)
  *   MBA_VSCODE_LM_CONFIG — chatLanguageModels.json path (default: the active
  *                          profile's file under ~/.config/Code/User/profiles)
@@ -30,6 +30,7 @@ import {
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { startMbaService } from "./server.js";
+import { killAllOwnedGroups, ownedGroupCount, type LifecycleSeams } from "../mba/index.js";
 
 // `CYARD_MBA_BASE_DIR` is a deprecated alias kept for existing setups.
 const baseDir = process.env.MBA_BASE_DIR ?? process.env.CYARD_MBA_BASE_DIR;
@@ -56,11 +57,17 @@ if (!baseDir) {
 // First-boot seed happens here so the store is warm before the first request.
 const initial = readGlobalConfig(paths);
 
+// G1: one shared lifecycle seams instance for the daemon's lifetime. The
+// owned-group registry lives on it, so the exit handler can kill every
+// server process group the daemon booted.
+const lifecycleSeams: LifecycleSeams = {};
+
 const handle = await startMbaService({
   paths,
   adapterDir,
   upstreamUrl,
   switchEnabled,
+  lifecycleSeams,
 });
 writeServiceInfo(paths, {
   port: handle.port,
@@ -111,6 +118,12 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[mba] ${signal} received, closing…`);
   stopEndpointWatch?.();
   try {
+    // G1: kill every server group this daemon booted before exiting.
+    const owned = ownedGroupCount(lifecycleSeams);
+    if (owned > 0) {
+      console.log(`[mba] killing ${owned} owned server group(s)…`);
+    }
+    await killAllOwnedGroups(lifecycleSeams);
     await handle.close();
   } finally {
     process.exit(0);

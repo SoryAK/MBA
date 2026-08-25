@@ -7,7 +7,7 @@ import { readModelCatalog } from "./model-catalog.js";
 function writeAdapter(
   dir: string,
   rel: string,
-  opts: { id: string; name?: string; family?: string; file?: string },
+  opts: { id: string; name?: string; family?: string; file?: string; clientUrl?: string },
 ): string {
   const file = join(dir, rel);
   mkdirSync(join(file, ".."), { recursive: true });
@@ -21,6 +21,8 @@ function writeAdapter(
     "identity:",
     "  model:",
     opts.file ? `    file: "${opts.file}"` : null,
+    opts.clientUrl ? "client:" : null,
+    opts.clientUrl ? `  url: ${opts.clientUrl}` : null,
     "bindings: {}",
   ]
     .filter((l) => l !== null)
@@ -95,5 +97,21 @@ describe("readModelCatalog", () => {
   it("throws on a YAML file that is not a valid adapter", () => {
     writeFileSync(join(root, "bad.yaml"), "apiVersion: something-else\nkind: Nope\n");
     expect(() => readModelCatalog(root)).toThrow(/invalid MBA adapter shape/);
+  });
+
+  it("exposes the adapter's client.url (the YAML rung of the probe fallback)", () => {
+    writeAdapter(root, "qwen/a/a.yaml", {
+      id: "a",
+      file: "./a.gguf",
+      clientUrl: "http://127.0.0.1:8080/v1",
+    });
+    const entries = readModelCatalog(root);
+    expect(entries[0]?.clientUrl).toBe("http://127.0.0.1:8080/v1");
+  });
+
+  it("leaves clientUrl undefined when the adapter declares no client block", () => {
+    writeAdapter(root, "qwen/a/a.yaml", { id: "a", file: "./a.gguf" });
+    const entries = readModelCatalog(root);
+    expect(entries[0]?.clientUrl).toBeUndefined();
   });
 });

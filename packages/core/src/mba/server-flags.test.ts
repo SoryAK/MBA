@@ -29,6 +29,7 @@ describe("LLAMA_CPP_DEFAULTS", () => {
       cacheReuse: 150,
       cacheRam: 9500,
       reasoningBudget: 512,
+      reasoningPreserve: true,
       flashAttn: "on",
       warmupTokens: 350,
       specType: "none",
@@ -181,5 +182,35 @@ describe("buildLlamaServerFlags", () => {
     const flashIdx = flags.indexOf("--flash-attn");
     const specIdx = flags.indexOf("--spec-type");
     expect(flashIdx).toBeLessThan(specIdx);
+  });
+
+  it("emits the always-on tuning flags --jinja and -ctk/-ctv q8_0", () => {
+    const flags = buildLlamaServerFlags(LLAMA_CPP_DEFAULTS);
+    expect(flags).toContain("--jinja");
+    expect(flags).toContain("-ctk");
+    expect(flags).toContain("q8_0");
+    expect(flags).toContain("-ctv");
+    // q8_0 appears exactly twice (once for -ctk, once for -ctv)
+    expect(flags.filter((f) => f === "q8_0")).toHaveLength(2);
+  });
+
+  it("does NOT emit deployment facts (host/port/slot-save-path) — those are boot context", () => {
+    const flags = buildLlamaServerFlags(LLAMA_CPP_DEFAULTS);
+    expect(flags).not.toContain("--host");
+    expect(flags).not.toContain("--port");
+    expect(flags).not.toContain("--slot-save-path");
+    expect(flags).not.toContain("-m");
+  });
+
+  it("emits --reasoning-preserve by default (boot script default is on) and omits it when disabled", () => {
+    // Boot script defaults REASONING_PRESERVE=true, so the default recipe emits it.
+    const byDefault = buildLlamaServerFlags(LLAMA_CPP_DEFAULTS);
+    expect(byDefault).toContain("--reasoning-preserve");
+
+    const disabled = buildLlamaServerFlags({
+      ...LLAMA_CPP_DEFAULTS,
+      reasoningPreserve: false,
+    });
+    expect(disabled).not.toContain("--reasoning-preserve");
   });
 });

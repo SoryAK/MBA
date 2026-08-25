@@ -5,9 +5,15 @@
 
 ---
 
-## 🔵 `mba` interactive config CLI (fzf-style guided flow)
+## ✅ `mba` interactive config CLI (fzf-style guided flow) — **BUILT 2026-08-23**
 
-**Parked:** 2026-08-22
+**Parked:** 2026-08-22 · **Built:** 2026-08-23 — see [ADR-0096](../adr/0096-mba-config-cli.md)
+and `.Manual/mba-config-cli.md`. Shipped: `mba models` / `mba config` / `mba set`
+/ `mba open` (global via `npm link`), `GET` + `POST /models/config` routes,
+`mba_set_model_config` MCP tool, restart prompt (reboots same model via boot
+script). Griller answers: v1 = view+edit only (no CRUD); field menu + raw-file
+escape hatch; global PATH via `npm link`. Not shipped: `mba run` (boot-script
+wrapper — the boot script itself remains the run door).
 
 **Idea:** A terminal command (`mba run` / `mba open` / `mba config`) that walks the user
 through a guided menu instead of hunting for files:
@@ -36,11 +42,12 @@ YAML `client:` block) have **no write path at all**. The user found the curl flo
   tree with `find`+`jq` and hand-maintains the editable-field list → two sources of truth.
 - The CLI is a **writer only**; the persistent systemd service (`~/.config/systemd/user/mba.service`)
   stays the sync engine. No new sync mechanism.
-- Related unbuilt piece: `mba_set_model_config` MCP tool + `POST /models/config` route
-  (per-model write knob with validation + atomic write). The CLI and this route can share
-  the same capability block in `src/lib`-style (explicit params, structured output).
+- Related piece (built 2026-08-23): `mba_set_model_config` MCP tool + `POST`/`GET
+  /models/config` routes (per-model write knob with validation + atomic write). The CLI
+  and the routes share the same capability block (`src/service/model-config.ts`,
+  explicit params, structured output).
 
-**Open questions (The Griller — unanswered at park time):**
+**Open questions (The Griller — answered 2026-08-23, see ADR-0096):**
 
 1. **CRUD scope:** v1 = view + edit only (80% of actual use), model create/delete as v2?
    (Create/delete touches catalog + lineage tree + watcher — much bigger blast radius.)
@@ -50,6 +57,6 @@ YAML `client:` block) have **no write path at all**. The user found the curl flo
 3. **PATH placement:** global `mba` symlink (works anywhere, must maintain) vs.
    `npm run mba -w @mba-ai/core` (repo-scoped, no pollution)?
 
-**Re-entry trigger:** Next time per-model dial editing is painful (changing ctxSize /
-gpuLayers / client block without opening the file), or when the `mba_set_model_config`
-route gets built — the CLI is the natural front door for it.
+**Re-entry trigger (v2):** Model create/delete in the CLI — touches catalog +
+lineage tree + watcher, deferred from v1. Also: shared `resolveServiceUrl`
+extraction if a third service consumer appears (ADR-0096 trade-off).

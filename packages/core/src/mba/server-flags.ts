@@ -23,6 +23,7 @@ export const LLAMA_CPP_DEFAULTS: Required<LlamaCppServerFlags> = {
   cacheReuse: 150,
   cacheRam: 9500,
   reasoningBudget: 512,
+  reasoningPreserve: true,
   flashAttn: "on",
   warmupTokens: 350,
   specType: "none",
@@ -111,6 +112,15 @@ export function sanitizeLlamaCppServerFlags(
     }
   }
 
+  const reasoningPreserve = source["reasoningPreserve"];
+  if (reasoningPreserve !== undefined) {
+    if (typeof reasoningPreserve === "boolean") {
+      flags.reasoningPreserve = reasoningPreserve;
+    } else {
+      dropped.push("reasoningPreserve");
+    }
+  }
+
   const specType = source["specType"];
   if (specType !== undefined) {
     if (typeof specType === "string") {
@@ -145,11 +155,20 @@ export function buildLlamaServerFlags(flags: Required<LlamaCppServerFlags>): str
   args.push("--ctx-size", String(flags.ctxSize));
   args.push("-ngl", String(flags.gpuLayers));
   args.push("--threads", String(flags.threads));
+  // --jinja: always on (boot script parity) — enables chat-template rendering.
+  args.push("--jinja");
   args.push("--parallel", String(flags.parallel));
   args.push("--cache-reuse", String(flags.cacheReuse));
   args.push("--cache-ram", String(flags.cacheRam));
   args.push("--reasoning-budget", String(flags.reasoningBudget));
+  // --reasoning-preserve: on by default (boot script default), omitted when disabled.
+  if (flags.reasoningPreserve) {
+    args.push("--reasoning-preserve");
+  }
   args.push("--flash-attn", flags.flashAttn);
+  // KV cache quantization: always q8_0 (boot script parity).
+  args.push("-ctk", "q8_0");
+  args.push("-ctv", "q8_0");
 
   // Only add spec flags if specType is not "none"
   if (flags.specType !== "none") {

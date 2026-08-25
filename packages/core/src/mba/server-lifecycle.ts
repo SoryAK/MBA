@@ -13,8 +13,9 @@
  * except process spawning.
  */
 
-import { spawn, execSync } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
+import { dirname, join } from "node:path";
 
 export interface ServerBootOptions {
   /** Path to llama-server binary. */
@@ -45,6 +46,57 @@ export interface ServerState {
 }
 
 /**
+ * Injectable seams for the lifecycle module. Every field is optional; when
+ * absent the real Node implementation is used. Tests supply fakes to avoid
+ * spawning real processes or hitting the network.
+ */
+export interface LifecycleSeams {
+  /** Spawn a child process. Defaults to `node:child_process` `spawn`. */
+  readonly spawnImpl?: (
+    binary: string,
+    args: string[],
+    opts: SpawnOptions,
+  ) => ChildProcess;
+  /** HTTP client. Defaults to global `fetch`. */
+  readonly fetchImpl?: typeof fetch;
+  /**
+   * Signal a process (or process group when pid is negative).
+   * Contract: return `true` if the process was alive / the signal was
+   * delivered, `false` if the process was not found. A signal of `0` is a
+   * liveness probe (no signal is sent).
+   */
+  readonly killImpl?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
+  /** Clock. Defaults to `Date.now`. */
+  readonly now?: () => number;
+  /** Health-check deadline in ms. Defaults to 180_000 (boot script parity). */
+  readonly healthDeadlineMs?: number;
+}
+
+/** Resolve a seam to its real default. */
+function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
+  return {
+    spawnImpl: seams?.spawnImpl ?? spawn,
+    fetchImpl: seams?.fetchImpl ?? fetch,
+    killImpl:
+      seams?.killImpl ??
+      ((pid: number, signal?: NodeJS.Signals | number) => {
+        process.kill(pid, signal);
+        return true;
+      }),
+    now: seams?.now ?? Date.now,
+    healthDeadlineMs: seams?.healthDeadlineMs ?? 180_000,
+  };
+}
+
+/**
+ * Model-specific KV slot-save path (G3): `<dirname(modelPath)>/kv/<fork>/slots`.
+ * Mirrors the boot script's `SLOT_SAVE_PATH="${local_model_dir}/kv/${FORK}/slots"`.
+ */
+export function slotSavePath(modelPath: string, fork: "upstream" | "cachyllama"): string {
+  return join(dirname(modelPath), "kv", fork, "slots");
+}
+
+/**
  * Poll /health endpoint until healthy or deadline elapses.
  * Polls every 2 seconds (matches llama-server-up.sh).
  *
@@ -53,14 +105,16 @@ export interface ServerState {
 export async function waitForHealth(
   port: number,
   deadlineMs: number = 180_000,
+  seams?: LifecycleSeams,
 ): Promise<void> {
-  const deadline = Date.now() + deadlineMs;
+  const { fetchImpl, now } = resolveSeams(seams);
+  const deadline = now() + deadlineMs;
   const url = `http://127.0.0.1:${port}/health`;
   const pollInterval = 2000; // 2s, matching bash script
 
-  while (Date.now() < deadline) {
+  while (now() < deadline) {
     try {
-      const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const resp = await fetchImpl(url, { signal: AbortSignal.timeout(5000) });
       if (resp.ok) return; // healthy
     } catch {
       // fetch failed; retry
@@ -77,14 +131,19 @@ export async function waitForHealth(
  *
  * @throws {Error} if the warmup POST fails
  */
-export async function sendWarmupRequest(port: number, tokens: number): Promise<void> {
+export async function sendWarmupRequest(
+  port: number,
+  tokens: number,
+  seams?: LifecycleSeams,
+): Promise<void> {
+  const { fetchImpl } = resolveSeams(seams);
   const url = `http://127.0.0.1:${port}/completion`;
   const payload = {
     prompt: "test",
     n_predict: tokens,
   };
 
-  const resp = await fetch(url, {
+  const resp = await fetchImpl(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -99,50 +158,73 @@ export async function sendWarmupRequest(port: number, tokens: number): Promise<v
 /**
  * Spawn llama-server with the boot options, wait for health, run warmup.
  *
- * @returns ServerState with PID, port, boot time, and flags for persistence.
+ * Deployment facts (`--host`, `--port`, `--slot-save-path`, `-m <model>`) are
+ * prepended here; `opts.flags` carries only the tuning recipe. The server is
+ * spawned `detached` so it owns its own process group (G1), and the boot
+ * resolves only after warmup completes (Perf #2).
+ *
+ * @returns ServerState with the CHILD pid, port, boot time, and flags.
  * @throws {Error} if spawn fails, health check times out, or warmup fails
  */
-export async function bootLlamaServer(opts: ServerBootOptions): Promise<ServerState> {
-  const flagsWithModel = ["-m", opts.modelPath, ...opts.flags];
+export async function bootLlamaServer(
+  opts: ServerBootOptions,
+  seams?: LifecycleSeams,
+): Promise<ServerState> {
+  const { spawnImpl, fetchImpl, killImpl, now, healthDeadlineMs } = resolveSeams(seams);
 
-  let process: ChildProcess;
+  // Deployment facts first, then the tuning recipe.
+  const args = [
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(opts.port),
+    "--slot-save-path",
+    slotSavePath(opts.modelPath, opts.fork),
+    "-m",
+    opts.modelPath,
+    ...opts.flags,
+  ];
+
+  let child: ChildProcess;
   try {
-    process = spawn(opts.binaryPath, flagsWithModel, {
-      detached: false,
+    child = spawnImpl(opts.binaryPath, args, {
+      detached: true, // own process group → group-killable (G1)
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
     throw new Error(`failed to spawn llama-server: ${String(err)}`);
   }
 
-  if (process.pid === undefined) {
+  if (child.pid === undefined) {
     throw new Error("spawn succeeded but no PID assigned");
   }
 
-  const pid = process.pid;
-  const bootedAt = Date.now();
+  const pid = child.pid;
+  const bootedAt = now();
 
-  // Wait for health check
+  // Detach from the daemon's event loop so the daemon can exit independently.
+  child.unref?.();
+
+  // Wait for health check; on failure, kill the CHILD group (never the daemon).
   try {
-    await waitForHealth(opts.port, 180_000);
+    await waitForHealth(opts.port, healthDeadlineMs, { fetchImpl, now });
   } catch (err) {
-    // Kill the process if health check failed
-    try {
-      process.kill("SIGTERM");
-    } catch {
-      // ignore kill errors
-    }
+    await killProcessGroup(pid, { killImpl });
     throw err;
   }
 
-  // Execute warmup
+  // Execute warmup; boot resolves only after it completes (Perf #2).
   try {
-    await sendWarmupRequest(opts.port, opts.warmupTokens);
+    await sendWarmupRequest(opts.port, opts.warmupTokens, { fetchImpl });
   } catch (err) {
-    // Warmup failed; log but don't fail the boot (server is healthy)
-    // In production, this would be emitted as a diagnostic
-    console.warn("warmup failed:", err);
+    // Warmup failed; the server is healthy but not warmed. Kill + fail so the
+    // caller does not register a cold server as ready.
+    await killProcessGroup(pid, { killImpl });
+    throw new Error(`warmup failed: ${String(err)}`);
   }
+
+  // Track the group so the daemon-exit handler can sweep it (G1).
+  trackOwnedGroup(pid, { killImpl });
 
   return {
     pid,
@@ -154,44 +236,84 @@ export async function bootLlamaServer(opts: ServerBootOptions): Promise<ServerSt
 }
 
 /**
- * Stop a running llama-server process gracefully.
- * Sends SIGTERM; if process doesn't exit within 2s, sends SIGKILL.
- *
- * @throws {Error} if the process is not found or kill fails
+ * Stop a running llama-server process group gracefully.
+ * Sends SIGTERM to the group (`-pid`); if it lingers past the 2s grace window,
+ * sends SIGKILL to the group. Resolves immediately if the group is already gone.
  */
-export async function stopLlamaServer(pid: number): Promise<void> {
-  try {
-    // Check if process exists
-    process.kill(pid, 0);
-  } catch {
-    // Process not found; already dead
+export async function stopLlamaServer(pid: number, seams?: LifecycleSeams): Promise<void> {
+  await killProcessGroup(pid, seams);
+}
+
+/**
+ * Kill a process group: SIGTERM to `-pid`, then SIGKILL after the grace window
+ * if it lingers. A no-op if the group is already gone.
+ */
+export async function killProcessGroup(pid: number, seams?: LifecycleSeams): Promise<void> {
+  const { killImpl } = resolveSeams(seams);
+  const group = -pid;
+
+  // Liveness probe: signal 0. If the group is already gone, nothing to do.
+  if (!killImpl(group, 0)) {
     return;
   }
 
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch (err) {
-    throw new Error(`failed to send SIGTERM to PID ${pid}: ${String(err)}`);
-  }
+  // Graceful group kill.
+  killImpl(group, "SIGTERM");
 
-  // Wait up to 2s for graceful shutdown
+  // Wait up to 2s for graceful shutdown (10 × 200ms).
   let exited = false;
   for (let i = 0; i < 10; i++) {
     await new Promise((r) => setTimeout(r, 200));
-    try {
-      process.kill(pid, 0);
-    } catch {
+    if (!killImpl(group, 0)) {
       exited = true;
       break;
     }
   }
 
   if (!exited) {
-    // Force kill
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // ignore
-    }
+    // Force group kill.
+    killImpl(group, "SIGKILL");
+  }
+}
+
+/**
+ * Per-seams registry of owned process-group pids. The daemon-exit handler
+ * (G1) sweeps every tracked group on shutdown. Kept on the seams object so
+ * tests can isolate their own registry; the daemon passes a single shared
+ * seams instance for its lifetime.
+ */
+const OWNED_GROUPS_KEY = Symbol.for("mba.ownedGroups");
+
+type SeamsWithRegistry = LifecycleSeams & { [OWNED_GROUPS_KEY]?: Set<number> };
+
+function ownedGroupSet(seams?: LifecycleSeams): Set<number> {
+  const target = (seams ?? {}) as SeamsWithRegistry;
+  if (!target[OWNED_GROUPS_KEY]) {
+    target[OWNED_GROUPS_KEY] = new Set<number>();
+  }
+  return target[OWNED_GROUPS_KEY]!;
+}
+
+/** Record a process group as owned by this daemon (called after a successful boot). */
+export function trackOwnedGroup(pid: number, seams?: LifecycleSeams): void {
+  ownedGroupSet(seams).add(pid);
+}
+
+/** Number of process groups currently tracked as owned. */
+export function ownedGroupCount(seams?: LifecycleSeams): number {
+  return ownedGroupSet(seams).size;
+}
+
+/**
+ * Kill every tracked process group and clear the registry (G1 daemon-exit
+ * handler). Called on daemon SIGTERM/exit so no owned server outlives the
+ * daemon.
+ */
+export async function killAllOwnedGroups(seams?: LifecycleSeams): Promise<void> {
+  const set = ownedGroupSet(seams);
+  const pids = [...set];
+  set.clear();
+  for (const pid of pids) {
+    await killProcessGroup(pid, seams);
   }
 }

@@ -23,6 +23,14 @@
  *   POST /models/ensure              → { status: loaded|switched|disabled|unknown|failed, id }
  *        OFF by default (409 "disabled") — armed via `switchEnabled`
  *        (env `MBA_MODEL_SWITCH=on`). Idempotent: a loaded model is a no-op.
+ *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired }] }
+ *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
+ *        Body: { id, file: 'server_setup'|'client', field, value }. The
+ *        per-model dial write door (ADR-0096): validates and writes ONE
+ *        field via the model-config capability block. 404 unknown model,
+ *        400 invalid field/value. REPORTS `modelLoaded` (probed from the
+ *        upstream) so the caller can offer a restart — the route never
+ *        restarts anything itself.
  *
  * The app is exported separately from the listener so tests can drive it
  * with `app.request()` without binding a port.
@@ -39,8 +47,24 @@ import {
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
-import { readModelCatalog } from "./model-catalog.js";
-import { ensureModel, probeLoadedModel, type SwitchExecutor } from "./model-switch.js";
+import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
+import {
+  ensureModel,
+  isLoadedPath,
+  probeLoadedModel,
+  type SwitchExecutor,
+} from "./model-switch.js";
+import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
+import {
+  listUpstreams,
+  readRegistry,
+  removeByPid,
+  resolveUpstream,
+  upsertEntry,
+  writeRegistry,
+} from "./upstream-registry.js";
+import { bootServer } from "./server-boot.js";
+import { stopLlamaServer, type LifecycleSeams } from "../mba/index.js";
 
 export interface MbaServiceAppOptions {
   readonly paths?: MbaStorePaths;
@@ -54,6 +78,12 @@ export interface MbaServiceAppOptions {
   readonly switchExecutor?: SwitchExecutor;
   /** Injectable fetch for the upstream probe (tests). */
   readonly fetch?: typeof fetch;
+  /**
+   * Shared lifecycle seams (spawn/fetch/kill). The G1 owned-group registry
+   * lives on this instance, so the daemon must pass ONE instance for its
+   * lifetime and call `killAllOwnedGroups` on exit.
+   */
+  readonly lifecycleSeams?: LifecycleSeams;
 }
 
 export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
@@ -116,17 +146,19 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 
   app.get("/models", async (c) => {
     const catalog = readModelCatalog(opts.adapterDir ?? "");
-    const loaded = opts.upstreamUrl
-      ? await probeLoadedModel(opts.upstreamUrl, opts.fetch)
-      : null;
     return c.json({
-      models: catalog.map((e) => ({
-        id: e.id,
-        name: e.name,
-        family: e.family,
-        modelFile: e.modelFile,
-        loaded: loaded === e.id,
-      })),
+      models: await Promise.all(
+        catalog.map(async (e) => ({
+          id: e.id,
+          name: e.name,
+          family: e.family,
+          modelFile: e.modelFile,
+          loaded: isLoadedPath(
+            await probeModelLoaded(e, paths, opts.upstreamUrl, opts.fetch),
+            e.modelFile,
+          ),
+        })),
+      ),
     });
   });
 
@@ -146,7 +178,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       requestedId: input.id,
       upstreamUrl: opts.upstreamUrl ?? "",
       switchEnabled: opts.switchEnabled ?? false,
-      executor: opts.switchExecutor ?? defaultSwitchExecutor,
+      executor: opts.switchExecutor ?? ((ctx) => defaultSwitchExecutor(ctx, opts)),
       fetch: opts.fetch,
     });
     if (result.status === "unknown") {
@@ -164,33 +196,265 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     return c.json(result);
   });
 
+  app.get("/models/config", (c) => {
+    const id = c.req.query("id");
+    if (!id || id.length === 0) {
+      return c.json({ error: "query param id is required" }, 400);
+    }
+    const dials = readModelDials(opts.adapterDir ?? "", id);
+    if (!dials) {
+      return c.json({ error: `unknown model: ${id}` }, 404);
+    }
+    return c.json(dials);
+  });
+
+  app.post("/models/config", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as {
+      id?: unknown;
+      file?: unknown;
+      field?: unknown;
+      value?: unknown;
+    };
+    if (
+      !input ||
+      typeof input !== "object" ||
+      typeof input.id !== "string" ||
+      input.id.length === 0 ||
+      (input.file !== "server_setup" && input.file !== "client") ||
+      typeof input.field !== "string" ||
+      input.field.length === 0 ||
+      input.value === undefined
+    ) {
+      return c.json(
+        { error: "body must be { id, file: 'server_setup'|'client', field, value }" },
+        400,
+      );
+    }
+    const result = setModelDial(
+      opts.adapterDir ?? "",
+      input.id,
+      input.file as ModelDialFile,
+      input.field,
+      input.value,
+    );
+    if (!result.ok) {
+      const status = /unknown model/.test(result.error) ? 404 : 400;
+      return c.json({ error: result.error }, status);
+    }
+    const entry = readModelCatalog(opts.adapterDir ?? "").find((e) => e.id === input.id);
+    const loaded = entry
+      ? await probeModelLoaded(entry, paths, opts.upstreamUrl, opts.fetch)
+      : null;
+    return c.json({
+      file: result.file,
+      field: result.field,
+      before: result.before,
+      after: result.after,
+      restartRequired: result.restartRequired,
+      modelFile: result.modelFile,
+      modelLoaded: isLoadedPath(loaded, result.modelFile),
+    });
+  });
+
+  // --- Server plane (ADR-0097 Phase 2) ------------------------------------
+
+  app.get("/servers", async (c) => {
+    const registry = readRegistry(paths.upstreamsPath);
+    const fetchImpl = opts.fetch ?? fetch;
+    const health = new Map<number, boolean>();
+    await Promise.all(
+      registry.map(async (e) => {
+        health.set(e.port, await probeServerHealth(e.port, fetchImpl));
+      }),
+    );
+    const healthyIds = new Set(
+      registry.filter((e) => health.get(e.port)).map((e) => e.id),
+    );
+    const servers = registry.map((e) => ({
+      id: e.id,
+      serverType: e.serverType,
+      modelFile: e.modelFile,
+      port: e.port,
+      pid: e.pid,
+      startedAt: e.startedAt,
+      healthy: health.get(e.port) ?? false,
+      resolved: resolveUpstream(registry, e.modelFile, healthyIds)?.id === e.id,
+    }));
+    return c.json({ servers });
+  });
+
+  app.post("/servers/boot", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { modelFile?: unknown; port?: unknown; fork?: unknown };
+    if (
+      !input ||
+      typeof input.modelFile !== "string" ||
+      input.modelFile.length === 0 ||
+      typeof input.port !== "number" ||
+      !Number.isInteger(input.port) ||
+      input.port <= 0 ||
+      input.port > 65535
+    ) {
+      return c.json(
+        { error: "body must be { modelFile: string, port: integer 1-65535 }" },
+        400,
+      );
+    }
+    if (
+      input.fork !== undefined &&
+      input.fork !== "upstream" &&
+      input.fork !== "cachyllama"
+    ) {
+      return c.json({ error: "body.fork must be 'upstream' or 'cachyllama'" }, 400);
+    }
+    const result = await bootServer({
+      modelFile: input.modelFile,
+      port: input.port,
+      fork: input.fork === "cachyllama" ? "cachyllama" : "upstream",
+      adapterDir: opts.adapterDir ?? "",
+      registryPath: paths.upstreamsPath,
+      seams: opts.lifecycleSeams,
+    });
+    if (!result.ok) {
+      const status =
+        result.code === "port-busy" ? 409 : result.code === "unknown-model" ? 404 : 500;
+      return c.json({ error: result.error }, status);
+    }
+    // Persist the entry (merge, never clobber).
+    const registry = readRegistry(paths.upstreamsPath);
+    writeRegistry(paths.upstreamsPath, upsertEntry(registry, result.entry));
+    return c.json(result.entry, 201);
+  });
+
+  app.post("/servers/stop", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { pid?: unknown };
+    if (
+      !input ||
+      typeof input.pid !== "number" ||
+      !Number.isInteger(input.pid) ||
+      input.pid <= 0
+    ) {
+      return c.json({ error: "body must be { pid: positive integer }" }, 400);
+    }
+    try {
+      await stopLlamaServer(input.pid, opts.lifecycleSeams);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "stop failed" }, 500);
+    }
+    const registry = readRegistry(paths.upstreamsPath);
+    writeRegistry(paths.upstreamsPath, removeByPid(registry, input.pid));
+    return c.json({ stopped: input.pid });
+  });
+
   return app;
 }
 
 /**
- * Default switch executor: shells out to the boot script. Kept at module
- * level (not inlined) so tests can always inject a fake and the production
- * path stays inspectable in one place.
+ * Probe a server's /health endpoint. Unreachable or non-2xx → false (the
+ * probe is advisory; a dead server is "not healthy", never an error).
  */
-async function defaultSwitchExecutor(ctx: {
-  id: string;
-  modelFile?: string;
-  upstreamUrl: string;
-}): Promise<void> {
-  const { spawn } = await import("node:child_process");
-  const { homedir } = await import("node:os");
-  const { join } = await import("node:path");
-  const script =
-    process.env.MBA_BOOT_SCRIPT ?? join(homedir(), "Dev_Projects/C-Yard/scripts/llama-server-up.sh");
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("bash", [script, "-Model", ctx.id], {
-      stdio: "inherit",
+async function probeServerHealth(port: number, fetchImpl: typeof fetch): Promise<boolean> {
+  try {
+    const res = await fetchImpl(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(2000),
     });
-    child.on("error", reject);
-    child.on("close", (code) =>
-      code === 0 ? resolve() : reject(new Error(`boot script exited ${code}`)),
-    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Default switch executor: boots the model IN-DAEMON via the server plane
+ * (ADR-0097 Phase 2), replacing the retired `llama-server-up.sh` shell-out.
+ *
+ * Port policy (G2): the boot script defaulted to 8080, so we do the same —
+ * `MBA_SWITCH_PORT` overrides it. A busy port is refused (the boot reports
+ * `port-busy`, which `ensureModel` surfaces as `failed`); pick a free port
+ * with `mba servers boot <model> <port>` for an explicit choice.
+ *
+ * The shared `lifecycleSeams` (G1) is passed through so the booted group is
+ * tracked and killed on daemon exit. Kept at module level so tests can always
+ * inject a fake and the production path stays inspectable in one place.
+ */
+async function defaultSwitchExecutor(
+  ctx: { id: string; modelFile?: string; upstreamUrl: string },
+  opts: MbaServiceAppOptions,
+): Promise<void> {
+  const modelFile = ctx.modelFile;
+  if (!modelFile) {
+    throw new Error(`no model file resolved for ${ctx.id} — cannot boot in-daemon`);
+  }
+  const port = Number(process.env.MBA_SWITCH_PORT ?? 8080);
+  const result = await bootServer({
+    modelFile,
+    port,
+    adapterDir: opts.adapterDir ?? "",
+    registryPath: (opts.paths ?? defaultStorePaths()).upstreamsPath,
+    seams: opts.lifecycleSeams,
   });
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+  const registry = readRegistry((opts.paths ?? defaultStorePaths()).upstreamsPath);
+  writeRegistry(
+    (opts.paths ?? defaultStorePaths()).upstreamsPath,
+    upsertEntry(registry, result.entry),
+  );
+}
+
+/**
+ * Probe whether `entry`'s model is loaded, resolving the probe target per
+ * model (ADR-0097 Phase 1): upstream registry → adapter `client.url` →
+ * `MBA_UPSTREAM_URL` → "not loaded".
+ *
+ * Lazy validation (G2): the registry is read once per call; candidates are
+ * probed in resolve order (most-recently-booted first) and a dead or stale
+ * entry is dropped on read — the next candidate, then the next rung, is
+ * tried. No sweeper, no timers.
+ */
+async function probeModelLoaded(
+  entry: CatalogEntry,
+  paths: MbaStorePaths,
+  envUrl: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  const registry = readRegistry(paths.upstreamsPath);
+  // Registry rung: walk candidates in resolve order; a candidate that is
+  // alive but running a DIFFERENT model is stale (rebooted since sign-in)
+  // and is dropped too.
+  for (const candidate of entry.modelFile ? listUpstreams(registry, entry.modelFile) : []) {
+    const probed = await probeLoadedModel(`http://127.0.0.1:${candidate.port}`, fetchImpl);
+    if (probed !== null && isLoadedPath(probed, entry.modelFile)) return probed;
+  }
+  // YAML rung: the adapter's own client.url (trailing /v1 stripped).
+  if (entry.clientUrl) {
+    const probed = await probeLoadedModel(entry.clientUrl.replace(/\/v1\/?$/, ""), fetchImpl);
+    if (probed !== null && isLoadedPath(probed, entry.modelFile)) return probed;
+  }
+  // Env rung: the legacy single-upstream knob.
+  if (envUrl) {
+    const probed = await probeLoadedModel(envUrl, fetchImpl);
+    if (probed !== null && isLoadedPath(probed, entry.modelFile)) return probed;
+  }
+  return null;
 }
 
 export interface MbaServiceHandle {
