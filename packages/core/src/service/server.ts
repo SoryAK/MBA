@@ -23,6 +23,11 @@
  *   POST /models/ensure              → { status: loaded|switched|disabled|unknown|failed, id }
  *        OFF by default (409 "disabled") — armed via `switchEnabled`
  *        (env `MBA_MODEL_SWITCH=on`). Idempotent: a loaded model is a no-op.
+ *   POST /models/pull                → { id, family, sha256, resumed, modelDir, adapterPath, familyCreated }
+ *        Body: { url, id, sha256, family? }. One-command model onboarding
+ *        (ADR-0098): download (resume + sha256 verify) → parse GGUF header →
+ *        scaffold the two-tier binding structure. 400 bad input, 409 folder
+ *        exists, 422 sha256 mismatch, 500 download failure.
  *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired }] }
  *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
  *        Body: { id, file: 'server_setup'|'client', field, value }. The
@@ -55,6 +60,12 @@ import {
   type SwitchExecutor,
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
+import {
+  pullModel,
+  PullConflictError,
+  PullValidationError,
+  PullVerifyError,
+} from "../model/model-pull.js";
 import {
   listUpstreams,
   readRegistry,
@@ -195,6 +206,47 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       return c.json(result, 500);
     }
     return c.json(result);
+  });
+
+  app.post("/models/pull", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { url?: unknown; id?: unknown; sha256?: unknown; family?: unknown };
+    if (
+      !input ||
+      typeof input.url !== "string" ||
+      input.url.length === 0 ||
+      typeof input.id !== "string" ||
+      input.id.length === 0 ||
+      typeof input.sha256 !== "string" ||
+      input.sha256.length === 0 ||
+      (input.family !== undefined && typeof input.family !== "string")
+    ) {
+      return c.json(
+        { error: "body requires url, id, sha256 (strings); family is an optional string" },
+        400,
+      );
+    }
+    try {
+      const result = await pullModel({
+        url: input.url,
+        id: input.id,
+        sha256: input.sha256,
+        family: input.family,
+        storeRoot: opts.adapterDir,
+        fetch: opts.fetch,
+      });
+      return c.json(result);
+    } catch (err) {
+      if (err instanceof PullValidationError) return c.json({ error: err.message }, 400);
+      if (err instanceof PullConflictError) return c.json({ error: err.message }, 409);
+      if (err instanceof PullVerifyError) return c.json({ error: err.message }, 422);
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
   });
 
   app.get("/models/config", (c) => {

@@ -348,6 +348,37 @@ async function cmdConfig(baseUrl: string, modelId: string): Promise<void> {
   printConfig(cfg);
 }
 
+interface PullResult {
+  readonly id: string;
+  readonly family: string;
+  readonly sha256: string;
+  readonly resumed: boolean;
+  readonly modelDir: string;
+  readonly adapterPath: string;
+  readonly familyCreated: boolean;
+}
+
+async function cmdPull(
+  baseUrl: string,
+  url: string,
+  id: string,
+  sha256: string,
+  family: string | undefined,
+): Promise<void> {
+  const body: Record<string, string> = { url, id, sha256 };
+  if (family) body.family = family;
+  const result = await servicePost<PullResult>(baseUrl, "/models/pull", body);
+  process.stdout.write(
+    `[mba] pulled ${result.id} (family: ${result.family})${result.resumed ? " [resumed]" : ""}\n`,
+  );
+  process.stdout.write(`[mba]   weights:  ${result.modelDir}\n`);
+  process.stdout.write(`[mba]   adapter:  ${result.adapterPath}\n`);
+  if (result.familyCreated) {
+    process.stdout.write("[mba]   family tier scaffolded (family.yaml + empty bindings)\n");
+  }
+  process.stdout.write("[mba] fill in the TODO fields in the adapter yaml, then boot the model\n");
+}
+
 async function cmdSet(
   baseUrl: string,
   modelId: string,
@@ -588,6 +619,11 @@ Usage:
   mba servers boot <ref> <port>    boot a model server in-daemon (waits for warmup)
                                    [--type ollama] boots an ollama model tag
   mba servers stop <id>            stop a registered server (by id)
+  mba pull <url> --id <id> --sha256 <digest> [--family <family>]
+                                   one-command model onboarding (ADR-0098):
+                                   download (resume + sha256 verify) → parse
+                                   GGUF header → scaffold the two-tier binding
+                                   structure with a TODO-marked draft adapter
   mba migrate-paths                one-time move of state + model store from the
                                    legacy locations to the OS-aware ones (local
                                    only — does not need the service running)
@@ -652,6 +688,24 @@ async function main(argv: readonly string[]): Promise<void> {
       case "servers":
         await cmdServers(baseUrl, rest);
         break;
+      case "pull": {
+        const [url, ...flagArgs] = rest;
+        let id: string | undefined;
+        let sha256: string | undefined;
+        let family: string | undefined;
+        for (let i = 0; i < flagArgs.length; i++) {
+          const a = flagArgs[i];
+          if (a === "--id") id = flagArgs[++i];
+          else if (a === "--sha256") sha256 = flagArgs[++i];
+          else if (a === "--family") family = flagArgs[++i];
+          else fail(`unknown flag for pull: ${a}\nusage: mba pull <url> --id <id> --sha256 <digest> [--family <family>]`);
+        }
+        if (!url || !id || !sha256) {
+          fail("usage: mba pull <url> --id <id> --sha256 <digest> [--family <family>]");
+        }
+        await cmdPull(baseUrl, url, id, sha256, family);
+        break;
+      }
       default:
         fail(`unknown command: ${command}\n\n${USAGE}`);
     }
