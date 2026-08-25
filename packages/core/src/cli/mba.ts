@@ -130,10 +130,13 @@ interface ServerEntry {
   readonly serverType: string;
   readonly modelFile: string;
   readonly port: number;
-  readonly pid: number;
+  /** Absent for daemon-backed types (e.g. ollama) that have no per-model process. */
+  readonly pid?: number;
   readonly startedAt: string;
   readonly healthy: boolean;
   readonly resolved: boolean;
+  /** True when another registered entry serves the same model (Q2 label). */
+  readonly duplicate?: boolean;
 }
 
 interface BootResult {
@@ -141,7 +144,8 @@ interface BootResult {
   readonly serverType: string;
   readonly modelFile: string;
   readonly port: number;
-  readonly pid: number;
+  /** Absent for daemon-backed types (e.g. ollama) that have no per-model process. */
+  readonly pid?: number;
   readonly startedAt: string;
 }
 
@@ -175,8 +179,8 @@ async function restartServer(
   const { servers } = await serviceGet<{ servers: ServerEntry[] }>(baseUrl, "/servers");
   const current = servers.find((s) => s.modelFile === file);
   if (current) {
-    process.stdout.write(`[mba] stopping current server ${current.id} (pid ${current.pid})\n`);
-    await servicePost<{ stopped: number }>(baseUrl, "/servers/stop", { pid: current.pid });
+    process.stdout.write(`[mba] stopping current server ${current.id}\n`);
+    await servicePost<{ stopped: string }>(baseUrl, "/servers/stop", { id: current.id });
   }
   process.stdout.write(`[mba] rebooting ${modelId} on port ${port} (waits for warmup)…\n`);
   const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", { modelFile: file, port });
@@ -399,15 +403,17 @@ async function cmdServersList(baseUrl: string): Promise<void> {
     "pid".padEnd(10) +
     "healthy".padEnd(9) +
     "resolved".padEnd(9) +
+    "dup".padEnd(5) +
     "model";
   process.stdout.write(header + "\n");
   for (const s of servers) {
     process.stdout.write(
       s.id.padEnd(18) +
         String(s.port).padEnd(8) +
-        String(s.pid).padEnd(10) +
+        (s.pid !== undefined ? String(s.pid) : "-").padEnd(10) +
         (s.healthy ? "yes" : "no").padEnd(9) +
         (s.resolved ? "yes" : "no").padEnd(9) +
+        (s.duplicate ? "yes" : "-").padEnd(5) +
         s.modelFile +
         "\n",
     );
@@ -432,7 +438,22 @@ async function resolveModelFile(baseUrl: string, ref: string): Promise<string> {
   return match.modelFile;
 }
 
-async function cmdServersBoot(baseUrl: string, modelRef: string, port: number): Promise<void> {
+async function cmdServersBoot(
+  baseUrl: string,
+  modelRef: string,
+  port: number,
+  serverType: "llama.cpp" | "ollama",
+): Promise<void> {
+  if (serverType === "ollama") {
+    process.stdout.write(`[mba] loading ${modelRef} into ollama (waits for load)…\n`);
+    const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", {
+      serverType: "ollama",
+      modelRef,
+      port,
+    });
+    process.stdout.write(`[mba] booted ${entry.id} on port ${entry.port}\n`);
+    return;
+  }
   const modelFile = await resolveModelFile(baseUrl, modelRef);
   process.stdout.write(`[mba] booting ${modelFile} on port ${port} (waits for warmup)…\n`);
   const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", {
@@ -444,9 +465,9 @@ async function cmdServersBoot(baseUrl: string, modelRef: string, port: number): 
   );
 }
 
-async function cmdServersStop(baseUrl: string, pid: number): Promise<void> {
-  await servicePost<{ stopped: number }>(baseUrl, "/servers/stop", { pid });
-  process.stdout.write(`[mba] stopped server group ${pid}\n`);
+async function cmdServersStop(baseUrl: string, id: string): Promise<void> {
+  await servicePost<{ stopped: string }>(baseUrl, "/servers/stop", { id });
+  process.stdout.write(`[mba] stopped ${id}\n`);
 }
 
 async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<void> {
@@ -456,25 +477,35 @@ async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<voi
       await cmdServersList(baseUrl);
       return;
     case "boot": {
-      const [modelRef, portRaw] = args;
+      let serverType: "llama.cpp" | "ollama" = "llama.cpp";
+      const typeIdx = args.indexOf("--type");
+      const positionalArgs =
+        typeIdx === -1 ? args : [...args.slice(0, typeIdx), ...args.slice(typeIdx + 2)];
+      if (typeIdx !== -1) {
+        const typeVal = args[typeIdx + 1];
+        if (typeVal !== "ollama" && typeVal !== "llama.cpp") {
+          fail("usage: mba servers boot <model|path.gguf|tag> <port> [--type ollama]");
+        }
+        serverType = typeVal;
+      }
+      const [modelRef, portRaw] = positionalArgs;
       const port = Number(portRaw);
       if (!modelRef || !portRaw || !Number.isInteger(port) || port <= 0 || port > 65535) {
-        fail("usage: mba servers boot <model|path.gguf> <port>");
+        fail("usage: mba servers boot <model|path.gguf|tag> <port> [--type ollama]");
       }
-      await cmdServersBoot(baseUrl, modelRef, port);
+      await cmdServersBoot(baseUrl, modelRef, port, serverType);
       return;
     }
     case "stop": {
-      const [pidRaw] = args;
-      const pid = Number(pidRaw);
-      if (!pidRaw || !Number.isInteger(pid) || pid <= 0) {
-        fail("usage: mba servers stop <pid>");
+      const [id] = args;
+      if (!id) {
+        fail("usage: mba servers stop <id>");
       }
-      await cmdServersStop(baseUrl, pid);
+      await cmdServersStop(baseUrl, id);
       return;
     }
     default:
-      fail("usage: mba servers <list|boot|stop>\n  list                 list registered servers\n  boot <model> <port>  boot a model server (waits for warmup)\n  stop <pid>           stop a server group");
+      fail("usage: mba servers <list|boot|stop>\n  list                 list registered servers\n  boot <ref> <port>    boot a model server (waits for warmup) [--type ollama]\n  stop <id>            stop a registered server (by id)");
   }
 }
 
@@ -489,8 +520,9 @@ Usage:
   mba set <model> <field> <value>  set one dial (value parsed as JSON when possible)
   mba open <model> <file>          print the on-disk path (server_setup | yaml)
   mba servers list                 list registered model servers
-  mba servers boot <model> <port>  boot a model server in-daemon (waits for warmup)
-  mba servers stop <pid>           stop a server process group
+  mba servers boot <ref> <port>    boot a model server in-daemon (waits for warmup)
+                                   [--type ollama] boots an ollama model tag
+  mba servers stop <id>            stop a registered server (by id)
   mba ... --yes                    skip the restart prompt (never restarts)
 
 Environment:
