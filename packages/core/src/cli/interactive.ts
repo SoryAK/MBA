@@ -30,6 +30,37 @@ export interface ModelDial {
   readonly hint?: string;
 }
 
+/**
+ * Split a raw stdin chunk into logical keys. Escape sequences (arrow keys,
+ * etc.) start with `\x1b` and consume the following bytes; everything else is
+ * one key per character. A single data event can carry several keys (fast
+ * typing, paste, terminal flush), so callers must iterate.
+ */
+function tokenizeKeys(chunk: string): string[] {
+  const keys: string[] = [];
+  let i = 0;
+  while (i < chunk.length) {
+    const ch = chunk.charAt(i);
+    if (ch === "\x1b") {
+      // Escape sequence: consume until a non-control byte ends it.
+      // Arrow keys are ESC [ X (X is a letter); include the final byte.
+      let j = i + 1;
+      while (j < chunk.length && (chunk.charCodeAt(j) < 0x20 || chunk.charAt(j) === "[")) {
+        j++;
+      }
+      if (j < chunk.length) {
+        j++; // include the final letter (e.g. 'C' in ESC [ C)
+      }
+      keys.push(chunk.slice(i, j));
+      i = j;
+    } else {
+      keys.push(ch);
+      i++;
+    }
+  }
+  return keys;
+}
+
 // --- Interactive model picker (no fzf — readline keypress) -------------------
 
 export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry> {
@@ -82,35 +113,50 @@ export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry> 
       resolve(m);
     };
 
-    const onData = (buf: Buffer) => {
-      const key = buf.toString("utf8");
+    const handleKey = (key: string): boolean => {
+      // Returns true when the prompt is done (resolve/reject already called).
       const list = filtered();
       if (key === "\x1b[A") {
         // up
         cursor = (cursor - 1 + list.length) % list.length;
         render();
+        return false;
       } else if (key === "\x1b[B") {
         // down
         cursor = (cursor + 1) % list.length;
         render();
+        return false;
       } else if (key === "\r" || key === "\n") {
         const pick = list[cursor];
         if (pick) done(pick);
+        return true;
       } else if (key === "\x7f" || key === "\b") {
         // backspace
         query = query.slice(0, -1);
         cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
         render();
+        return false;
       } else if (key === "\x03") {
         // ctrl-c
         stdin.setRawMode(false);
         stdin.removeListener("data", onData);
         process.stdout.write("\n");
         reject(new Error("cancelled"));
+        return true;
       } else if (key.length === 1 && !key.startsWith("\x1b")) {
         query += key;
         cursor = 0;
         render();
+        return false;
+      }
+      return false;
+    };
+
+    const onData = (buf: Buffer) => {
+      // A single data event may carry multiple characters (e.g. a pasted
+      // value or a fast terminal flush); process each one in order.
+      for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        if (handleKey(key)) return;
       }
     };
 
@@ -265,6 +311,87 @@ export function askValueInteractive(
       } else if (key.length === 1 && !key.startsWith("\x1b")) {
         input += key;
         render();
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    render();
+  });
+}
+
+/**
+ * Raw-mode port prompt. Enter with an empty input keeps the default (returns
+ * the default). Esc returns null (cancel). Invalid input (non-numeric, out of
+ * 1-65535 range) re-prompts with an error hint.
+ */
+export function askPortInteractive(
+  defaultPort: number,
+): Promise<number | null> {
+  return new Promise<number | null>((resolve, reject) => {
+    const stdin = process.stdin;
+    let input = "";
+    let error = "";
+
+    const render = () => {
+      const errText = error ? `  ${error}` : "";
+      process.stdout.write(
+        `\r\x1b[K  port [${defaultPort}]${errText} > ${input}\x1b[7 >\x1b[0m`,
+      );
+    };
+
+    const done = (value: number | null) => {
+      stdin.setRawMode(false);
+      stdin.removeListener("data", onData);
+      process.stdout.write("\n");
+      resolve(value);
+    };
+
+    const handleKey = (key: string): boolean => {
+      // Returns true when the prompt is done (resolve/reject already called).
+      if (key === "\r" || key === "\n") {
+        if (input.length === 0) {
+          done(defaultPort);
+          return true;
+        }
+        const port = Number(input);
+        if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+          error = "port must be an integer 1-65535";
+          input = ""; // clear so the next attempt starts fresh
+          render();
+          return false;
+        }
+        done(port);
+        return true;
+      } else if (key === "\x1b") {
+        done(null);
+        return true;
+      } else if (key === "\x7f" || key === "\b") {
+        input = input.slice(0, -1);
+        error = "";
+        render();
+        return false;
+      } else if (key === "\x03") {
+        stdin.setRawMode(false);
+        stdin.removeListener("data", onData);
+        process.stdout.write("\n");
+        reject(new Error("cancelled"));
+        return true;
+      } else if (key.length === 1 && !key.startsWith("\x1b")) {
+        input += key;
+        error = "";
+        render();
+        return false;
+      }
+      return false;
+    };
+
+    const onData = (buf: Buffer) => {
+      // A single data event may carry multiple characters (e.g. a pasted
+      // value or a fast terminal flush); process each one in order.
+      for (const key of buf.toString("utf8")) {
+        if (handleKey(key)) return;
       }
     };
 
