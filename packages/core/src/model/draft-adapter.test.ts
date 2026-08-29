@@ -49,7 +49,7 @@ describe("draftAdapterYaml", () => {
     const doc = YAML.parse(text) as Record<string, any>;
     expect(doc.apiVersion).toBe("mba.c-yard.dev/v1alpha1");
     expect(doc.kind).toBe("ModelBehavioralAdapter");
-    expect(doc.metadata).toEqual({ id: "qwen3.8-27b", name: expect.stringContaining("TODO"), family: "qwen" });
+    expect(doc.metadata).toEqual({ id: "qwen3.8-27b", name: "qwen3.8-27b", family: "qwen" });
   });
 
   it("wires identity.model with lineage, file, and the derived profile", () => {
@@ -57,8 +57,46 @@ describe("draftAdapterYaml", () => {
     const model = doc.identity.model;
     expect(model.lineage).toEqual(["qwen", "qwen3.8-27b"]);
     expect(model.file).toBe("./Qwen3.8-27B-Q6_K.gguf");
-    expect(model.profile).toEqual({ ...profile, baseModel: expect.stringContaining("TODO") });
-    expect(model.name).toContain("TODO");
+    expect(model.profile).toEqual({
+      ...profile,
+      baseModel: "[ input base models here once determined ]",
+    });
+    expect(model.name).toBe("qwen3.8-27b");
+  });
+
+  it("uses baseModel for profile.baseModel when provided", () => {
+    const doc = YAML.parse(
+      draftAdapterYaml({ ...input, baseModel: "unsloth/Qwen3.8-27B-GGUF" }),
+    ) as Record<string, any>;
+    expect(doc.identity.model.profile.baseModel).toBe("unsloth/Qwen3.8-27B-GGUF");
+  });
+
+  it("notes the baseModel derivation in a trailing comment", () => {
+    const text = draftAdapterYaml({ ...input, baseModel: "unsloth/Qwen3.8-27B-GGUF" });
+    expect(text).toMatch(/derived from the download source/);
+  });
+
+  it("omits the baseModel derivation comment when baseModel is absent", () => {
+    const text = draftAdapterYaml(input);
+    expect(text).not.toMatch(/derived from the download source/);
+  });
+
+  it("uses ggufName for metadata.name and identity.model.name when provided", () => {
+    const doc = YAML.parse(draftAdapterYaml({ ...input, ggufName: "Qwen3.8 27B" })) as Record<string, any>;
+    expect(doc.metadata.name).toBe("Qwen3.8 27B");
+    expect(doc.identity.model.name).toBe("Qwen3.8 27B");
+    // id stays the id — only the display name changes
+    expect(doc.metadata.id).toBe("qwen3.8-27b");
+  });
+
+  it("notes the ggufName derivation in a trailing comment", () => {
+    const text = draftAdapterYaml({ ...input, ggufName: "Qwen3.8 27B" });
+    expect(text).toMatch(/derived from the GGUF header/);
+  });
+
+  it("omits the derivation comment when ggufName is absent", () => {
+    const text = draftAdapterYaml(input);
+    expect(text).not.toMatch(/derived from the GGUF header/);
   });
 
   it("marks imatrix as TODO (not derivable from the download)", () => {
@@ -101,7 +139,7 @@ describe("draftFamilyYaml", () => {
     const doc = YAML.parse(text) as Record<string, any>;
     expect(doc.apiVersion).toBe("mba.c-yard.dev/v1alpha1");
     expect(doc.kind).toBe("ModelBehavioralAdapter");
-    expect(doc.metadata).toEqual({ id: "qwen-family", name: expect.stringContaining("TODO"), family: "qwen" });
+    expect(doc.metadata).toEqual({ id: "qwen-family", name: "Qwen", family: "qwen" });
     expect(doc.identity.model).toEqual({ family: "qwen", lineage: ["qwen"] });
     expect(doc.bindings).toEqual({
       bcb: "./bcb.jsonl",
@@ -109,5 +147,10 @@ describe("draftFamilyYaml", () => {
       structural: "./structural.json",
       server_setup: "./server_setup.json",
     });
+  });
+
+  it("title-cases hyphenated family slugs", () => {
+    const doc = YAML.parse(draftFamilyYaml({ family: "llama-3" })) as Record<string, any>;
+    expect(doc.metadata.name).toBe("Llama 3");
   });
 });
