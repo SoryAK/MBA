@@ -1,9 +1,14 @@
 /**
- * One-command model onboarding (ADR-0098).
+ * One-command model onboarding (ADR-0098, digest auto-resolution ADR-0099).
  *
  * `pullModel` downloads a GGUF weights file (with resume + sha256 verify),
  * parses its header, and scaffolds the two-tier binding structure in the
  * model store:
+ *
+ * The digest is normally passed explicitly (`--sha256`). When omitted, it is
+ * resolved from the source's published LFS metadata — HuggingFace repo
+ * shorthand (`owner/repo[:file-or-quant]`) or a huggingface.co resolve URL
+ * (ADR-0099). Any other host still requires an explicit digest.
  *
  *   <store>/<family>/family.yaml            (only if absent)
  *   <store>/<family>/bcb.jsonl|tcb.jsonl|structural.json|server_setup.json
@@ -18,11 +23,11 @@
 
 import { createHash } from "node:crypto";
 import {
+  createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -34,14 +39,22 @@ import { defaultModelStoreRoot } from "../service/paths.js";
 import { draftAdapterYaml, draftFamilyYaml } from "./draft-adapter.js";
 import { parseGgufMetadata } from "./gguf-metadata.js";
 import { deriveGgufProfile } from "./gguf-profile.js";
+import { parseHfRef, parseHfUrl, resolveHfSource } from "./hf-resolve.js";
 
 export interface PullModelOptions {
-  /** Download URL for the GGUF weights file. */
+  /**
+   * Download URL for the GGUF weights file, or a HuggingFace repo shorthand
+   * (`owner/repo[:file-or-quant]`, ADR-0099) when `sha256` is omitted.
+   */
   url: string;
   /** Model id — becomes the model folder name and adapter id. Required. */
   id: string;
-  /** Expected content sha256 (64 hex chars). Required — no verify, no pull. */
-  sha256: string;
+  /**
+   * Expected content sha256 (64 hex chars). When omitted, the digest is
+   * resolved from the source's published LFS metadata (HuggingFace only,
+   * ADR-0099); any other host still requires an explicit digest.
+   */
+  sha256?: string;
   /** Family slug. Defaults to the id. */
   family?: string;
   /** Store root override (default: $MBA_ADAPTER_DIR ?? OS-aware store). */
@@ -122,19 +135,51 @@ async function downloadWithResume(
   return start > 0;
 }
 
-function sha256OfFile(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+/**
+ * Stream a file's sha256 in constant memory. Multi-GB GGUFs must never be
+ * read whole into a Buffer just to hash them.
+ */
+export async function sha256OfFile(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  await pipeline(createReadStream(path), hash);
+  return hash.digest("hex");
 }
 
 /**
  * Pull a model: download → verify → parse → scaffold.
  *
- * Throws (and cleans up) on: missing/invalid id or sha256, an existing model
- * folder, a failed download, or a sha256 mismatch.
+ * Throws (and cleans up) on: missing/invalid id, an unresolvable digest, an
+ * existing model folder, a failed download, or a sha256 mismatch.
  */
 export async function pullModel(opts: PullModelOptions): Promise<PullModelResult> {
-  const { url, id, sha256 } = opts;
+  const { id } = opts;
   if (!id || id.length === 0) throw new PullValidationError("pull requires --id");
+
+  // Resolve the download URL + digest (ADR-0099).
+  // - A repo shorthand (owner/repo[:file-or-quant]) is always resolved via
+  //   the HF API to a download URL; the digest comes from the repo's LFS
+  //   metadata unless an explicit --sha256 was given (explicit wins).
+  // - A full HF resolve URL with an explicit digest needs no API lookup.
+  // - A full HF resolve URL without a digest is resolved for its digest.
+  // - Any other source requires an explicit --sha256 (ADR-0098).
+  let url = opts.url;
+  let sha256 = opts.sha256;
+  const hasDigest = sha256 !== undefined && sha256.length > 0;
+  const doFetch = opts.fetch ?? fetch;
+  const ref = url && url.length > 0 ? parseHfRef(url) : undefined;
+  const urlRef = url && url.length > 0 ? parseHfUrl(url) : undefined;
+  if (ref || (urlRef && !hasDigest)) {
+    const resolved = await resolveHfSource(url, doFetch);
+    url = resolved.url;
+    if (!hasDigest) sha256 = resolved.sha256;
+  }
+  if (sha256 === undefined || sha256.length === 0) {
+    // Not a resolvable source and no digest: say exactly what to do.
+    throw new PullValidationError(
+      `pull requires --sha256 (64 hex chars) — no digest, no pull. ` +
+        `Supported auto-resolving sources: HuggingFace repo shorthand (owner/repo[:file-or-quant]) or a huggingface.co resolve URL`,
+    );
+  }
   if (!/^[0-9a-f]{64}$/i.test(sha256)) {
     throw new PullValidationError("pull requires --sha256 (64 hex chars) — no digest, no pull");
   }
@@ -159,7 +204,6 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
       );
     }
   }
-  const doFetch = opts.fetch ?? fetch;
 
   mkdirSync(modelDir, { recursive: true });
   const partial = `${dest}.partial`;
@@ -170,7 +214,7 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
   try {
     const resumed = await downloadWithResume(url, dest, doFetch);
 
-    const actual = sha256OfFile(partial);
+    const actual = await sha256OfFile(partial);
     if (actual !== sha256.toLowerCase()) {
       cleanup();
       throw new PullVerifyError(

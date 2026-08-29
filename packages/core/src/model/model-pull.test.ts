@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { pullModel, type PullModelOptions } from "./model-pull.js";
+import { pullModel, sha256OfFile, type PullModelOptions } from "./model-pull.js";
 
 /**
  * Build a minimal valid GGUF v3 buffer with one string kv pair, so the
@@ -195,6 +195,150 @@ describe("pullModel", () => {
       expect(existsSync(join(store, "qwen", "qwen3.8-27b", "weights.gguf"))).toBe(true);
     } finally {
       rmSync(store, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("pullModel digest auto-resolution (ADR-0099)", () => {
+  /**
+   * Fake fetch that serves BOTH the HuggingFace API (repo info + tree) and
+   * the weights download (the local GGUF fixture).
+   */
+  function hfAndWeightsFetch(): typeof fetch {
+    const ref = "e".repeat(40);
+    return (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      // Tree listing — served for the default revision (commit sha) and for
+      // any branch named in a resolve URL.
+      if (url.includes("/api/models/owner/repo/tree/")) {
+        return Response.json([
+          { type: "file", path: "weights.gguf", lfs: { oid: SHA256, size: GGUF.length } },
+        ]);
+      }
+      if (url.includes("/api/models/owner/repo")) {
+        return Response.json({ sha: ref });
+      }
+      // Weights download (same semantics as the local HTTP server above).
+      const range = init?.headers && (init.headers as Record<string, string>).Range;
+      if (range) {
+        const m = range.match(/bytes=(\d+)-/);
+        const start = m ? Number(m[1]) : 0;
+        return new Response(GGUF.subarray(start), {
+          status: 206,
+          headers: { "Content-Range": `bytes ${start}-${GGUF.length - 1}/${GGUF.length}` },
+        });
+      }
+      return new Response(GGUF, { status: 200 });
+    }) as typeof fetch;
+  }
+
+  it("resolves owner/repo shorthand when --sha256 is omitted", async () => {
+    const store = freshStore();
+    try {
+      const result = await pullModel({
+        url: "owner/repo",
+        id: "test-model",
+        storeRoot: store,
+        fetch: hfAndWeightsFetch(),
+      });
+      expect(result.sha256).toBe(SHA256);
+      const modelDir = join(store, "test-model", "test-model");
+      expect(readFileSync(join(modelDir, "weights.gguf"))).toEqual(GGUF);
+      expect(existsSync(join(modelDir, "test-model.yaml"))).toBe(true);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves a HuggingFace resolve URL when --sha256 is omitted", async () => {
+    const store = freshStore();
+    try {
+      const result = await pullModel({
+        url: "https://huggingface.co/owner/repo/resolve/main/weights.gguf",
+        id: "test-model",
+        storeRoot: store,
+        fetch: hfAndWeightsFetch(),
+      });
+      expect(result.sha256).toBe(SHA256);
+      expect(existsSync(join(store, "test-model", "test-model", "weights.gguf"))).toBe(true);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("an explicit --sha256 skips resolution and wins", async () => {
+    const store = freshStore();
+    try {
+      // The fake HF API would 404 for this repo — proof that no resolution
+      // happens when a digest is supplied.
+      const result = await pullModel({
+        url: "https://huggingface.co/nosuch/repo/resolve/main/weights.gguf",
+        id: "test-model",
+        sha256: SHA256,
+        storeRoot: store,
+        fetch: hfAndWeightsFetch(),
+      });
+      expect(result.sha256).toBe(SHA256);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("a shorthand with an explicit --sha256 resolves the URL but keeps the supplied digest", async () => {
+    const store = freshStore();
+    try {
+      const supplied = "f".repeat(64);
+      // The supplied digest does not match the fixture, so the pull fails at
+      // verify — but the failure message proves the SUPPLIED digest was used
+      // (not the repo's), and that the shorthand was resolved to a URL.
+      await expect(
+        pullModel({
+          url: "owner/repo",
+          id: "test-model",
+          sha256: supplied,
+          storeRoot: store,
+          fetch: hfAndWeightsFetch(),
+        }),
+      ).rejects.toThrow(new RegExp(`expected ${supplied}`));
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("a non-HuggingFace URL without --sha256 fails with a clear error", async () => {
+    const store = freshStore();
+    try {
+      await expect(
+        pullModel({
+          url: "https://example.com/weights.gguf",
+          id: "test-model",
+          storeRoot: store,
+          fetch: hfAndWeightsFetch(),
+        }),
+      ).rejects.toThrow(/pull requires --sha256/);
+      // No store side effects from a failed resolution.
+      expect(existsSync(join(store, "test-model"))).toBe(false);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sha256OfFile", () => {
+  it("streams the hash and matches a whole-buffer digest", async () => {
+    const dir = freshStore();
+    try {
+      const path = join(dir, "chunked.gguf");
+      // Write in chunks so the file is larger than any single read.
+      const chunk = Buffer.alloc(64 * 1024, 7);
+      for (let i = 0; i < 64; i++) appendFileSync(path, chunk);
+
+      const expected = createHash("sha256")
+        .update(Buffer.concat(Array.from({ length: 64 }, () => chunk)))
+        .digest("hex");
+      await expect(sha256OfFile(path)).resolves.toBe(expected);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
