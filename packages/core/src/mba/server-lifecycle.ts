@@ -70,10 +70,15 @@ export interface LifecycleSeams {
   readonly now?: () => number;
   /** Health-check deadline in ms. Defaults to 180_000 (boot script parity). */
   readonly healthDeadlineMs?: number;
+  /**
+   * Check whether a TCP port is free (no listener). Defaults to a real
+   * `node:net` probe. Return `true` if the port is free, `false` if occupied.
+   */
+  readonly portCheckImpl?: (port: number) => Promise<boolean>;
 }
 
 /** Resolve a seam to its real default. */
-function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
+export function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
   return {
     spawnImpl: seams?.spawnImpl ?? spawn,
     fetchImpl: seams?.fetchImpl ?? fetch,
@@ -85,7 +90,24 @@ function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
       }),
     now: seams?.now ?? Date.now,
     healthDeadlineMs: seams?.healthDeadlineMs ?? 180_000,
+    portCheckImpl: seams?.portCheckImpl ?? defaultPortCheck,
   };
+}
+
+/**
+ * Default port check: attempt to bind a TCP socket to the port. If the bind
+ * succeeds, the port is free; if it fails with EADDRINUSE, the port is occupied.
+ */
+async function defaultPortCheck(port: number): Promise<boolean> {
+  const net = await import("node:net");
+  return new Promise<boolean>((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
 }
 
 /**

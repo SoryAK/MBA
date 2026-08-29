@@ -266,7 +266,9 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     };
     writeRegistry(paths.upstreamsPath, [existing]);
     const { seams, spawnCalls } = bootSeams(424242);
-    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    // Simulate the OS port being occupied (the self-healing G2 check).
+    const seamsWithBusyPort: LifecycleSeams = { ...seams, portCheckImpl: async () => false };
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seamsWithBusyPort });
     const res = await app.request("/servers/boot", {
       method: "POST",
       headers: { "content-type": "application/json" },
