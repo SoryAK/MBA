@@ -24,10 +24,14 @@
  *        OFF by default (409 "disabled") — armed via `switchEnabled`
  *        (env `MBA_MODEL_SWITCH=on`). Idempotent: a loaded model is a no-op.
  *   POST /models/pull                → { id, family, sha256, resumed, modelDir, adapterPath, familyCreated }
- *        Body: { url, id, sha256, family? }. One-command model onboarding
+ *        Body: { url, id, sha256?, family? }. One-command model onboarding
  *        (ADR-0098): download (resume + sha256 verify) → parse GGUF header →
- *        scaffold the two-tier binding structure. 400 bad input, 409 folder
- *        exists, 422 sha256 mismatch, 500 download failure.
+ *        scaffold the two-tier binding structure. `url` may be a HuggingFace
+ *        repo shorthand (owner/repo[:file-or-quant]) or resolve URL; when
+ *        `sha256` is omitted it is resolved from the repo's published LFS
+ *        metadata (ADR-0099) — other hosts require an explicit digest.
+ *        400 bad input, 409 folder exists, 422 sha256 mismatch, 500 download
+ *        failure.
  *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired }] }
  *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
  *        Body: { id, file: 'server_setup'|'client', field, value }. The
@@ -66,6 +70,7 @@ import {
   PullValidationError,
   PullVerifyError,
 } from "../model/model-pull.js";
+import { HfResolveError } from "../model/hf-resolve.js";
 import {
   listUpstreams,
   readRegistry,
@@ -222,12 +227,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       input.url.length === 0 ||
       typeof input.id !== "string" ||
       input.id.length === 0 ||
-      typeof input.sha256 !== "string" ||
-      input.sha256.length === 0 ||
+      (input.sha256 !== undefined && typeof input.sha256 !== "string") ||
       (input.family !== undefined && typeof input.family !== "string")
     ) {
       return c.json(
-        { error: "body requires url, id, sha256 (strings); family is an optional string" },
+        { error: "body requires url, id (strings); sha256 and family are optional strings" },
         400,
       );
     }
@@ -245,6 +249,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       if (err instanceof PullValidationError) return c.json({ error: err.message }, 400);
       if (err instanceof PullConflictError) return c.json({ error: err.message }, 409);
       if (err instanceof PullVerifyError) return c.json({ error: err.message }, 422);
+      if (err instanceof HfResolveError) return c.json({ error: err.message }, 400);
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
   });

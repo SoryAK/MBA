@@ -48,12 +48,22 @@ locations (local-only, works with the service stopped, never overwrites).
 ## Model onboarding
 
 ```sh
-mba pull <url> --id <id> --sha256 <digest> [--family <family>]
+mba pull <url|owner/repo[:file-or-quant]> --id <id> [--sha256 <digest>] [--family <family>]
 ```
 
 One-command onboarding (ADR-0098): downloads a GGUF (resume + sha256
 verify), parses its header into a profile, and scaffolds the two-tier
 adapter binding (family + adapter) with a TODO-marked draft adapter.
+
+For HuggingFace repos the digest is auto-resolved from the repo's published
+LFS metadata (ADR-0099) — no hash hunting:
+
+```sh
+mba pull rico03/Qwen3.8-27B-...-GGUF:Q4_K_M --id qwen3.8-27b-opus-distill
+```
+
+`--sha256` stays available as an override (and is still required for
+non-HuggingFace sources).
 
 ## MCP control plane
 
