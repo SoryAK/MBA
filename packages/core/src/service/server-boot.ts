@@ -19,9 +19,9 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type LifecycleSeams } from "../mba/index.js";
+import { resolveSeams, type LifecycleSeams } from "../mba/index.js";
 import { resolveRecipe } from "./recipe-resolution.js";
-import { listUpstreams, readRegistry, type UpstreamEntry } from "./upstream-registry.js";
+import { listUpstreams, readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
 
 /** The two llama.cpp fork variants (boot-script parity). */
@@ -113,12 +113,15 @@ export type BootServerResult =
 /**
  * Boot a model server in-daemon and return the registry entry to persist.
  *
- * G2 port rule: a port already present in the registry is refused
- * (`port-busy`). Q1 duplicate-model rule (Phase 3): a model file already
- * served by a registered entry is refused (`duplicate-model`) — one server
- * per model; stop the existing one first. The boot resolves only after
- * health + warmup (Perf #2); a failed boot is reported as `boot-failed` and
- * leaves no registry entry.
+ * G2 port rule (self-healing): the actual OS port is checked first via
+ * `portCheckImpl`. If the port is occupied, the boot is refused
+ * (`port-busy`) — the error names the registry entry if one exists,
+ * otherwise reports an external process. If the port is free, any stale
+ * registry entry for it is cleaned up before booting. Q1 duplicate-model
+ * rule (Phase 3): a model file already served by a registered entry is
+ * refused (`duplicate-model`) — one server per model; stop the existing
+ * one first. The boot resolves only after health + warmup (Perf #2); a
+ * failed boot is reported as `boot-failed` and leaves no registry entry.
  */
 export async function bootServer(input: BootServerInput): Promise<BootServerResult> {
   const serverType = input.serverType ?? "llama.cpp";
@@ -149,14 +152,29 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   // entries all share the daemon port, so the port check applies only to
   // types that bind their own port (llama.cpp) — for Ollama the Q1
   // duplicate check (one entry per tag) is the guard.
+  //
+  // Self-healing: check the actual OS port first (not just the registry).
+  // If the port is free, clean up any stale registry entry for it. If the
+  // port is occupied, report a friendly error using the registry entry if
+  // one exists, otherwise a generic "external process" message.
   if (serverType !== "ollama") {
-    const busy = registry.find((e) => e.port === input.port);
-    if (busy) {
+    const { portCheckImpl } = resolveSeams(input.seams);
+    const portFree = await portCheckImpl(input.port);
+    if (!portFree) {
+      const busy = registry.find((e) => e.port === input.port);
       return {
         ok: false,
         code: "port-busy",
-        error: `port ${input.port} is already in use by ${busy.id}`,
+        error: busy
+          ? `port ${input.port} is already in use by ${busy.id}`
+          : `port ${input.port} is already in use by an external process`,
       };
+    }
+    // Port is free — clean up any stale registry entry for this port.
+    const stale = registry.find((e) => e.port === input.port);
+    if (stale) {
+      const cleaned = registry.filter((e) => e.port !== input.port);
+      writeRegistry(input.registryPath, cleaned);
     }
   }
 
