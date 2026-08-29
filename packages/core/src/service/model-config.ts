@@ -249,9 +249,10 @@ function dialHint(spec: ModelDialFieldSpec, files: ModelConfigFiles): string | u
       }
       return "> 0";
     case "int":
-      // gpuLayers is bounded 1..blockCount (blockCount + 1 = all on GPU).
+      // gpuLayers is bounded 1..blockCount+1 (blockCount + 1 = all on GPU) —
+      // must match validateValue's upper bound.
       if (spec.field === "gpuLayers" && files.blockCount !== undefined) {
-        return `1–${files.blockCount}`;
+        return `1–${files.blockCount + 1}`;
       }
       return undefined;
     case "string":
