@@ -226,10 +226,27 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
     // Header parse + profile derivation (local, no network).
     const meta = parseGgufMetadata(dest);
     const profile = deriveGgufProfile(meta, fileName, sha256.toLowerCase());
+    const ggufName =
+      typeof meta.fields["general.name"] === "string"
+        ? (meta.fields["general.name"] as string)
+        : undefined;
+
+    // Base model: derive from the download source when it is a HuggingFace
+    // repo (owner/repo). The download host is the best available signal for
+    // the upstream base model; the user can override in the draft YAML.
+    const baseModel =
+      ref && ref.owner && ref.repo
+        ? `${ref.owner}/${ref.repo}`
+        : urlRef && urlRef.owner && urlRef.repo
+          ? `${urlRef.owner}/${urlRef.repo}`
+          : undefined;
 
     // Model tier: draft adapter + empty bindings.
     const adapterPath = join(modelDir, `${id}.yaml`);
-    writeFileSync(adapterPath, draftAdapterYaml({ id, family, fileName, sha256, profile }));
+    writeFileSync(
+      adapterPath,
+      draftAdapterYaml({ id, family, fileName, sha256, profile, ggufName, baseModel }),
+    );
     writeFileSync(join(modelDir, "bcb.jsonl"), EMPTY_JSON);
     writeFileSync(join(modelDir, "tcb.jsonl"), EMPTY_JSON);
     writeFileSync(join(modelDir, "server_setup.json"), EMPTY_JSON);
