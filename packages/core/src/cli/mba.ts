@@ -362,10 +362,11 @@ async function cmdPull(
   baseUrl: string,
   url: string,
   id: string,
-  sha256: string,
+  sha256: string | undefined,
   family: string | undefined,
 ): Promise<void> {
-  const body: Record<string, string> = { url, id, sha256 };
+  const body: Record<string, string> = { url, id };
+  if (sha256) body.sha256 = sha256;
   if (family) body.family = family;
   const result = await servicePost<PullResult>(baseUrl, "/models/pull", body);
   process.stdout.write(
@@ -619,11 +620,15 @@ Usage:
   mba servers boot <ref> <port>    boot a model server in-daemon (waits for warmup)
                                    [--type ollama] boots an ollama model tag
   mba servers stop <id>            stop a registered server (by id)
-  mba pull <url> --id <id> --sha256 <digest> [--family <family>]
+  mba pull <url|owner/repo[:file-or-quant]> --id <id>
+                                   [--sha256 <digest>] [--family <family>]
                                    one-command model onboarding (ADR-0098):
                                    download (resume + sha256 verify) → parse
                                    GGUF header → scaffold the two-tier binding
-                                   structure with a TODO-marked draft adapter
+                                   structure with a TODO-marked draft adapter.
+                                   HuggingFace shorthand (owner/repo[:Q4_K_M])
+                                   auto-resolves the URL + sha256 (ADR-0099);
+                                   other hosts need --sha256
   mba migrate-paths                one-time move of state + model store from the
                                    legacy locations to the OS-aware ones (local
                                    only — does not need the service running)
@@ -698,10 +703,10 @@ async function main(argv: readonly string[]): Promise<void> {
           if (a === "--id") id = flagArgs[++i];
           else if (a === "--sha256") sha256 = flagArgs[++i];
           else if (a === "--family") family = flagArgs[++i];
-          else fail(`unknown flag for pull: ${a}\nusage: mba pull <url> --id <id> --sha256 <digest> [--family <family>]`);
+          else fail(`unknown flag for pull: ${a}\nusage: mba pull <url|owner/repo[:file-or-quant]> --id <id> [--sha256 <digest>] [--family <family>]`);
         }
-        if (!url || !id || !sha256) {
-          fail("usage: mba pull <url> --id <id> --sha256 <digest> [--family <family>]");
+        if (!url || !id) {
+          fail("usage: mba pull <url|owner/repo[:file-or-quant]> --id <id> [--sha256 <digest>] [--family <family>]");
         }
         await cmdPull(baseUrl, url, id, sha256, family);
         break;
