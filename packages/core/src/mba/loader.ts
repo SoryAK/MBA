@@ -32,6 +32,40 @@ const yamlCache = new Map<string, CacheEntry<MbaAdapter>>();
 const jsonlCache = new Map<string, CacheEntry<MbaRuleBindingLine[]>>();
 const jsonCache = new Map<string, CacheEntry<unknown>>();
 
+/**
+ * Bound for each cache. A long-lived service must not accumulate one entry
+ * per distinct file path forever; past this, the oldest (first-inserted)
+ * entry is dropped. The Map is insertion-ordered, so eviction is O(1).
+ */
+const MAX_CACHE_ENTRIES = 256;
+
+/** Insert or refresh a cache entry, evicting the oldest when over the bound. */
+function putCacheEntry<T>(
+  cache: Map<string, CacheEntry<T>>,
+  path: string,
+  entry: CacheEntry<T>,
+): void {
+  // Refresh recency on update: re-insert so the key moves to the tail.
+  if (cache.has(path)) cache.delete(path);
+  if (cache.size >= MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(path, entry);
+}
+
+/** Drop all cached parses. Exposed for tests and for a clean per-boot reset. */
+export function clearLoaderCaches(): void {
+  yamlCache.clear();
+  jsonlCache.clear();
+  jsonCache.clear();
+}
+
+/** Current entry counts per cache. Exposed for tests and operational checks. */
+export function loaderCacheSizes(): { yaml: number; jsonl: number; json: number } {
+  return { yaml: yamlCache.size, jsonl: jsonlCache.size, json: jsonCache.size };
+}
+
 function cachedRead<T>(
   path: string,
   cache: Map<string, CacheEntry<T>>,
@@ -45,7 +79,7 @@ function cachedRead<T>(
   }
   const text = readFileSync(path, "utf8");
   const value = parse(text);
-  cache.set(path, { mtimeMs: stats.mtimeMs, value });
+  putCacheEntry(cache, path, { mtimeMs: stats.mtimeMs, value });
   return { value, fromCache: false };
 }
 
