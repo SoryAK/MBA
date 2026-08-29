@@ -60,3 +60,51 @@ YAML `client:` block) have **no write path at all**. The user found the curl flo
 **Re-entry trigger (v2):** Model create/delete in the CLI — touches catalog +
 lineage tree + watcher, deferred from v1. Also: shared `resolveServiceUrl`
 extraction if a third service consumer appears (ADR-0096 trade-off).
+
+---
+
+## npm auto-publish stage (Jenkins)
+
+**Parked:** 2026-08-25 — surfaced while confirming CI behavior after the
+ADR-0098 push.
+
+**Idea:** Add a publish stage to the `Jenkinsfile` so that a green build on
+`main` automatically bumps the version and publishes `@mba-ai/core` (and
+`@mba-ai/mcp-server` if/when it becomes public) to the npm registry. Today the
+pipeline is Checkout → Install → Typecheck → Test → Build only — the npm
+registry is never touched.
+
+**Why:** The root `package.json` is `"private": true` and nothing in CI calls
+`npm publish`, so every release is a manual local `npm publish` dance.
+`@mba-ai/core` already has a `prepublishOnly` script (build gate) that is
+currently dead weight — auto-publish would put it to work.
+
+**Design state (not yet decided):**
+
+- **Trigger:** publish only on `main` (or on tag push — `v*` tags are the
+  cleaner signal; Poll SCM + tag detection needs a small Jenkins tweak).
+- **Version bump:** `npm version patch|minor|major --no-git-tag-version`
+  driven by conventional-commit analysis, or manual tag-driven (tag name IS
+  the version — no bump step at all).
+- **Credential:** `NPM_TOKEN` Jenkins credential (npm automation token,
+  `publish:access` scope) injected as `//registry.npmjs.org/:_authToken`.
+- **Scope:** publish `@mba-ai/core` only for now; `@mba-ai/mcp-server` stays
+  private until it has a real external consumer.
+- **Safety:** `npm publish --dry-run` as a pre-stage; publish stage fails the
+  build (not just warns) so a broken publish is visible.
+
+**Open questions (The Griller — unanswered):**
+
+1. **Tag-driven vs commit-driven?** Tag-driven (`v1.2.3` → publish 1.2.3) is
+   the standard, auditable pattern and avoids double-publish races;
+   commit-driven (bump on every green main) is simpler but makes version
+   numbers meaningless. Leaning: tag-driven.
+2. **Who can push tags?** Only the repo owner, or anyone with push access?
+   (Tag = release = public artifact; treat it as a privileged action.)
+3. **Rollback story:** npm versions are immutable — a bad publish means
+   `npm deprecate` + republish. Is that acceptable, or do we want a
+   `next`/`beta` dist-tag lane for untested releases first?
+
+**Re-entry trigger:** When a second machine (or a teammate) needs `@mba-ai/core`
+from npm instead of a git clone — i.e. when the package has a real external
+consumer. Until then, local `npm link` / git-clone is the distribution path.

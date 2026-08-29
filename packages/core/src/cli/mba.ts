@@ -44,6 +44,7 @@ import {
   type ModelDial,
   type ModelEntry,
 } from "./interactive.js";
+import { selectRestartTargets } from "./restart-selection.js";
 import {
   defaultModelStoreRoot,
   defaultStateDir,
@@ -182,12 +183,29 @@ async function restartServer(
 ): Promise<void> {
   const file =
     modelFile && modelFile.length > 0 ? modelFile : await resolveModelFile(baseUrl, modelId);
-  // Free the port: stop the current server for this model before re-booting.
+  // Free the port: stop EVERY server running this model before re-booting.
+  // A model can be served by more than one registered server (duplicate
+  // boots); stopping only the first would leave a duplicate holding the model.
   const { servers } = await serviceGet<{ servers: ServerEntry[] }>(baseUrl, "/servers");
-  const current = servers.find((s) => s.modelFile === file);
-  if (current) {
-    process.stdout.write(`[mba] stopping current server ${current.id}\n`);
-    await servicePost<{ stopped: string }>(baseUrl, "/servers/stop", { id: current.id });
+  const interactive = process.stdin.isTTY === true;
+  const { targets, prompt } = selectRestartTargets(servers, file, interactive);
+  if (targets.length > 0) {
+    if (prompt) {
+      const stopAll = await askYesNo(
+        `${targets.length} servers are running this model — stop all of them?`,
+      );
+      if (!stopAll) {
+        process.stdout.write(
+          `[mba] not stopping the other ${targets.length - 1} server(s); ` +
+            `the reboot may fail if the port is still held. Stop them with 'mba servers stop <id>'.\n`,
+        );
+        return;
+      }
+    }
+    for (const target of targets) {
+      process.stdout.write(`[mba] stopping server ${target.id}\n`);
+      await servicePost<{ stopped: string }>(baseUrl, "/servers/stop", { id: target.id });
+    }
   }
   process.stdout.write(`[mba] rebooting ${modelId} on port ${port} (waits for warmup)…\n`);
   const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", { modelFile: file, port });

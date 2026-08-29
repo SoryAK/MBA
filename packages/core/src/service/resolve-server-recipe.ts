@@ -39,16 +39,10 @@
  * Exit codes: 0 = resolved, 2 = usage/resolution error (message on stderr).
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
-import YAML from "yaml";
-import {
-  buildLlamaServerFlags,
-  resolveMbaConfig,
-  sanitizeLlamaCppServerFlags,
-} from "../mba/index.js";
+import { existsSync } from "node:fs";
+import { dirname, resolve, sep } from "node:path";
 import { readClientBlock } from "./model-endpoint-sync.js";
-import { readModelCatalog } from "./model-catalog.js";
+import { resolveRecipe } from "./recipe-resolution.js";
 import { defaultModelStoreRoot } from "./paths.js";
 
 interface CliArgs {
@@ -133,48 +127,24 @@ function main(): void {
     args.adapterDir ?? deriveAdaptersRoot(modelFile) ?? defaultModelStoreRoot(),
   );
 
-  // Resolve the exact adapter identity for this weights file. The catalog
-  // keys on `identity.model.file`, so this is an exact match — no reliance on
-  // the (exact-equality) name predicate, which would miss a .gguf basename
-  // that carries a quant suffix the declared name omits.
-  const catalog = readModelCatalog(adapterDir);
-  const entry = catalog.find((c) => c.modelFile === modelFile);
-  if (!entry) {
+  // The shared resolution chain (R1): catalog lookup → declared identity →
+  // resolveMbaConfig → sanitize → buildLlamaServerFlags. The in-daemon
+  // resolveBootRecipe runs the same chain, so the flags the script sets and
+  // the flags the proxy applies are provably the same bytes.
+  let recipe;
+  try {
+    recipe = resolveRecipe(modelFile, adapterDir, {
+      harness: args.harness,
+      ide: args.ide,
+      serverRuntime: args.runtime,
+    });
+  } catch (err) {
     fail(
-      `no adapter under ${adapterDir} declares model file ${modelFile} — ` +
+      `${err instanceof Error ? err.message : String(err)} — ` +
         `the model is not in the MBA adapter tree, so no recipe can be resolved`,
     );
   }
-
-  // The catalog's `name` is `metadata.name` (falls back to id), which is the
-  // human label, not necessarily `identity.model.name`. For resolution we need
-  // the declared identity name, so read it straight off the adapter YAML.
-  // The resolver matches on identity.model.name (exact equality), so we must
-  // feed it the declared name, not the .gguf basename.
-  let declaredName: string | undefined;
-  let declaredFamily: string | undefined;
-  try {
-    const raw = YAML.parse(readFileSync(entry.yamlPath, "utf8")) as {
-      identity?: { model?: { name?: string; family?: string } };
-    };
-    declaredName = raw.identity?.model?.name;
-    declaredFamily = raw.identity?.model?.family;
-  } catch {
-    // Fall through to catalog name below.
-  }
-  const modelName = declaredName ?? entry.name;
-
-  // resolveMbaConfig expects the MBA *base* dir (the parent of `adapters/`) —
-  // it joins `adapters` onto it internally. The catalog, by contrast, wants
-  // the adapters dir itself. Keep the two distinct.
-  const mbaBaseDir = dirname(adapterDir);
-  const resolved = resolveMbaConfig(mbaBaseDir, {
-    modelName,
-    modelFamily: declaredFamily,
-    harness: args.harness,
-    ide: args.ide,
-    serverRuntime: args.runtime,
-  });
+  const { resolved } = recipe;
 
   // Surface resolution problems loudly but non-fatally: the recipe is still
   // usable (it falls back to defaults), but the boot script should know.
@@ -183,33 +153,29 @@ function main(): void {
   );
   if (resolved.selectedIds.length === 0) {
     fail(
-      `resolver selected no adapters for model "${modelName}" (base dir ${mbaBaseDir})`,
+      `resolver selected no adapters for model "${recipe.declaredName ?? recipe.catalogName}" ` +
+        `(base dir ${dirname(adapterDir)})`,
     );
   }
 
-  const { flags, dropped, clamped } = sanitizeLlamaCppServerFlags(
-    resolved.server["llama.cpp"],
-  );
-  const cliArgs = buildLlamaServerFlags(flags);
-
   let client = null;
   try {
-    client = readClientBlock(entry.yamlPath);
+    client = readClientBlock(recipe.yamlPath);
   } catch {
     client = null;
   }
 
   const output = {
-    flags,
-    cliArgs,
+    flags: recipe.flags,
+    cliArgs: recipe.cliArgs,
     profile: resolved.profile ?? null,
     client,
     modelFile,
     adapterDir,
-    modelId: entry.id,
+    modelId: recipe.modelId,
     selectedIds: [...resolved.selectedIds],
     diagnostics: resolved.diagnostics.map((d) => ({ kind: d.kind, message: d.message })),
-    sanitize: { dropped, clamped },
+    sanitize: { dropped: recipe.dropped, clamped: recipe.clamped },
   };
 
   if (hardDiagnostics.length > 0) {

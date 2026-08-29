@@ -129,7 +129,9 @@ describe("readModelDials", () => {
     const byField = new Map(dials!.fields.map((f) => [f.field, f]));
     // Profile ceilings drive the range hints.
     expect(byField.get("ctxSize")?.hint).toBe("≤ 262144");
-    expect(byField.get("gpuLayers")?.hint).toBe("1–65");
+    // gpuLayers allows blockCount + 1 (= all layers on GPU), so the hint
+    // must match the validator's upper bound.
+    expect(byField.get("gpuLayers")?.hint).toBe("1–66");
     // Enum and bool kinds list their allowed values.
     expect(byField.get("flashAttn")?.hint).toBe("on|off");
     expect(byField.get("toolCalling")?.hint).toBe("true|false");
@@ -152,8 +154,8 @@ describe("readModelDials", () => {
     const dials = readModelDials(root, "qwen3.8-27b");
     const byField = new Map(dials!.fields.map((f) => [f.field, f]));
     expect(byField.get("ctxSize")?.hint).toBeUndefined();
-    // gpuLayers still bounded by blockCount.
-    expect(byField.get("gpuLayers")?.hint).toBe("1–65");
+    // gpuLayers still bounded by blockCount (+1 for all-on-GPU).
+    expect(byField.get("gpuLayers")?.hint).toBe("1–66");
   });
 
   it("returns null for an unknown model id", () => {

@@ -17,17 +17,10 @@
  * recipe read; process spawning goes through the injected `LifecycleSeams`.
  */
 
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import YAML from "yaml";
-import {
-  buildLlamaServerFlags,
-  resolveMbaConfig,
-  sanitizeLlamaCppServerFlags,
-  type LifecycleSeams,
-} from "../mba/index.js";
-import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
+import { join } from "node:path";
+import { type LifecycleSeams } from "../mba/index.js";
+import { resolveRecipe } from "./recipe-resolution.js";
 import { listUpstreams, readRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
 
@@ -63,52 +56,24 @@ export interface BootRecipe {
 
 /**
  * Resolve the effective llama.cpp recipe for `modelFile` from the adapter
- * tree. Mirrors `resolve-server-recipe.ts` so the daemon and the (retired)
- * script set identical flags.
+ * tree. Thin wrapper over the shared `resolveRecipe` chain (R1) — the same
+ * chain the `resolve-server-recipe` CLI runs, so the daemon and the C-Yard
+ * boot script set identical flags.
  *
  * @throws {Error} when no adapter under `adapterDir` declares `modelFile`
  *   (the model is not in the MBA tree — the route maps this to 404).
  */
 export function resolveBootRecipe(modelFile: string, adapterDir: string): BootRecipe {
-  const catalog = readModelCatalog(adapterDir);
-  const entry = catalog.find((c) => c.modelFile === modelFile);
-  if (!entry) {
-    throw new Error(`no adapter under ${adapterDir} declares model file ${modelFile}`);
-  }
-
-  // The resolver matches on identity.model.name (exact equality), so feed it
-  // the declared name, not the .gguf basename (which may carry a quant suffix).
-  let declaredName: string | undefined;
-  let declaredFamily: string | undefined;
-  try {
-    const raw = YAML.parse(readFileSync(entry.yamlPath, "utf8")) as {
-      identity?: { model?: { name?: string; family?: string } };
-    };
-    declaredName = raw.identity?.model?.name;
-    declaredFamily = raw.identity?.model?.family;
-  } catch {
-    // Fall through to the catalog name below.
-  }
-
-  // resolveMbaConfig wants the MBA *base* dir (parent of `adapters/`); the
-  // catalog wants the adapters dir itself. Keep the two distinct.
-  const mbaBaseDir = dirname(adapterDir);
-  const resolved = resolveMbaConfig(mbaBaseDir, {
-    modelName: declaredName ?? entry.name,
-    modelFamily: declaredFamily,
+  const recipe = resolveRecipe(modelFile, adapterDir, {
     harness: "copilot",
     ide: "vscode",
     serverRuntime: "llamacpp",
   });
-
-  const { flags } = sanitizeLlamaCppServerFlags(resolved.server["llama.cpp"]);
-  const cliArgs = buildLlamaServerFlags(flags);
-
   return {
-    modelId: entry.id,
-    modelFile,
-    cliArgs,
-    warmupTokens: flags.warmupTokens ?? 350,
+    modelId: recipe.modelId,
+    modelFile: recipe.modelFile,
+    cliArgs: recipe.cliArgs,
+    warmupTokens: recipe.flags.warmupTokens ?? 350,
   };
 }
 

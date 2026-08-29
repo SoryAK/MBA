@@ -21,7 +21,6 @@
  */
 
 import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   defaultStorePaths,
   migrateLegacyBaseDir,
@@ -32,6 +31,7 @@ import { defaultModelStoreRoot, defaultStateDir, ensureDir } from "./paths.js";
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { startMbaService } from "./server.js";
+import { resolveVsCodeLmConfigPath } from "./vscode-lm-config.js";
 import { killAllOwnedGroups, ownedGroupCount, type LifecycleSeams } from "../mba/index.js";
 
 // `CYARD_MBA_BASE_DIR` is a deprecated alias kept for existing setups.
@@ -45,8 +45,7 @@ const upstreamUrl = process.env.MBA_UPSTREAM_URL;
 const switchEnabled = process.env.MBA_MODEL_SWITCH === "on";
 const endpointSyncEnabled = process.env.MBA_ENDPOINT_SYNC !== "off";
 const vscodeLmConfig =
-  process.env.MBA_VSCODE_LM_CONFIG ??
-  join(homedir(), ".config", "Code", "User", "profiles", "51cf1714", "chatLanguageModels.json");
+  process.env.MBA_VSCODE_LM_CONFIG ?? resolveVsCodeLmConfigPath(homedir());
 const vscodeLmApiKeyRef =
   process.env.MBA_VSCODE_LM_API_KEY_REF ?? "${input:chat.lm.secret.11180837}";
 
