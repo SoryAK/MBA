@@ -38,6 +38,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import {
+  askPortInteractive,
   askValueInteractive,
   pickFieldInteractive,
   pickModelInteractive,
@@ -495,6 +496,30 @@ async function resolveModelFile(baseUrl: string, ref: string): Promise<string> {
   return match.modelFile;
 }
 
+/**
+ * Interactive boot flow: pick a model from the catalog (arrow keys + type to
+ * filter), then pick a port (Enter keeps the default). Esc at either step
+ * cancels.
+ */
+async function interactiveBoot(
+  baseUrl: string,
+  serverType: "llama.cpp" | "ollama",
+): Promise<void> {
+  const { models } = await serviceGet<{ models: ModelEntry[] }>(baseUrl, "/models");
+  if (models.length === 0) {
+    process.stdout.write("[mba] no models in the adapter tree\n");
+    return;
+  }
+  const picked = await pickModelInteractive(models);
+  const defaultPort = Number(process.env.MBA_SWITCH_PORT ?? 8080);
+  const port = await askPortInteractive(defaultPort);
+  if (port === null) {
+    process.stdout.write("[mba] cancelled\n");
+    return;
+  }
+  await cmdServersBoot(baseUrl, picked.id, port, serverType);
+}
+
 async function cmdServersBoot(
   baseUrl: string,
   modelRef: string,
@@ -548,6 +573,12 @@ async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<voi
       const [modelRef, portRaw] = positionalArgs;
       const port = Number(portRaw);
       if (!modelRef || !portRaw || !Number.isInteger(port) || port <= 0 || port > 65535) {
+        // No args on a TTY → interactive flow (pick model, pick port). Ollama
+        // has no catalog to pick from, so it always needs an explicit tag.
+        if (process.stdin.isTTY && positionalArgs.length === 0 && serverType === "llama.cpp") {
+          await interactiveBoot(baseUrl, serverType);
+          return;
+        }
         fail("usage: mba servers boot <model|path.gguf|tag> <port> [--type ollama]");
       }
       await cmdServersBoot(baseUrl, modelRef, port, serverType);
@@ -637,6 +668,8 @@ Usage:
   mba servers list                 list registered model servers
   mba servers boot <ref> <port>    boot a model server in-daemon (waits for warmup)
                                    [--type ollama] boots an ollama model tag
+  mba servers boot                 interactive: pick a model (arrow keys + type
+                                   to filter), then a port (Enter keeps default)
   mba servers stop <id>            stop a registered server (by id)
   mba pull <url|owner/repo[:file-or-quant]> --id <id>
                                    [--sha256 <digest>] [--family <family>]
