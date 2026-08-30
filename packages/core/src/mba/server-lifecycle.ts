@@ -18,6 +18,7 @@ import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { dirname, join } from "node:path";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
+import { daemonLog } from "./daemon-log.js";
 
 export interface ServerBootOptions {
   /** Path to llama-server binary. */
@@ -173,6 +174,19 @@ export async function waitForHealth(
   const { fetchImpl, now, sleepImpl } = resolveSeams(seams);
   const url = `http://127.0.0.1:${port}/health`;
   const pollInterval = 2000; // 2s, matching bash script
+  const startedAt = now();
+
+  // Trace: log on status CHANGES only (not every 2s poll), so a 10-minute
+  // load produces a handful of lines, not hundreds.
+  let lastLogged = "";
+  const logStatus = (status: string) => {
+    if (status !== lastLogged) {
+      lastLogged = status;
+      daemonLog(
+        `[health:${port}] ${status} (t+${Math.round((now() - startedAt) / 1000)}s)`,
+      );
+    }
+  };
 
   // The deadline is STALL-based (Ollama WaitUntilRunning parity): it is the
   // max time to wait for the NEXT health response after the last one.
@@ -185,6 +199,9 @@ export async function waitForHealth(
     // Stall check FIRST: if the last activity (a health response or a
     // connection attempt) is older than the window, the load has stalled.
     if (now() >= deadline) {
+      daemonLog(
+        `[health:${port}] STALLED — no health progress for ${deadlineMs}ms (t+${Math.round((now() - startedAt) / 1000)}s)`,
+      );
       throw new Error(
         `llama-server load stalled on port ${port}: no health progress for ${deadlineMs}ms`,
       );
@@ -192,7 +209,10 @@ export async function waitForHealth(
     try {
       const resp = await fetchImpl(url, { signal: AbortSignal.timeout(5000) });
       deadline = now() + deadlineMs; // a response is activity
-      if (resp.ok) return; // healthy
+      if (resp.ok) {
+        logStatus("ok — healthy");
+        return; // healthy
+      }
       // Parse the status body; a malformed body degrades to "keep polling".
       let body: { status?: unknown; message?: unknown };
       try {
@@ -205,9 +225,15 @@ export async function waitForHealth(
           typeof body.message === "string" && body.message.length > 0
             ? `: ${body.message}`
             : "";
+        daemonLog(`[health:${port}] ERROR from server${detail}`);
         throw new Error(`llama-server reported a load error on port ${port}${detail}`);
       }
       // "loading model" (and any unrecognized status) → still working.
+      logStatus(
+        typeof body.status === "string" && body.status.length > 0
+          ? body.status
+          : `http ${resp.status} (unparseable body)`,
+      );
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("llama-server reported")) {
         throw err; // explicit load error — fail fast
@@ -215,6 +241,9 @@ export async function waitForHealth(
       // fetch failed (connection refused, timeout) — server not up yet or
       // went silent. NOT load progress: the deadline is not extended, so a
       // server that stops answering hits the stall window and fails.
+      logStatus(
+        `fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     await sleepImpl(pollInterval);
   }
@@ -299,15 +328,20 @@ export async function bootLlamaServer(
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
+    daemonLog(`[boot:${opts.port}] spawn FAILED: ${String(err)}`);
     throw new Error(`failed to spawn llama-server: ${String(err)}`);
   }
 
   if (child.pid === undefined) {
+    daemonLog(`[boot:${opts.port}] spawn succeeded but no PID assigned`);
     throw new Error("spawn succeeded but no PID assigned");
   }
 
   const pid = child.pid;
   const bootedAt = now();
+  daemonLog(
+    `[boot:${opts.port}] spawned pid ${pid}: ${opts.binaryPath} ${args.join(" ")}`,
+  );
 
   // Read stdout/stderr pipes and write to log file to prevent buffer fill-up.
   const logStream = createWriteStream(logPath, { flags: "a" });
@@ -320,23 +354,35 @@ export async function bootLlamaServer(
   child.unref?.();
 
   // Wait for health check; on failure, kill the CHILD group (never the daemon).
+  daemonLog(
+    `[boot:${opts.port}] waiting for health (stall deadline ${healthDeadlineMs}ms)`,
+  );
   try {
     await waitForHealth(opts.port, healthDeadlineMs, { fetchImpl, now, sleepImpl });
   } catch (err) {
+    daemonLog(
+      `[boot:${opts.port}] health FAILED after ${now() - bootedAt}ms — killing group ${pid}: ${String(err)}`,
+    );
     await killProcessGroup(pid, { killImpl });
     throw err;
   }
   const loadMs = now() - bootedAt;
+  daemonLog(`[boot:${opts.port}] healthy — model loaded in ${loadMs}ms`);
 
   // Execute warmup; boot resolves only after it completes (Perf #2).
+  daemonLog(`[boot:${opts.port}] warmup (${opts.warmupTokens} tokens)`);
   try {
     await sendWarmupRequest(opts.port, opts.warmupTokens, { fetchImpl });
   } catch (err) {
     // Warmup failed; the server is healthy but not warmed. Kill + fail so the
     // caller does not register a cold server as ready.
+    daemonLog(
+      `[boot:${opts.port}] warmup FAILED — killing group ${pid}: ${String(err)}`,
+    );
     await killProcessGroup(pid, { killImpl });
     throw new Error(`warmup failed: ${String(err)}`);
   }
+  daemonLog(`[boot:${opts.port}] warmup done — boot complete`);
 
   // Track the group so the daemon-exit handler can sweep it (G1).
   trackOwnedGroup(pid, { killImpl });

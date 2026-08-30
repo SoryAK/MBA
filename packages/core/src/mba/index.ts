@@ -8,3 +8,4 @@ export * from "./adapter-loading.js";
 export * from "./resolver.js";
 export * from "./server-flags.js";
 export * from "./server-lifecycle.js";
+export * from "./daemon-log.js";

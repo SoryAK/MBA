@@ -19,7 +19,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { resolveSeams, type LifecycleSeams } from "../mba/index.js";
+import { daemonLog, resolveSeams, type LifecycleSeams } from "../mba/index.js";
 import { resolveRecipe } from "./recipe-resolution.js";
 import { listUpstreams, readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
@@ -146,6 +146,10 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
     };
   }
 
+  daemonLog(
+    `[boot] request: ${serverType} model=${modelKey} port=${input.port} fork=${fork}`,
+  );
+
   const registry = readRegistry(input.registryPath);
 
   // G2: refuse a port already bound by a process-per-model server. Ollama
@@ -160,6 +164,7 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   if (serverType !== "ollama") {
     const { portCheckImpl } = resolveSeams(input.seams);
     const portFree = await portCheckImpl(input.port);
+    daemonLog(`[boot] G2 port check: port ${input.port} ${portFree ? "free" : "BUSY"}`);
     if (!portFree) {
       const busy = registry.find((e) => e.port === input.port);
       return {
@@ -175,6 +180,7 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
     if (stale) {
       const cleaned = registry.filter((e) => e.port !== input.port);
       writeRegistry(input.registryPath, cleaned);
+      daemonLog(`[boot] G2: removed stale registry entry for port ${input.port}`);
     }
   }
 
@@ -184,6 +190,9 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   const duplicates = listUpstreams(registry, modelKey);
   if (duplicates.length > 0) {
     const existing = duplicates[0];
+    daemonLog(
+      `[boot] Q1 duplicate-model: ${modelKey} already served by ${existing?.id ?? "?"} on port ${existing?.port ?? "?"}`,
+    );
     return {
       ok: false,
       code: "duplicate-model",
@@ -199,7 +208,11 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   if (serverType !== "ollama") {
     try {
       recipe = resolveBootRecipe(modelKey, input.adapterDir);
+      daemonLog(
+        `[boot] recipe resolved: modelId=${recipe.modelId} warmup=${recipe.warmupTokens} args=[${recipe.cliArgs.join(" ")}]`,
+      );
     } catch (err) {
+      daemonLog(`[boot] recipe resolution FAILED: ${err instanceof Error ? err.message : String(err)}`);
       return {
         ok: false,
         code: "unknown-model",
@@ -224,8 +237,14 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
       },
       input.seams,
     );
+    daemonLog(
+      `[boot] SUCCESS: ${entry.id} on port ${entry.port}${entry.pid !== undefined ? ` (pid ${entry.pid})` : ""}`,
+    );
     return { ok: true, entry };
   } catch (err) {
+    daemonLog(
+      `[boot] FAILED: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return {
       ok: false,
       code: "boot-failed",
