@@ -19,6 +19,7 @@ import {
   killAllOwnedGroups,
   trackOwnedGroup,
   ownedGroupCount,
+  resolveSeams,
   type LifecycleSeams,
 } from "./server-lifecycle.js";
 
@@ -331,6 +332,18 @@ describe("killProcessGroup / killAllOwnedGroups (G1 daemon-exit handler)", () =>
     },
     5000, // the 2s grace window runs in real time
   );
+
+  it("default killImpl reports a dead group as gone (no ESRCH throw)", () => {
+    // Regression: the default killImpl used to let process.kill's ESRCH
+    // propagate when the group was already gone. That masked the real boot
+    // error ("load stalled") with "kill ESRCH" in the daemon log. A dead
+    // group must be reported as "not alive" (false) so killProcessGroup
+    // no-ops cleanly.
+    const { killImpl } = resolveSeams();
+    // Above the default pid_max (4194304) — can never be a live pid/pgid.
+    const deadPgid = -(2 ** 22 + 12345);
+    expect(killImpl(deadPgid, 0)).toBe(false);
+  });
 
   it(
     "killAllOwnedGroups kills every tracked group and clears the set",
