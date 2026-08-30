@@ -111,8 +111,20 @@ export function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
     killImpl:
       seams?.killImpl ??
       ((pid: number, signal?: NodeJS.Signals | number) => {
-        process.kill(pid, signal);
-        return true;
+        try {
+          process.kill(pid, signal);
+          return true;
+        } catch (err) {
+          // ESRCH: the process/group is already gone. Report it as "not
+          // alive" (false) instead of throwing — the liveness probe in
+          // killProcessGroup relies on this to no-op on a dead group, and
+          // a throw here would mask the real boot error (e.g. "load
+          // stalled") with "kill ESRCH".
+          if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ESRCH") {
+            return false;
+          }
+          throw err;
+        }
       }),
     now: seams?.now ?? Date.now,
     healthDeadlineMs: seams?.healthDeadlineMs ?? 180_000,
