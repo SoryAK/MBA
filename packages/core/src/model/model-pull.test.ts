@@ -116,6 +116,12 @@ describe("pullModel", () => {
       expect(existsSync(join(modelDir, "tcb.jsonl"))).toBe(true);
       expect(existsSync(join(modelDir, "server_setup.json"))).toBe(true);
 
+      // KV slot-save dirs for both fork variants (G3): llama-server requires
+      // --slot-save-path to be an existing directory, so a fresh pull must be
+      // boot-ready without any extra step.
+      expect(existsSync(join(modelDir, "kv", "upstream", "slots"))).toBe(true);
+      expect(existsSync(join(modelDir, "kv", "cachyllama", "slots"))).toBe(true);
+
       // family tier (created because absent)
       const familyDir = join(store, "test-model");
       const fam = YAML.parse(readFileSync(join(familyDir, "family.yaml"), "utf8")) as any;

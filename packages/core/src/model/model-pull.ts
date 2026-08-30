@@ -15,6 +15,7 @@
  *   <store>/<family>/<id>/<id>.yaml         (draft adapter, TODO-marked)
  *   <store>/<family>/<id>/<file>.gguf
  *   <store>/<family>/<id>/bcb.jsonl|tcb.jsonl|server_setup.json
+ *   <store>/<family>/<id>/kv/<fork>/slots   (G3 slot-save dirs, both forks)
  *
  * The download is the only network step; everything after the sha256 check
  * is local filesystem work. A failed verify deletes the partial and leaves
@@ -35,6 +36,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { slotSavePath } from "../mba/server-lifecycle.js";
 import { defaultModelStoreRoot } from "../service/paths.js";
 import { draftAdapterYaml, draftFamilyYaml } from "./draft-adapter.js";
 import { parseGgufMetadata } from "./gguf-metadata.js";
@@ -250,6 +252,14 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
     writeFileSync(join(modelDir, "bcb.jsonl"), EMPTY_JSON);
     writeFileSync(join(modelDir, "tcb.jsonl"), EMPTY_JSON);
     writeFileSync(join(modelDir, "server_setup.json"), EMPTY_JSON);
+
+    // KV slot-save dirs for both fork variants (G3): llama-server requires
+    // --slot-save-path to be an existing directory, so a fresh pull is
+    // boot-ready without any extra step. The fork is a boot-time choice, so
+    // both variants are scaffolded up front (cheap empty dirs).
+    for (const fork of ["upstream", "cachyllama"] as const) {
+      mkdirSync(slotSavePath(dest, fork), { recursive: true });
+    }
 
     // Family tier: only when the family has no family.yaml yet.
     let familyCreated = false;
