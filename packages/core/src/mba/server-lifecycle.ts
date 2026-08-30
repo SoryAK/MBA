@@ -16,6 +16,8 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { dirname, join } from "node:path";
+import { createWriteStream, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 
 export interface ServerBootOptions {
   /** Path to llama-server binary. */
@@ -43,6 +45,12 @@ export interface ServerState {
   readonly flags: string[];
   /** Full path to the model that was loaded. */
   readonly modelPath: string;
+  /**
+   * Model-load duration in ms (spawn → /health "ok"). Ollama-style
+   * observability: slow loads (APU shared-RAM) become visible instead of
+   * looking like hangs.
+   */
+  readonly loadMs: number;
 }
 
 /**
@@ -68,13 +76,30 @@ export interface LifecycleSeams {
   readonly killImpl?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   /** Clock. Defaults to `Date.now`. */
   readonly now?: () => number;
-  /** Health-check deadline in ms. Defaults to 180_000 (boot script parity). */
+  /**
+   * Health-check STALL window in ms: the max time to wait for the next
+   * /health response after the last one. A load that keeps answering
+   * "loading model" never hits it; a stuck load does. Defaults to 180_000
+   * (boot script parity).
+   */
   readonly healthDeadlineMs?: number;
   /**
    * Check whether a TCP port is free (no listener). Defaults to a real
    * `node:net` probe. Return `true` if the port is free, `false` if occupied.
    */
   readonly portCheckImpl?: (port: number) => Promise<boolean>;
+  /**
+   * Create a directory recursively (G3 slot-save dir, log dir). Defaults to
+   * `node:fs` `mkdirSync`. Tests supply a no-op to avoid real filesystem
+   * writes.
+   */
+  readonly mkdirImpl?: (path: string, opts: { recursive: boolean }) => void;
+  /**
+   * Sleep for `ms` (poll interval). Defaults to `setTimeout`. Tests supply a
+   * fake that advances a controllable clock so multi-minute waits run in
+   * microseconds.
+   */
+  readonly sleepImpl?: (ms: number) => Promise<void>;
 }
 
 /** Resolve a seam to its real default. */
@@ -91,6 +116,8 @@ export function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
     now: seams?.now ?? Date.now,
     healthDeadlineMs: seams?.healthDeadlineMs ?? 180_000,
     portCheckImpl: seams?.portCheckImpl ?? defaultPortCheck,
+    mkdirImpl: seams?.mkdirImpl ?? ((p, o) => mkdirSync(p, o)),
+    sleepImpl: seams?.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
   };
 }
 
@@ -119,32 +146,78 @@ export function slotSavePath(modelPath: string, fork: "upstream" | "cachyllama")
 }
 
 /**
- * Poll /health endpoint until healthy or deadline elapses.
- * Polls every 2 seconds (matches llama-server-up.sh).
+ * Poll /health endpoint until the model is loaded, or the load STALLS.
  *
- * @throws {Error} if deadline exceeded before healthy response
+ * llama-server's /health contract (verified live, mirrors Ollama's
+ * WaitUntilRunning):
+ *   200 {"status":"ok"}           → model loaded, ready
+ *   503 {"status":"loading model"} → still loading (progress)
+ *   503 {"status":"error"}         → load failed (fail fast, no retry)
+ *
+ * The deadline is STALL-based, not wall-clock: `deadlineMs` is the maximum
+ * time to wait for the NEXT health response after the last one. A slow load
+ * (e.g. a 17GB model into shared RAM on an APU) keeps answering "loading
+ * model" and therefore never hits the deadline; a genuinely stuck load stops
+ * answering and times out. Connection failures (server not up yet, or went
+ * silent) are NOT activity — they do not extend the window, so a dead or
+ * wedged server fails the boot instead of hanging forever.
+ *
+ * @throws {Error} if the load stalls (no health response for `deadlineMs`)
+ *   or /health reports an explicit error
  */
 export async function waitForHealth(
   port: number,
   deadlineMs: number = 180_000,
   seams?: LifecycleSeams,
 ): Promise<void> {
-  const { fetchImpl, now } = resolveSeams(seams);
-  const deadline = now() + deadlineMs;
+  const { fetchImpl, now, sleepImpl } = resolveSeams(seams);
   const url = `http://127.0.0.1:${port}/health`;
   const pollInterval = 2000; // 2s, matching bash script
 
-  while (now() < deadline) {
+  // The deadline is STALL-based (Ollama WaitUntilRunning parity): it is the
+  // max time to wait for the NEXT health response after the last one.
+  // A server that keeps answering "loading model" is alive and working —
+  // each response extends the window. A server that stops answering
+  // (crashed, wedged) hits the window and the boot fails instead of
+  // hanging forever. Connection failures do NOT extend the window.
+  let deadline = now() + deadlineMs;
+  for (;;) {
+    // Stall check FIRST: if the last activity (a health response or a
+    // connection attempt) is older than the window, the load has stalled.
+    if (now() >= deadline) {
+      throw new Error(
+        `llama-server load stalled on port ${port}: no health progress for ${deadlineMs}ms`,
+      );
+    }
     try {
       const resp = await fetchImpl(url, { signal: AbortSignal.timeout(5000) });
+      deadline = now() + deadlineMs; // a response is activity
       if (resp.ok) return; // healthy
-    } catch {
-      // fetch failed; retry
+      // Parse the status body; a malformed body degrades to "keep polling".
+      let body: { status?: unknown; message?: unknown };
+      try {
+        body = (await resp.json()) as { status?: unknown; message?: unknown };
+      } catch {
+        body = {};
+      }
+      if (body.status === "error") {
+        const detail =
+          typeof body.message === "string" && body.message.length > 0
+            ? `: ${body.message}`
+            : "";
+        throw new Error(`llama-server reported a load error on port ${port}${detail}`);
+      }
+      // "loading model" (and any unrecognized status) → still working.
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("llama-server reported")) {
+        throw err; // explicit load error — fail fast
+      }
+      // fetch failed (connection refused, timeout) — server not up yet or
+      // went silent. NOT load progress: the deadline is not extended, so a
+      // server that stops answering hits the stall window and fails.
     }
-    await new Promise((r) => setTimeout(r, pollInterval));
+    await sleepImpl(pollInterval);
   }
-
-  throw new Error(`health check timed out after ${deadlineMs}ms on port ${port}`);
 }
 
 /**
@@ -192,7 +265,14 @@ export async function bootLlamaServer(
   opts: ServerBootOptions,
   seams?: LifecycleSeams,
 ): Promise<ServerState> {
-  const { spawnImpl, fetchImpl, killImpl, now, healthDeadlineMs } = resolveSeams(seams);
+  const { spawnImpl, fetchImpl, killImpl, now, healthDeadlineMs, mkdirImpl, sleepImpl } =
+    resolveSeams(seams);
+
+  // G3: llama-server hard-fails when --slot-save-path is not an existing
+  // directory. Self-heal: create it here so models pulled before the
+  // pull-time scaffold (or with a hand-edited store) still boot.
+  const slotPath = slotSavePath(opts.modelPath, opts.fork);
+  mkdirImpl(slotPath, { recursive: true });
 
   // Deployment facts first, then the tuning recipe.
   const args = [
@@ -201,11 +281,16 @@ export async function bootLlamaServer(
     "--port",
     String(opts.port),
     "--slot-save-path",
-    slotSavePath(opts.modelPath, opts.fork),
+    slotPath,
     "-m",
     opts.modelPath,
     ...opts.flags,
   ];
+
+  // Create log directory if it doesn't exist.
+  const logDir = join(homedir(), ".local", "share", "mba", "logs");
+  mkdirSync(logDir, { recursive: true });
+  const logPath = join(logDir, `llama-server-${opts.port}.log`);
 
   let child: ChildProcess;
   try {
@@ -224,16 +309,24 @@ export async function bootLlamaServer(
   const pid = child.pid;
   const bootedAt = now();
 
+  // Read stdout/stderr pipes and write to log file to prevent buffer fill-up.
+  const logStream = createWriteStream(logPath, { flags: "a" });
+  child.stdout?.on("data", (chunk: Buffer) => logStream.write(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => logStream.write(chunk));
+  child.stdout?.on("end", () => logStream.end());
+  child.stderr?.on("end", () => logStream.end());
+
   // Detach from the daemon's event loop so the daemon can exit independently.
   child.unref?.();
 
   // Wait for health check; on failure, kill the CHILD group (never the daemon).
   try {
-    await waitForHealth(opts.port, healthDeadlineMs, { fetchImpl, now });
+    await waitForHealth(opts.port, healthDeadlineMs, { fetchImpl, now, sleepImpl });
   } catch (err) {
     await killProcessGroup(pid, { killImpl });
     throw err;
   }
+  const loadMs = now() - bootedAt;
 
   // Execute warmup; boot resolves only after it completes (Perf #2).
   try {
@@ -254,6 +347,7 @@ export async function bootLlamaServer(
     bootedAt,
     flags: opts.flags,
     modelPath: opts.modelPath,
+    loadMs,
   };
 }
 
