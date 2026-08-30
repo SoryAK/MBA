@@ -6,6 +6,9 @@
  */
 
 import { describe, expect, it, vi, afterEach } from "vitest";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import {
   waitForHealth,
@@ -43,6 +46,15 @@ function spawnSeam(pid: number) {
   return { spawnImpl, calls };
 }
 
+/**
+ * A controllable clock: `advance(ms)` moves time forward. Lets tests run
+ * multi-minute health waits in microseconds.
+ */
+function fakeClock(start = 0) {
+  let t = start;
+  return { now: () => t, advance: (ms: number) => { t += ms; } };
+}
+
 describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -61,7 +73,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-      { spawnImpl: spawnImpl as never, fetchImpl },
+        { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
     );
 
     expect(state.pid).toBe(424242);
@@ -89,7 +101,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-      { spawnImpl: spawnImpl as never, fetchImpl },
+        { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
     );
 
     expect((calls[0]!.opts as { detached?: boolean }).detached).toBe(true);
@@ -108,7 +120,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-      { spawnImpl: spawnImpl as never, fetchImpl },
+        { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
     );
 
     const args = calls[0]!.args;
@@ -148,10 +160,11 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
           fetchImpl,
           killImpl: killImpl as never,
           now: () => Date.now(),
-          healthDeadlineMs: 100, // short deadline so the timeout fires fast
+          healthDeadlineMs: 100, // short stall window so the timeout fires fast
+          mkdirImpl: vi.fn(),
         },
       ),
-    ).rejects.toThrow(/timed out/);
+    ).rejects.toThrow(/stalled/);
 
     // The cleanup must target the child's group (-424242), not the daemon.
     expect(killImpl).toHaveBeenCalledWith(-424242, "SIGTERM");
@@ -181,11 +194,84 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 350,
       },
-      { spawnImpl: spawnImpl as never, fetchImpl },
+      { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
     );
 
     expect(warmupCalled).toBe(true);
     expect(state.pid).toBe(424242);
+  });
+
+  it("reports the model-load duration (loadMs) in the returned state", async () => {
+    const clock = fakeClock(1_000_000);
+    const { spawnImpl } = spawnSeam(424242);
+    let healthCalls = 0;
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/health")) {
+        healthCalls++;
+        // First poll: server not up yet (connection refused) → one 2s sleep.
+        // Second poll: healthy.
+        if (healthCalls === 1) throw new Error("connection refused");
+        return { ok: true, status: 200 };
+      }
+      if (u.endsWith("/completion")) return { ok: true, status: 200 };
+      return { ok: false, status: 404 };
+    }) as unknown as typeof fetch;
+
+    const state = await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 8080,
+        flags: [],
+        fork: "upstream",
+        warmupTokens: 0,
+      },
+      {
+        spawnImpl: spawnImpl as never,
+        fetchImpl,
+        now: clock.now,
+        sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+        mkdirImpl: vi.fn(),
+      },
+    );
+
+    // The health poll slept 2s before the first "ok" — that is the load time.
+    expect(state.loadMs).toBe(2000);
+    expect(state.bootedAt).toBe(1_000_000);
+  });
+
+  it("creates the per-model kv/<fork>/slots dir before spawn (self-healing G3)", async () => {
+    // llama-server hard-fails when --slot-save-path is not an existing
+    // directory; boot must create it so models pulled before the pull-time
+    // scaffold (or with a hand-edited store) still boot.
+    const modelDir = join(
+      tmpdir(),
+      `mba-lifecycle-test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    mkdirSync(modelDir, { recursive: true });
+    const modelPath = join(modelDir, "model.gguf");
+    writeFileSync(modelPath, "fake");
+    try {
+      const { spawnImpl } = spawnSeam(424242);
+      const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+
+      await bootLlamaServer(
+        {
+          binaryPath: "/bin/llama-server",
+          modelPath,
+          port: 8080,
+          flags: [],
+          fork: "upstream",
+          warmupTokens: 0,
+        },
+        { spawnImpl: spawnImpl as never, fetchImpl },
+      );
+
+      expect(existsSync(join(modelDir, "kv", "upstream", "slots"))).toBe(true);
+    } finally {
+      rmSync(modelDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -306,15 +392,147 @@ describe("waitForHealth", () => {
     expect(mockFetch.mock.calls.length).toBeGreaterThan(1);
   });
 
-  it("fails immediately on ok:false response", async () => {
-    const mockFetch = vi.fn(async () => ({ ok: false, status: 503 }));
-    globalThis.fetch = mockFetch as any;
+  it("keeps polling on ok:false responses with an unparseable body (stall-based)", async () => {
+    // A 503 that keeps answering is progress — the stall window keeps
+    // extending, so the wait must NOT time out (old fixed-deadline behavior
+    // killed slow APU loads here).
+    const clock = fakeClock();
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      if (calls < 20) return { ok: false, status: 503 }; // no json() — unparseable
+      return { ok: true, status: 200 };
+    });
 
-    // With a very long deadline, this should keep polling
-    // but it won't pass the ok check
-    const promise = waitForHealth(8080, 100);
-    
-    await expect(promise).rejects.toThrow(/timed out/);
+    // The stall window (10s) must exceed the 2s poll interval: each response
+    // extends the window, so a responding server never stalls.
+    await waitForHealth(8080, 10_000, {
+      fetchImpl: mockFetch as never,
+      now: clock.now,
+      sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+    });
+
+    // 20 polls, 19 sleeps × 2s = 38s of fake time — far past the 10s stall
+    // window — and the wait still succeeded (a responding server is making
+    // progress). The final poll returns without a trailing sleep.
+    expect(calls).toBe(20);
+    expect(clock.now()).toBeGreaterThanOrEqual(38_000);
+  });
+
+  it("succeeds past the old deadline while /health reports 'loading model' (stall-based)", async () => {
+    // APU reality: a 17GB load into shared RAM takes >180s. The old fixed
+    // deadline killed the child mid-load; the stall-based deadline must not.
+    const clock = fakeClock();
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      // Still loading for the first 100 polls (200s at 2s intervals), then ready.
+      return calls < 100
+        ? { ok: false, status: 503, json: async () => ({ status: "loading model" }) }
+        : { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+    });
+
+    await waitForHealth(8080, 180_000, {
+      fetchImpl: mockFetch as never,
+      now: clock.now,
+      sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+    });
+
+    // ~200s of "loading model" elapsed (100 polls, 99 sleeps × 2s = 198s) —
+    // well past the 180s fixed deadline — and the wait still succeeded.
+    expect(calls).toBe(100);
+    expect(clock.now()).toBeGreaterThanOrEqual(198_000);
+  });
+
+  it("fails fast when /health reports 'error', with the server's message", async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ status: "error", message: "failed to load model: out of memory" }),
+    }));
+
+    await expect(
+      waitForHealth(8080, 10_000, { fetchImpl: mockFetch as never }),
+    ).rejects.toThrow(/failed to load model: out of memory/);
+
+    // One poll is enough — no retry loop on an explicit error.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out when the server stops answering /health (crashed or wedged)", async () => {
+    // A server that answers "loading model" once and then goes silent has
+    // stalled: the stall window (180s) elapses after the last response.
+    const clock = fakeClock();
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      if (calls === 1) {
+        return { ok: false, status: 503, json: async () => ({ status: "loading model" }) };
+      }
+      throw new Error("connection refused"); // silent from here on
+    });
+
+    await expect(
+      waitForHealth(8080, 180_000, {
+        fetchImpl: mockFetch as never,
+        now: clock.now,
+        sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+      }),
+    ).rejects.toThrow(/stalled/);
+
+    // 180s of silence after the last response. Call 1 answers at t=0 and sets
+    // the deadline to 180s; each refused poll sleeps 2s without extending it.
+    // The stall check fires at the top of the loop once now() >= 180s, so the
+    // total is 1 answer + 89 refused = 90 calls.
+    expect(calls).toBe(90);
+    expect(clock.now()).toBeGreaterThanOrEqual(180_000);
+  });
+
+  it("never times out while the server keeps answering 'loading model' (slow APU load)", async () => {
+    // The wedge case is indistinguishable from a slow load via /health alone
+    // (both answer "loading model"); the bound is the stall window on
+    // SILENCE, not on load duration. A 10-minute load that keeps answering
+    // must succeed.
+    const clock = fakeClock();
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      return calls < 300
+        ? { ok: false, status: 503, json: async () => ({ status: "loading model" }) }
+        : { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+    });
+
+    await waitForHealth(8080, 180_000, {
+      fetchImpl: mockFetch as never,
+      now: clock.now,
+      sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+    });
+
+    // 300 polls, 299 sleeps × 2s = 598s (~10 min) of loading — no timeout.
+    // The final poll returns without a trailing sleep.
+    expect(calls).toBe(300);
+    expect(clock.now()).toBe(598_000);
+  });
+
+  it("keeps polling on unknown health statuses until 'ok'", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      // An unrecognized status (e.g. a future llama.cpp state) must not fail
+      // the boot — it is treated as "still working".
+      return calls === 1
+        ? { ok: false, status: 503, json: async () => ({ status: "busy" }) }
+        : { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+    });
+
+    await waitForHealth(8080, 10_000, {
+      fetchImpl: mockFetch as never,
+      now: clock.now,
+      sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+    });
+
+    expect(calls).toBe(2);
   });
 });
 
