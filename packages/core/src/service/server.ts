@@ -91,7 +91,7 @@ export interface MbaServiceAppOptions {
   readonly upstreamUrl?: string;
   /** Arm model switching (ADR-0093: OFF by default). */
   readonly switchEnabled?: boolean;
-  /** Switch executor — injectable for tests; default shells to the boot script. */
+  /** Switch executor — injectable for tests; default boots in-daemon via the server plane. */
   readonly switchExecutor?: SwitchExecutor;
   /** Injectable fetch for the upstream probe (tests). */
   readonly fetch?: typeof fetch;
