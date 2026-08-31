@@ -42,6 +42,7 @@ import {
   askValueInteractive,
   pickFieldInteractive,
   pickModelInteractive,
+  pickServerInteractive,
   type ModelDial,
   type ModelEntry,
 } from "./interactive.js";
@@ -449,12 +450,7 @@ async function cmdOpen(baseUrl: string, modelId: string, file: string): Promise<
 
 // --- Server plane (ADR-0097 Phase 2) ----------------------------------------
 
-async function cmdServersList(baseUrl: string): Promise<void> {
-  const { servers } = await serviceGet<{ servers: ServerEntry[] }>(baseUrl, "/servers");
-  if (servers.length === 0) {
-    process.stdout.write("[mba] no servers registered\n");
-    return;
-  }
+function printServersTable(servers: ServerEntry[]): void {
   const header =
     "id".padEnd(18) +
     "port".padEnd(8) +
@@ -475,6 +471,39 @@ async function cmdServersList(baseUrl: string): Promise<void> {
         s.modelFile +
         "\n",
     );
+  }
+}
+
+/**
+ * List registered servers. On a TTY (without --plain) this is interactive:
+ * pick a server (arrow keys + type to filter), then choose an action
+ * (currently: stop). Non-TTY or --plain prints the plain table so the
+ * command stays scriptable.
+ */
+async function cmdServersList(baseUrl: string, plain: boolean): Promise<void> {
+  const { servers } = await serviceGet<{ servers: ServerEntry[] }>(baseUrl, "/servers");
+  if (servers.length === 0) {
+    process.stdout.write("[mba] no servers registered\n");
+    return;
+  }
+  if (!process.stdin.isTTY || plain) {
+    printServersTable(servers);
+    return;
+  }
+  const rows = servers.map((s) => ({
+    id: s.id,
+    port: s.port,
+    pid: s.pid,
+    healthy: s.healthy,
+    modelFile: s.modelFile,
+  }));
+  const sel = await pickServerInteractive(rows);
+  if (sel === null) {
+    process.stdout.write("[mba] cancelled\n");
+    return;
+  }
+  if (sel.action === "stop") {
+    await cmdServersStop(baseUrl, sel.server.id);
   }
 }
 
@@ -555,9 +584,11 @@ async function cmdServersStop(baseUrl: string, id: string): Promise<void> {
 async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<void> {
   const [sub, ...args] = rest;
   switch (sub) {
-    case "list":
-      await cmdServersList(baseUrl);
+    case "list": {
+      const plain = args.includes("--plain");
+      await cmdServersList(baseUrl, plain);
       return;
+    }
     case "boot": {
       let serverType: "llama.cpp" | "ollama" = "llama.cpp";
       const typeIdx = args.indexOf("--type");
@@ -593,7 +624,7 @@ async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<voi
       return;
     }
     default:
-      fail("usage: mba servers <list|boot|stop>\n  list                 list registered servers\n  boot <ref> <port>    boot a model server (waits for warmup) [--type ollama]\n  stop <id>            stop a registered server (by id)");
+      fail("usage: mba servers <list|boot|stop>\n  list [--plain]       list registered servers (interactive on a TTY; --plain forces the table)\n  boot <ref> <port>    boot a model server (waits for warmup) [--type ollama]\n  stop <id>            stop a registered server (by id)");
   }
 }
 
@@ -665,7 +696,9 @@ Usage:
   mba config <model>               show every dial with its current value
   mba set <model> <field> <value>  set one dial (value parsed as JSON when possible)
   mba open <model> <file>          print the on-disk path (server_setup | yaml)
-  mba servers list                 list registered model servers
+  mba servers list [--plain]       list registered model servers (interactive
+                                   on a TTY: pick a server, then stop it;
+                                   --plain forces the table)
   mba servers boot <ref> <port>    boot a model server in-daemon (waits for warmup)
                                    [--type ollama] boots an ollama model tag
   mba servers boot                 interactive: pick a model (arrow keys + type

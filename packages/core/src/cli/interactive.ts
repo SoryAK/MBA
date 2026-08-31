@@ -401,3 +401,180 @@ export function askPortInteractive(
     render();
   });
 }
+
+// --- Interactive server picker + action menu ---------------------------------
+
+/** One row of GET /servers, as shown by the interactive picker. */
+export interface ServerRow {
+  readonly id: string;
+  readonly port: number;
+  readonly pid?: number;
+  readonly healthy: boolean;
+  readonly modelFile: string;
+}
+
+export type ServerAction = "stop";
+
+export interface ServerSelection {
+  readonly server: ServerRow;
+  readonly action: ServerAction;
+}
+
+/**
+ * Two-stage raw-mode picker over running servers (ADR-0096): an arrow-key
+ * menu with type-to-filter, then an action menu for the picked server.
+ * Enter on a server opens its action menu; `back` (or Esc) returns to the
+ * list. Esc on the list resolves null (cancel); Ctrl-C rejects.
+ */
+export function pickServerInteractive(
+  servers: ServerRow[],
+): Promise<ServerSelection | null> {
+  return new Promise<ServerSelection | null>((resolve, reject) => {
+    const stdin = process.stdin;
+    let stage: "list" | "actions" = "list";
+    let query = "";
+    let cursor = 0;
+    let listCursor = 0; // list position to restore when leaving the action menu
+    let selected: ServerRow | null = null;
+    let prevLines = 0;
+
+    const filtered = () =>
+      servers.filter(
+        (s) =>
+          s.id.toLowerCase().includes(query.toLowerCase()) ||
+          String(s.port).includes(query) ||
+          s.modelFile.toLowerCase().includes(query.toLowerCase()),
+      );
+
+    const actionRows = (): readonly ["stop", "back"] => ["stop", "back"];
+
+    const drawServerRow = (s: ServerRow, i: number, cursorIdx: number): void => {
+      const marker = i === cursorIdx ? ">" : " ";
+      const pid = s.pid !== undefined ? String(s.pid) : "-";
+      const health = s.healthy ? "ok" : "DOWN";
+      process.stdout.write(
+        ` ${marker} ${s.id.padEnd(18)} ${String(s.port).padEnd(7)} ${pid.padEnd(8)} ${health.padEnd(5)} ${s.modelFile}\n`,
+      );
+    };
+
+    const render = () => {
+      if (prevLines > 0) {
+        process.stdout.write(`\x1b[${prevLines}A\x1b[J`);
+      }
+      if (stage === "list") {
+        const list = filtered();
+        process.stdout.write(
+          `  mba servers — ${servers.length} running — ${query ? `filter: ${query}` : "type to filter"} (Esc quits):\n`,
+        );
+        if (list.length === 0) {
+          process.stdout.write("  (no matches)\n");
+          prevLines = 2;
+          return;
+        }
+        list.forEach((s, i) => drawServerRow(s, i, cursor));
+        prevLines = list.length + 1;
+      } else {
+        const rows = actionRows();
+        process.stdout.write(
+          `  actions for ${selected?.id} (port ${selected?.port}):\n`,
+        );
+        rows.forEach((a, i) => {
+          const marker = i === cursor ? ">" : " ";
+          const label = a === "stop" ? `stop ${selected?.id}` : "back";
+          process.stdout.write(` ${marker} ${label}\n`);
+        });
+        prevLines = rows.length + 1;
+      }
+    };
+
+    const done = (sel: ServerSelection | null) => {
+      stdin.setRawMode(false);
+      stdin.removeListener("data", onData);
+      process.stdout.write("\n");
+      resolve(sel);
+    };
+
+    const cancel = () => {
+      stdin.setRawMode(false);
+      stdin.removeListener("data", onData);
+      process.stdout.write("\n");
+      reject(new Error("cancelled"));
+    };
+
+    const handleKey = (key: string): boolean => {
+      // Returns true when the prompt is done (resolve/reject already called).
+      if (key === "\x03") {
+        cancel();
+        return true;
+      }
+      if (stage === "list") {
+        const list = filtered();
+        if (key === "\x1b[A") {
+          if (list.length === 0) return false;
+          cursor = (cursor - 1 + list.length) % list.length;
+          render();
+        } else if (key === "\x1b[B") {
+          if (list.length === 0) return false;
+          cursor = (cursor + 1) % list.length;
+          render();
+        } else if (key === "\r" || key === "\n") {
+          const pick = list[cursor];
+          if (!pick) return false;
+          selected = pick;
+          listCursor = cursor;
+          stage = "actions";
+          cursor = 0;
+          render();
+        } else if (key === "\x1b") {
+          done(null);
+          return true;
+        } else if (key === "\x7f" || key === "\b") {
+          query = query.slice(0, -1);
+          cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
+          render();
+        } else if (key.length === 1 && !key.startsWith("\x1b")) {
+          query += key;
+          cursor = 0;
+          render();
+        }
+        return false;
+      }
+      // actions stage
+      const rows = actionRows();
+      if (key === "\x1b[A") {
+        cursor = (cursor - 1 + rows.length) % rows.length;
+        render();
+      } else if (key === "\x1b[B") {
+        cursor = (cursor + 1) % rows.length;
+        render();
+      } else if (key === "\r" || key === "\n") {
+        const pick = rows[cursor];
+        if (pick === "stop" && selected) {
+          done({ server: selected, action: "stop" });
+          return true;
+        }
+        stage = "list"; // "back" — restore the list position
+        cursor = listCursor;
+        render();
+      } else if (key === "\x1b") {
+        stage = "list";
+        cursor = listCursor;
+        render();
+      }
+      return false;
+    };
+
+    const onData = (buf: Buffer) => {
+      // A single data event may carry multiple characters (e.g. a pasted
+      // filter or a fast terminal flush); process each one in order.
+      for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        if (handleKey(key)) return;
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    render();
+  });
+}

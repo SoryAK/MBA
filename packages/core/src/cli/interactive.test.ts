@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { askPortInteractive } from "./interactive.js";
+import { askPortInteractive, pickServerInteractive, type ServerRow } from "./interactive.js";
 
 /**
  * Build a fake stdin stream that mimics the subset of the Node stdin API the
@@ -111,5 +111,92 @@ describe("askPortInteractive", () => {
     stdin.emit("\x7f"); // backspace
     stdin.emit("\r");
     await expect(p).resolves.toBe(9);
+  });
+});
+
+describe("pickServerInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  const servers: ServerRow[] = [
+    { id: "srv-1", port: 8080, pid: 111, healthy: true, modelFile: "/models/a.gguf" },
+    { id: "srv-2", port: 8085, pid: 222, healthy: false, modelFile: "/models/b.gguf" },
+  ];
+
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("selects the first server and stops it", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("\r"); // pick srv-1 -> action menu
+    await tick();
+    stdin.emit("\r"); // "stop" is the first action row
+    await expect(p).resolves.toEqual({ server: servers[0], action: "stop" });
+  });
+
+  it("navigates down to the second server", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("\x1b[B"); // down
+    stdin.emit("\r"); // pick srv-2 -> action menu
+    await tick();
+    stdin.emit("\r"); // stop
+    await expect(p).resolves.toEqual({ server: servers[1], action: "stop" });
+  });
+
+  it("back returns to the list, then picks another server", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("\r"); // action menu for srv-1
+    await tick();
+    stdin.emit("\x1b[B"); // down -> "back"
+    stdin.emit("\r"); // back to the list
+    await tick();
+    stdin.emit("\x1b[B"); // down -> srv-2
+    stdin.emit("\r"); // action menu for srv-2
+    await tick();
+    stdin.emit("\r"); // stop
+    await expect(p).resolves.toEqual({ server: servers[1], action: "stop" });
+  });
+
+  it("Esc in the action menu returns to the list, Esc on the list cancels", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("\r"); // action menu
+    await tick();
+    stdin.emit("\x1b"); // back to the list
+    await tick();
+    stdin.emit("\x1b"); // quit
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("Esc on the list resolves null", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("type-to-filter narrows the list before picking", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("8085"); // only srv-2 matches
+    stdin.emit("\r"); // pick srv-2 -> action menu
+    await tick();
+    stdin.emit("\r"); // stop
+    await expect(p).resolves.toEqual({ server: servers[1], action: "stop" });
+  });
+
+  it("rejects on Ctrl-C", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("\x03");
+    await expect(p).rejects.toThrow("cancelled");
   });
 });
