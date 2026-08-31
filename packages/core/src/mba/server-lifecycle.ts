@@ -16,8 +16,9 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { dirname, join } from "node:path";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
+
 import { daemonLog } from "./daemon-log.js";
 
 export interface ServerBootOptions {
@@ -96,6 +97,18 @@ export interface LifecycleSeams {
    */
   readonly mkdirImpl?: (path: string, opts: { recursive: boolean }) => void;
   /**
+   * Open a log file for append and return its fd (boot-script parity: the
+   * child writes straight to the file, no Node pipe). Defaults to
+   * `node:fs` `openSync(path, "a")`. Tests supply a fake to avoid real
+   * filesystem writes.
+   */
+  readonly openLogFdImpl?: (path: string) => number;
+  /**
+   * Close a log fd once the child owns it. Defaults to `node:fs`
+   * `closeSync`. Tests supply a no-op.
+   */
+  readonly closeLogFdImpl?: (fd: number) => void;
+  /**
    * Sleep for `ms` (poll interval). Defaults to `setTimeout`. Tests supply a
    * fake that advances a controllable clock so multi-minute waits run in
    * microseconds.
@@ -130,6 +143,8 @@ export function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
     healthDeadlineMs: seams?.healthDeadlineMs ?? 180_000,
     portCheckImpl: seams?.portCheckImpl ?? defaultPortCheck,
     mkdirImpl: seams?.mkdirImpl ?? ((p, o) => mkdirSync(p, o)),
+    openLogFdImpl: seams?.openLogFdImpl ?? ((p) => openSync(p, "a")),
+    closeLogFdImpl: seams?.closeLogFdImpl ?? ((fd) => closeSync(fd)),
     sleepImpl: seams?.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
   };
 }
@@ -175,15 +190,22 @@ export function slotSavePath(modelPath: string, fork: "upstream" | "cachyllama")
  * silent) are NOT activity — they do not extend the window, so a dead or
  * wedged server fails the boot instead of hanging forever.
  *
- * @throws {Error} if the load stalls (no health response for `deadlineMs`)
- *   or /health reports an explicit error
+ * @param childPid Optional PID of the spawned llama-server. When provided,
+ *   each poll iteration first probes the child's liveness (`killImpl(pid, 0)`);
+ *   a dead child fails the boot immediately with "exited prematurely" instead
+ *   of waiting out the full stall window. Mirrors the boot script's
+ *   `kill -0 "$PID"` check in its poll loop.
+ *
+ * @throws {Error} if the child exits prematurely, the load stalls (no health
+ *   response for `deadlineMs`), or /health reports an explicit error
  */
 export async function waitForHealth(
   port: number,
   deadlineMs: number = 180_000,
   seams?: LifecycleSeams,
+  childPid?: number,
 ): Promise<void> {
-  const { fetchImpl, now, sleepImpl } = resolveSeams(seams);
+  const { fetchImpl, now, sleepImpl, killImpl } = resolveSeams(seams);
   const url = `http://127.0.0.1:${port}/health`;
   const pollInterval = 2000; // 2s, matching bash script
   const startedAt = now();
@@ -208,7 +230,19 @@ export async function waitForHealth(
   // hanging forever. Connection failures do NOT extend the window.
   let deadline = now() + deadlineMs;
   for (;;) {
-    // Stall check FIRST: if the last activity (a health response or a
+    // Liveness check FIRST (boot-script parity): if the child process is
+    // already gone, the port will never open — fail fast with the real
+    // reason instead of reporting a "stall" after the full window. A dead
+    // child is indistinguishable from a slow load via /health alone.
+    if (childPid !== undefined && !killImpl(childPid, 0)) {
+      daemonLog(
+        `[health:${port}] child pid ${childPid} exited prematurely (t+${Math.round((now() - startedAt) / 1000)}s)`,
+      );
+      throw new Error(
+        `llama-server exited prematurely on port ${port} (pid ${childPid}) — check the server log for the exit reason`,
+      );
+    }
+    // Stall check: if the last activity (a health response or a
     // connection attempt) is older than the window, the load has stalled.
     if (now() >= deadline) {
       daemonLog(
@@ -306,8 +340,17 @@ export async function bootLlamaServer(
   opts: ServerBootOptions,
   seams?: LifecycleSeams,
 ): Promise<ServerState> {
-  const { spawnImpl, fetchImpl, killImpl, now, healthDeadlineMs, mkdirImpl, sleepImpl } =
-    resolveSeams(seams);
+  const {
+    spawnImpl,
+    fetchImpl,
+    killImpl,
+    now,
+    healthDeadlineMs,
+    mkdirImpl,
+    openLogFdImpl,
+    closeLogFdImpl,
+    sleepImpl,
+  } = resolveSeams(seams);
 
   // G3: llama-server hard-fails when --slot-save-path is not an existing
   // directory. Self-heal: create it here so models pulled before the
@@ -330,19 +373,34 @@ export async function bootLlamaServer(
 
   // Create log directory if it doesn't exist.
   const logDir = join(homedir(), ".local", "share", "mba", "logs");
-  mkdirSync(logDir, { recursive: true });
+  mkdirImpl(logDir, { recursive: true });
   const logPath = join(logDir, `llama-server-${opts.port}.log`);
+  const errLogPath = `${logPath}.err`;
+
+  // Boot-script parity: hand the child its OWN file descriptors for
+  // stdout/stderr (the script does `>LOG_OUT 2>LOG_ERR &`). The kernel
+  // owns the writes — no Node pipe to clog, no shared drain stream that
+  // closes when the first pipe ends (ERR_STREAM_WRITE_AFTER_END), no
+  // backpressure that can wedge a child mid-load.
+  const fdOut = openLogFdImpl(logPath);
+  const fdErr = openLogFdImpl(errLogPath);
 
   let child: ChildProcess;
   try {
     child = spawnImpl(opts.binaryPath, args, {
       detached: true, // own process group → group-killable (G1)
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", fdOut, fdErr],
     });
   } catch (err) {
+    closeLogFdImpl(fdOut);
+    closeLogFdImpl(fdErr);
     daemonLog(`[boot:${opts.port}] spawn FAILED: ${String(err)}`);
     throw new Error(`failed to spawn llama-server: ${String(err)}`);
   }
+
+  // The child now owns the fds (dup'd at spawn); close the daemon's copies.
+  closeLogFdImpl(fdOut);
+  closeLogFdImpl(fdErr);
 
   if (child.pid === undefined) {
     daemonLog(`[boot:${opts.port}] spawn succeeded but no PID assigned`);
@@ -355,13 +413,6 @@ export async function bootLlamaServer(
     `[boot:${opts.port}] spawned pid ${pid}: ${opts.binaryPath} ${args.join(" ")}`,
   );
 
-  // Read stdout/stderr pipes and write to log file to prevent buffer fill-up.
-  const logStream = createWriteStream(logPath, { flags: "a" });
-  child.stdout?.on("data", (chunk: Buffer) => logStream.write(chunk));
-  child.stderr?.on("data", (chunk: Buffer) => logStream.write(chunk));
-  child.stdout?.on("end", () => logStream.end());
-  child.stderr?.on("end", () => logStream.end());
-
   // Detach from the daemon's event loop so the daemon can exit independently.
   child.unref?.();
 
@@ -370,7 +421,9 @@ export async function bootLlamaServer(
     `[boot:${opts.port}] waiting for health (stall deadline ${healthDeadlineMs}ms)`,
   );
   try {
-    await waitForHealth(opts.port, healthDeadlineMs, { fetchImpl, now, sleepImpl });
+    // Pass the child pid so a dead child fails fast ("exited prematurely")
+    // instead of masquerading as a stall for the full window.
+    await waitForHealth(opts.port, healthDeadlineMs, { fetchImpl, now, sleepImpl, killImpl }, pid);
   } catch (err) {
     daemonLog(
       `[boot:${opts.port}] health FAILED after ${now() - bootedAt}ms — killing group ${pid}: ${String(err)}`,

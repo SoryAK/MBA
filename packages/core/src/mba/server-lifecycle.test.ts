@@ -55,7 +55,24 @@ function fakeClock(start = 0) {
   let t = start;
   return { now: () => t, advance: (ms: number) => { t += ms; } };
 }
+/**
+ * killImpl for bootLlamaServer tests that use a fake child pid: the child
+ * (positive pid) is always alive, so the health wait's liveness probe never
+ * trips. Without this, the default (real) killImpl probes the OS for the
+ * fake pid and correctly reports it as dead → "exited prematurely".
+ */
+const aliveChildKill = (pid: number, signal?: NodeJS.Signals | number) =>
+  signal === 0 ? pid > 0 : true;
 
+/**
+ * Log-fd seams: fake fds so bootLlamaServer never opens real log files.
+ * bootLlamaServer hands the child its own stdout/stderr fds (script parity),
+ * so tests must inject these or the real `openSync` would touch the fs.
+ */
+const logFdSeams = {
+  openLogFdImpl: vi.fn(() => 7),
+  closeLogFdImpl: vi.fn(),
+};
 describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -74,7 +91,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-        { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
+        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
     );
 
     expect(state.pid).toBe(424242);
@@ -102,10 +119,14 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-        { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
+        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
     );
 
-    expect((calls[0]!.opts as { detached?: boolean }).detached).toBe(true);
+    const opts = calls[0]!.opts as { detached?: boolean; stdio?: unknown[] };
+    expect(opts.detached).toBe(true);
+    // Boot-script parity: stdout/stderr are real file descriptors (kernel
+    // owns the writes), NOT Node pipes — no clog, no shared drain stream.
+    expect(opts.stdio).toEqual(["ignore", 7, 7]);
   });
 
   it("prepends --host 127.0.0.1 and --port from the boot context", async () => {
@@ -121,7 +142,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-        { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
+        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
     );
 
     const args = calls[0]!.args;
@@ -136,12 +157,16 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("connection refused");
     }) as unknown as typeof fetch;
-    // First liveness probe: alive (so SIGTERM is sent); second: gone (fast exit).
-    let probes = 0;
+    // waitForHealth probes the CHILD (positive pid) — alive, so the wait
+    // runs to the stall window. killProcessGroup probes the GROUP (negative
+    // pid): alive on the first probe (so SIGTERM is sent), gone on the
+    // second (fast exit, no SIGKILL).
+    let groupProbes = 0;
     const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) => {
       if (signal === 0) {
-        probes++;
-        return probes === 1;
+        if (pid > 0) return true; // child alive during the health wait
+        groupProbes++;
+        return groupProbes === 1; // group alive → SIGTERM, then gone
       }
       return true;
     });
@@ -163,6 +188,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
           now: () => Date.now(),
           healthDeadlineMs: 100, // short stall window so the timeout fires fast
           mkdirImpl: vi.fn(),
+          ...logFdSeams,
         },
       ),
     ).rejects.toThrow(/stalled/);
@@ -195,7 +221,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 350,
       },
-      { spawnImpl: spawnImpl as never, fetchImpl, mkdirImpl: vi.fn() },
+      { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
     );
 
     expect(warmupCalled).toBe(true);
@@ -231,9 +257,11 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
       {
         spawnImpl: spawnImpl as never,
         fetchImpl,
+        killImpl: aliveChildKill,
         now: clock.now,
         sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
         mkdirImpl: vi.fn(),
+        ...logFdSeams,
       },
     );
 
@@ -266,7 +294,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
           fork: "upstream",
           warmupTokens: 0,
         },
-        { spawnImpl: spawnImpl as never, fetchImpl },
+        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill },
       );
 
       expect(existsSync(join(modelDir, "kv", "upstream", "slots"))).toBe(true);
@@ -546,6 +574,60 @@ describe("waitForHealth", () => {
     });
 
     expect(calls).toBe(2);
+  });
+
+  it("fails fast with 'exited prematurely' when the child pid is dead (boot-script parity)", async () => {
+    // A dead child will never open its port — the old script's `kill -0`
+    // check caught this immediately; without it the boot waits out the full
+    // stall window and reports a misleading "stalled".
+    const clock = fakeClock();
+    const mockFetch = vi.fn(async () => {
+      throw new Error("connection refused");
+    });
+    const killImpl = vi.fn((_pid: number, signal?: NodeJS.Signals | number) => {
+      // signal 0 = liveness probe: child is gone
+      return signal === 0 ? false : true;
+    });
+
+    await expect(
+      waitForHealth(8080, 180_000, {
+        fetchImpl: mockFetch as never,
+        now: clock.now,
+        sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+        killImpl,
+      }, 424242),
+    ).rejects.toThrow(/exited prematurely on port 8080 \(pid 424242\)/);
+
+    // The liveness probe fires on the FIRST iteration — before any fetch —
+    // so the boot fails in one poll, not after the 180s stall window.
+    expect(killImpl).toHaveBeenCalledWith(424242, 0);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(clock.now()).toBe(0);
+  });
+
+  it("keeps polling normally while the child pid is alive", async () => {
+    // A live child must not trip the liveness check: the wait proceeds to
+    // the usual health-based success path.
+    const clock = fakeClock();
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      if (calls === 1) throw new Error("connection refused");
+      return { ok: true, status: 200 };
+    });
+    const killImpl = vi.fn((_pid: number, signal?: NodeJS.Signals | number) => {
+      return signal === 0 ? true : true; // child alive
+    });
+
+    await waitForHealth(8080, 10_000, {
+      fetchImpl: mockFetch as never,
+      now: clock.now,
+      sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
+      killImpl,
+    }, 424242);
+
+    expect(calls).toBe(2);
+    expect(killImpl).toHaveBeenCalledWith(424242, 0);
   });
 });
 
