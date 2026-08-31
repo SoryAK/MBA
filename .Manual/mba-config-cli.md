@@ -19,7 +19,7 @@ walks the user through:
    per-field validation (integers, booleans, enums, `gpuLayers ≤ blockCount`).
 4. **Restart when needed** — if the edited dial requires a reboot and the
    model is currently loaded, `mba` asks whether to reboot the **same** model
-   via the boot script.
+   in-daemon (stop the model's current server, then `POST /servers/boot`).
 5. **Escape hatch** — `mba open <model> [server_setup|yaml]` prints the file
    path for raw editing.
 
@@ -54,10 +54,13 @@ a restart is required.
    - `restartRequired: false` → "saved — synced live, no restart needed"
      (the service's watcher picks up `client.*` changes live).
    - `restartRequired: true`, model not loaded → "takes effect on next boot."
-   - `restartRequired: true`, model loaded → y/N prompt → runs the boot script
-     for the same model (`MBA_BOOT_SCRIPT` env override, default
-     `~/Dev_Projects/C-Yard/scripts/llama-server-up.sh -Model <id>`).
-     `--yes` skips the prompt.
+   - `restartRequired: true`, model loaded → y/N prompt → **in-daemon
+     restart**: stop every server running this model, then `POST
+     /servers/boot` on the switch port (`MBA_SWITCH_PORT` env, default 8080).
+     The daemon owns the server lifecycle (ADR-0092/0097); the retired
+     C-Yard boot script is no longer used.
+   - `--yes` (or non-TTY stdin) **never restarts** — it skips the prompt and
+     prints the manual hint `mba servers boot <id> <port>` instead.
 7. **`mba open <id> [server_setup|yaml]`** — `GET /models/config?id=<id>` →
    prints the `server_setup.json` path (default) or the adapter YAML path.
 
@@ -66,8 +69,8 @@ a restart is required.
 | Param | Source | Default |
 | --- | --- | --- |
 | Service URL | `MBA_SERVICE_URL` env → `~/.mba/mba/service.json` | — |
-| Boot script | `MBA_BOOT_SCRIPT` env | `~/Dev_Projects/C-Yard/scripts/llama-server-up.sh` |
-| Auto-confirm reboot | `--yes` flag | off (prompt) |
+| Restart/boot port | `MBA_SWITCH_PORT` env | 8080 |
+| Skip restart prompt | `--yes` flag (never restarts; prints the hint) | off (prompt) |
 
 **Editable dials** (defined in `packages/core/src/service/model-config.ts`):
 

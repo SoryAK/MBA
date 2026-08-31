@@ -11,9 +11,10 @@
  *       unknown id      → `unknown` (rejected before any switch work)
  *       not loaded      → run the injected executor → `switched` / `failed`
  *
- * The executor is INJECTABLE: production shells out to the boot script
- * (`llama-server-up.sh -Model <id>`); tests inject a fake. This module
- * never touches the filesystem or spawns processes itself.
+ * The executor is INJECTABLE: production boots in-daemon via the server
+ * plane (ADR-0097 Phase 2 — stop the model's current server, then
+ * `POST /servers/boot`); tests inject a fake. This module never touches the
+ * filesystem or spawns processes itself.
  */
 
 import { basename } from "node:path";
