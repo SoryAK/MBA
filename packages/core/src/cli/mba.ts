@@ -550,6 +550,19 @@ async function interactiveBoot(
     return;
   }
   await cmdServersBoot(baseUrl, picked.id, port, serverType);
+  
+  // Ask user if they want to see logs after successful boot
+  if (process.stdin.isTTY) {
+    const showLogs = await askYesNo("Show logs now?");
+    if (showLogs) {
+      // Get the server ID from the boot result to show logs
+      const { servers } = await serviceGet<{ servers: ServerEntry[] }>(baseUrl, "/servers");
+      const latestServer = servers.find(s => s.port === port);
+      if (latestServer) {
+        await cmdServersLogs(baseUrl, latestServer.id, undefined, true);
+      }
+    }
+  }
 }
 
 async function cmdServersBoot(
