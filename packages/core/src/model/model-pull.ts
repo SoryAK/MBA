@@ -35,7 +35,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { pipeline } from "node:stream/promises";
+import { pipeline } from "node:stream";
 import { slotSavePath } from "../mba/server-lifecycle.js";
 import { defaultModelStoreRoot } from "../service/paths.js";
 import { draftAdapterYaml, draftFamilyYaml } from "./draft-adapter.js";
@@ -63,6 +63,13 @@ export interface PullModelOptions {
   storeRoot?: string;
   /** Injectable fetch (tests). Defaults to global fetch. */
   fetch?: typeof fetch;
+  /**
+   * Download progress callback. Invoked per received chunk with the running
+   * byte count (including any resumed prefix) and the total size when the
+   * server advertised one (null otherwise). The caller decides where the
+   * progress goes — the daemon route forwards it over SSE to the CLI.
+   */
+  onProgress?: (downloaded: number, total: number | null) => void;
 }
 
 export interface PullModelResult {
@@ -103,6 +110,7 @@ async function downloadWithResume(
   url: string,
   dest: string,
   doFetch: typeof fetch,
+  onProgress?: (downloaded: number, total: number | null) => void,
 ): Promise<boolean> {
   const partial = `${dest}.partial`;
   let start = 0;
@@ -130,11 +138,64 @@ async function downloadWithResume(
   if (!res.body) throw new Error(`download failed: empty response body for ${url}`);
 
   const mode = start > 0 ? "a" : "w";
-  await pipeline(
-    res.body as unknown as NodeJS.ReadableStream,
-    createWriteStream(partial, { flags: mode }),
-  );
-  return start > 0;
+
+  // Total size from the server when advertised (null for chunked/unknown).
+  // On a 206 resume the content-length is only the REMAINING bytes, so add
+  // the resumed offset to recover the full file size for the percentage.
+  const contentLength = res.headers.get("content-length");
+  const totalSize = contentLength ? parseInt(contentLength, 10) + start : null;
+
+  let downloadedBytes = start;
+  const reader = res.body.getReader();
+  const fileStream = createWriteStream(partial, { flags: mode });
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      downloadedBytes += value.length;
+      onProgress?.(downloadedBytes, totalSize);
+
+      // Respect backpressure: when the write buffer is full, wait for drain
+      // before pulling the next chunk (multi-GB downloads must not buffer
+      // the whole file in memory). The drain/error listeners remove each
+      // other so a long download does not accumulate stale listeners
+      // (MaxListenersExceededWarning).
+      if (!fileStream.write(value)) {
+        await new Promise<void>((resolve, reject) => {
+          const onDrain = () => {
+            fileStream.removeListener("error", onError);
+            resolve();
+          };
+          const onError = (err: Error) => {
+            fileStream.removeListener("drain", onDrain);
+            reject(err);
+          };
+          fileStream.once("drain", onDrain);
+          fileStream.once("error", onError);
+        });
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: Error) => {
+        fileStream.removeListener("finish", onFinish);
+        reject(err);
+      };
+      const onFinish = () => {
+        fileStream.removeListener("error", onError);
+        resolve();
+      };
+      fileStream.once("error", onError);
+      fileStream.once("finish", onFinish);
+      fileStream.end();
+    });
+    return start > 0;
+  } catch (error) {
+    fileStream.destroy();
+    throw error;
+  }
 }
 
 /**
@@ -143,7 +204,11 @@ async function downloadWithResume(
  */
 export async function sha256OfFile(path: string): Promise<string> {
   const hash = createHash("sha256");
-  await pipeline(createReadStream(path), hash);
+  // pipeline requires a trailing callback (a bare Transform as the final
+  // stream throws ERR_INVALID_ARG_TYPE); wrap it so we can await completion.
+  await new Promise<void>((resolve, reject) => {
+    pipeline(createReadStream(path), hash, (err) => (err ? reject(err) : resolve()));
+  });
   return hash.digest("hex");
 }
 
@@ -202,7 +267,7 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
     const onlyPartial = entries.length === 1 && entries[0] === `${fileName}.partial`;
     if (!onlyPartial) {
       throw new PullConflictError(
-        `model folder already exists: ${modelDir} — remove it first to re-pull`,
+        `model folder already exists: ${modelDir} — remove it first to re-pull. If you want to resume a download, remove the partial file (${fileName}.partial) and try again.`,
       );
     }
   }
@@ -214,7 +279,7 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
   };
 
   try {
-    const resumed = await downloadWithResume(url, dest, doFetch);
+    const resumed = await downloadWithResume(url, dest, doFetch, opts.onProgress);
 
     const actual = await sha256OfFile(partial);
     if (actual !== sha256.toLowerCase()) {

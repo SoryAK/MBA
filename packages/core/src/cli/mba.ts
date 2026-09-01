@@ -105,6 +105,106 @@ async function servicePost<T>(baseUrl: string, path: string, body: unknown): Pro
   return (await res.json()) as T;
 }
 
+/** Human-readable byte count (B / KiB / MiB / GiB). */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let value = n;
+  let i = -1;
+  do {
+    value /= 1024;
+    i++;
+  } while (value >= 1024 && i < units.length - 1);
+  return `${value.toFixed(1)} ${units[i]}`;
+}
+
+/**
+ * POST to an SSE endpoint and render download progress live. The daemon
+ * streams `progress` events while bytes arrive, then a terminal `done`
+ * (result) or `error` event. Progress is re-rendered on the same line (\r)
+ * and throttled to ~10/s so a fast download does not spam the terminal.
+ * Resolves with the `done` payload; throws on an `error` event or a
+ * non-SSE (plain JSON) error response.
+ */
+async function servicePostSse<T>(
+  baseUrl: string,
+  path: string,
+  body: unknown,
+): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`service error: HTTP ${res.status} ${text}`.trim());
+  }
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) {
+    // A pre-stream failure returned plain JSON with a status code.
+    const text = await res.text().catch(() => "");
+    let message = text;
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown };
+      if (typeof parsed.error === "string") message = parsed.error;
+    } catch {
+      // keep raw text
+    }
+    throw new Error(message.trim() || `service error: HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastRender = 0;
+
+  const renderProgress = (downloaded: number, total: number | null, force: boolean): void => {
+    const now = Date.now();
+    if (!force && now - lastRender < 100) return;
+    lastRender = now;
+    const line =
+      total !== null && total > 0
+        ? `[mba] downloading ${formatBytes(downloaded)} / ${formatBytes(total)} (${Math.round((downloaded / total) * 100)}%)`
+        : `[mba] downloading ${formatBytes(downloaded)}`;
+    process.stdout.write(`\r\x1b[K${line}`);
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE frames are separated by a blank line; each `data:` line is one
+    // JSON event. Process every complete frame, keep the trailing partial.
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const dataLine = frame
+        .split("\n")
+        .find((l) => l.startsWith("data:"));
+      if (!dataLine) continue;
+      let event: { type: string; downloaded?: number; total?: number | null; result?: T; message?: string };
+      try {
+        event = JSON.parse(dataLine.slice(5).trim());
+      } catch {
+        continue;
+      }
+      if (event.type === "progress") {
+        renderProgress(event.downloaded ?? 0, event.total ?? null, false);
+      } else if (event.type === "done") {
+        process.stdout.write("\r\x1b[K"); // clear the progress line
+        return event.result as T;
+      } else if (event.type === "error") {
+        process.stdout.write("\r\x1b[K");
+        throw new Error(event.message ?? "pull failed");
+      }
+    }
+  }
+  throw new Error("pull stream ended without a result");
+}
+
 // --- Shared types (mirror the service's model-config surface) --------------
 // (ModelEntry and ModelDial live in interactive.ts — the raw-mode input
 // primitives consume them directly.)
@@ -388,16 +488,24 @@ async function cmdPull(
   const body: Record<string, string> = { url, id };
   if (sha256) body.sha256 = sha256;
   if (family) body.family = family;
-  const result = await servicePost<PullResult>(baseUrl, "/models/pull", body);
-  process.stdout.write(
-    `[mba] pulled ${result.id} (family: ${result.family})${result.resumed ? " [resumed]" : ""}\n`,
-  );
-  process.stdout.write(`[mba]   weights:  ${result.modelDir}\n`);
-  process.stdout.write(`[mba]   adapter:  ${result.adapterPath}\n`);
-  if (result.familyCreated) {
-    process.stdout.write("[mba]   family tier scaffolded (family.yaml + empty bindings)\n");
+  
+  process.stdout.write(`[mba] pulling model ${id}...\n`);
+
+  try {
+    const result = await servicePostSse<PullResult>(baseUrl, "/models/pull", body);
+    process.stdout.write(
+      `[mba] pulled ${result.id} (family: ${result.family})${result.resumed ? " [resumed]" : ""}\n`,
+    );
+    process.stdout.write(`[mba]   weights:  ${result.modelDir}\n`);
+    process.stdout.write(`[mba]   adapter:  ${result.adapterPath}\n`);
+    if (result.familyCreated) {
+      process.stdout.write("[mba]   family tier scaffolded (family.yaml + empty bindings)\n");
+    }
+    process.stdout.write("[mba] fill in the TODO fields in the adapter yaml, then boot the model\n");
+  } catch (error) {
+    process.stderr.write(`[mba] error: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
   }
-  process.stdout.write("[mba] fill in the TODO fields in the adapter yaml, then boot the model\n");
 }
 
 async function cmdSet(
