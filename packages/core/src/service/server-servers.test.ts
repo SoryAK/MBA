@@ -103,6 +103,7 @@ function bootSeams(pid: number): {
     },
     now: () => 1_000_000,
     healthDeadlineMs: 1000,
+    mkdirImpl: vi.fn(),
   };
   return { seams, spawnCalls, killCalls };
 }
@@ -110,11 +111,14 @@ function bootSeams(pid: number): {
 describe("mba service server plane (ADR-0097 Phase 2)", () => {
   let paths: ReturnType<typeof defaultStorePaths>;
   let adapterDir: string;
-  const modelFile = "/home/skaba/models/qwen/qwen3.8-27b/qwen3.8-27b.gguf";
+  let modelFile: string;
+  let modelDir: string;
 
   beforeEach(() => {
     paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-svc-servers-")));
     adapterDir = mkdtempSync(join(tmpdir(), "mba-svc-servers-adapters-"));
+    modelDir = mkdtempSync(join(tmpdir(), "mba-svc-servers-models-"));
+    modelFile = join(modelDir, "qwen3.8-27b.gguf");
     writeAdapter(adapterDir, "qwen/qwen3.8-27b/qwen3.8-27b.yaml", "qwen3.8-27b", modelFile);
   });
 
@@ -380,7 +384,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
   });
 
   it("POST /servers/boot still allows a new port for a DIFFERENT model (G2)", async () => {
-    const otherModel = "/home/skaba/models/other/other-7b.gguf";
+    const otherModel = join(modelDir, "other-7b.gguf");
     writeAdapter(adapterDir, "other/other-7b/other-7b.yaml", "other-7b", otherModel);
     const existing: UpstreamEntry = {
       id: "llama-cpp-8080",
