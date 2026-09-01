@@ -150,6 +150,89 @@ describe("pullModel", () => {
     }
   });
 
+  it("reports download progress via onProgress (fresh + resumed)", async () => {
+    // Fresh download: progress runs 0 → full size, total = full size.
+    {
+      const store = freshStore();
+      try {
+        const events: Array<{ downloaded: number; total: number | null }> = [];
+        await pullModel(
+          opts(store, {
+            onProgress: (downloaded, total) => events.push({ downloaded, total }),
+          }),
+        );
+        expect(events.length).toBeGreaterThan(0);
+        expect(events[0].downloaded).toBeGreaterThan(0);
+        expect(events[events.length - 1].downloaded).toBe(GGUF.length);
+        expect(events.every((e) => e.total === GGUF.length)).toBe(true);
+      } finally {
+        rmSync(store, { recursive: true, force: true });
+      }
+    }
+    // Resumed download: progress starts at the resumed offset and the total
+    // is the FULL file size (206 content-length is only the remaining bytes).
+    {
+      const store = freshStore();
+      try {
+        const modelDir = join(store, "test-model", "test-model");
+        mkdirSync(modelDir, { recursive: true });
+        writeFileSync(join(modelDir, "weights.gguf.partial"), GGUF.subarray(0, 10));
+
+        const events: Array<{ downloaded: number; total: number | null }> = [];
+        await pullModel(
+          opts(store, {
+            onProgress: (downloaded, total) => events.push({ downloaded, total }),
+          }),
+        );
+        expect(events.length).toBeGreaterThan(0);
+        expect(events[0].downloaded).toBeGreaterThanOrEqual(10);
+        expect(events[events.length - 1].downloaded).toBe(GGUF.length);
+        expect(events.every((e) => e.total === GGUF.length)).toBe(true);
+      } finally {
+        rmSync(store, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("does not leak error listeners across backpressure pauses", async () => {
+    // Regression: the backpressure wait used to attach a fresh `error`
+    // listener on every drain pause without removing it, so a long download
+    // tripped MaxListenersExceededWarning. Stream many large chunks so the
+    // write buffer fills repeatedly, and assert no such warning is emitted.
+    const chunk = Buffer.alloc(64 * 1024, 7);
+    const total = chunk.length * 256; // 16 MiB in 256 chunks
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 256; i++) controller.enqueue(new Uint8Array(chunk));
+        controller.close();
+      },
+    });
+    const doFetch = (async () =>
+      new Response(body, {
+        status: 200,
+        headers: { "content-length": String(total), "accept-ranges": "bytes" },
+      })) as unknown as typeof fetch;
+
+    const warnings: NodeJS.Warnings = [];
+    const onWarning = (w: NodeJS.Warnings) => warnings.push(w);
+    process.on("warning", onWarning);
+    const store = freshStore();
+    try {
+      // A valid 64-hex digest passes pre-download validation so the download
+      // (and its backpressure pauses) actually runs. The body is not a real
+      // GGUF, so pullModel throws on the sha256 mismatch AFTER the download —
+      // which is exactly where the listener leak used to accumulate.
+      await expect(
+        pullModel(opts(store, { fetch: doFetch, sha256: "0".repeat(64), url: "http://127.0.0.1/weights.gguf" })),
+      ).rejects.toThrow(/sha256/i);
+    } finally {
+      process.off("warning", onWarning);
+      rmSync(store, { recursive: true, force: true });
+    }
+    const leaks = warnings.filter((w) => w.name === "MaxListenersExceededWarning");
+    expect(leaks).toHaveLength(0);
+  });
+
   it("refuses on sha256 mismatch and deletes the partial", async () => {
     const store = freshStore();
     try {

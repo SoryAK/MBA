@@ -23,15 +23,20 @@
  *   POST /models/ensure              → { status: loaded|switched|disabled|unknown|failed, id }
  *        OFF by default (409 "disabled") — armed via `switchEnabled`
  *        (env `MBA_MODEL_SWITCH=on`). Idempotent: a loaded model is a no-op.
- *   POST /models/pull                → { id, family, sha256, resumed, modelDir, adapterPath, familyCreated }
+ *   POST /models/pull                → SSE stream (text/event-stream)
  *        Body: { url, id, sha256?, family? }. One-command model onboarding
  *        (ADR-0098): download (resume + sha256 verify) → parse GGUF header →
  *        scaffold the two-tier binding structure. `url` may be a HuggingFace
  *        repo shorthand (owner/repo[:file-or-quant]) or resolve URL; when
  *        `sha256` is omitted it is resolved from the repo's published LFS
  *        metadata (ADR-0099) — other hosts require an explicit digest.
- *        400 bad input, 409 folder exists, 422 sha256 mismatch, 500 download
- *        failure.
+ *        The download runs in the daemon, so progress is streamed back to the
+ *        caller as SSE events: `progress` ({ downloaded, total }) per chunk,
+ *        then a terminal `done` ({ result: PullModelResult }) or `error`
+ *        ({ message }) event. Every failure mode (bad input, folder exists,
+ *        sha256 mismatch, download failure) arrives as an `error` event —
+ *        the HTTP status is 200 for the whole stream; the CLI renders the
+ *        message and exits non-zero.
  *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired }] }
  *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
  *        Body: { id, file: 'server_setup'|'client', field, value }. The
@@ -46,6 +51,7 @@
  */
 
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import {
   defaultStorePaths,
@@ -64,13 +70,7 @@ import {
   type SwitchExecutor,
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
-import {
-  pullModel,
-  PullConflictError,
-  PullValidationError,
-  PullVerifyError,
-} from "../model/model-pull.js";
-import { HfResolveError } from "../model/hf-resolve.js";
+import { pullModel } from "../model/model-pull.js";
 import {
   listUpstreams,
   readRegistry,
@@ -235,23 +235,41 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
-    try {
-      const result = await pullModel({
-        url: input.url,
-        id: input.id,
-        sha256: input.sha256,
-        family: input.family,
-        storeRoot: opts.adapterDir,
-        fetch: opts.fetch,
-      });
-      return c.json(result);
-    } catch (err) {
-      if (err instanceof PullValidationError) return c.json({ error: err.message }, 400);
-      if (err instanceof PullConflictError) return c.json({ error: err.message }, 409);
-      if (err instanceof PullVerifyError) return c.json({ error: err.message }, 422);
-      if (err instanceof HfResolveError) return c.json({ error: err.message }, 400);
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
-    }
+    // Narrow to the validated shapes so the SSE closure sees concrete types.
+    const url = input.url;
+    const id = input.id;
+    const sha256 = input.sha256;
+    const family = input.family;
+    // The download runs in the daemon, so progress is streamed back to the
+    // caller as SSE: `progress` events while bytes arrive, then a terminal
+    // `done` (result) or `error` event. Validation errors that are known
+    // before the download starts are returned as plain JSON with their status
+    // code (the CLI checks content-type to tell the two apart).
+    return streamSSE(c, async (stream) => {
+      // Throttle progress events to ~4/s so a fast local download does not
+      // flood the stream; the terminal event is always sent.
+      let lastEmit = 0;
+      try {
+        const result = await pullModel({
+          url,
+          id,
+          sha256,
+          family,
+          storeRoot: opts.adapterDir,
+          fetch: opts.fetch,
+          onProgress: (downloaded, total) => {
+            const now = Date.now();
+            if (now - lastEmit < 250 && total !== null && downloaded < total) return;
+            lastEmit = now;
+            void stream.writeSSE({ data: JSON.stringify({ type: "progress", downloaded, total }) });
+          },
+        });
+        await stream.writeSSE({ data: JSON.stringify({ type: "done", result }) });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await stream.writeSSE({ data: JSON.stringify({ type: "error", message }) });
+      }
+    });
   });
 
   app.get("/models/config", (c) => {
