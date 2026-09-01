@@ -110,7 +110,7 @@ async function listRepoFiles(
   owner: string,
   repo: string,
   branch?: string,
-): Promise<{ ref: string; files: Array<{ path: string; sha256?: string }> }> {
+): Promise<{ ref: string; files: Array<{ path: string; sha256?: string; size?: number }> }> {
   const base = `https://huggingface.co/api/models/${owner}/${repo}`;
   let ref = branch;
   if (!ref) {
@@ -124,11 +124,12 @@ async function listRepoFiles(
   if (!Array.isArray(tree)) {
     throw new HfResolveError(`unexpected HuggingFace tree response for ${owner}/${repo}`);
   }
-  const files: Array<{ path: string; sha256?: string }> = [];
+  const files: Array<{ path: string; sha256?: string; size?: number }> = [];
   for (const entry of tree as HfTreeEntry[]) {
     if (entry.type !== "file" || typeof entry.path !== "string") continue;
     const oid = entry.lfs && typeof entry.lfs.oid === "string" ? entry.lfs.oid : undefined;
-    files.push({ path: entry.path, sha256: oid });
+    const size = entry.lfs && typeof entry.lfs.size === "number" ? entry.lfs.size : undefined;
+    files.push({ path: entry.path, sha256: oid, size });
   }
   return { ref, files };
 }
@@ -216,4 +217,75 @@ export async function resolveHfSource(
     sha256: match.sha256.toLowerCase(),
     fileName: match.path.split("/").pop() ?? match.path,
   };
+}
+
+/** A single result from the HuggingFace model-search endpoint. */
+export interface HfSearchResult {
+  /** Repo id in `owner/repo` form. */
+  readonly id: string;
+  /** Download count, when the API reports one. */
+  readonly downloads?: number;
+  /** Like count, when the API reports one. */
+  readonly likes?: number;
+}
+
+interface HfSearchEntry {
+  readonly id?: unknown;
+  readonly downloads?: unknown;
+  readonly likes?: unknown;
+}
+
+/**
+ * Search HuggingFace for models matching a free-text query.
+ *
+ * Results are sorted by download count (descending) so the most-used repos
+ * surface first. Used by the interactive `mba pull search` flow.
+ */
+export async function searchHfModels(
+  query: string,
+  opts: { limit?: number; doFetch?: typeof fetch } = {},
+): Promise<HfSearchResult[]> {
+  const { limit = 20, doFetch = fetch } = opts;
+  const url =
+    `https://huggingface.co/api/models?search=${encodeURIComponent(query)}` +
+    `&limit=${limit}&sort=downloads&direction=-1`;
+  const data = (await hfGetJson(doFetch, url)) as unknown;
+  if (!Array.isArray(data)) {
+    throw new HfResolveError(`unexpected HuggingFace search response for '${query}'`);
+  }
+  const results: HfSearchResult[] = [];
+  for (const entry of data as HfSearchEntry[]) {
+    if (typeof entry.id !== "string" || entry.id.length === 0) continue;
+    results.push({
+      id: entry.id,
+      downloads: typeof entry.downloads === "number" ? entry.downloads : undefined,
+      likes: typeof entry.likes === "number" ? entry.likes : undefined,
+    });
+  }
+  return results;
+}
+
+/** A GGUF file published in a HuggingFace repo. */
+export interface HfGgufFile {
+  /** File path relative to the repo root. */
+  readonly path: string;
+  /** Content sha256 (LFS oid), when the repo publishes one. */
+  readonly sha256?: string;
+  /** File size in bytes, when the API reports one. */
+  readonly size?: number;
+}
+
+/**
+ * List the GGUF files published in a HuggingFace repo (default branch).
+ *
+ * Used by the interactive `mba pull search` flow to offer a quant picker.
+ * Returns an empty list when the repo has no GGUFs.
+ */
+export async function listHfGgufs(
+  owner: string,
+  repo: string,
+  doFetch: typeof fetch = fetch,
+): Promise<HfGgufFile[]> {
+  const { files } = await listRepoFiles(doFetch, owner, repo);
+  return ggufFiles(files);
 }
