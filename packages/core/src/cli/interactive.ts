@@ -413,7 +413,7 @@ export interface ServerRow {
   readonly modelFile: string;
 }
 
-export type ServerAction = "stop";
+export type ServerAction = "stop" | "logs";
 
 export interface ServerSelection {
   readonly server: ServerRow;
@@ -446,7 +446,7 @@ export function pickServerInteractive(
           s.modelFile.toLowerCase().includes(query.toLowerCase()),
       );
 
-    const actionRows = (): readonly ["stop", "back"] => ["stop", "back"];
+    const actionRows = (): readonly ["stop", "logs", "back"] => ["stop", "logs", "back"];
 
     const drawServerRow = (s: ServerRow, i: number, cursorIdx: number): void => {
       const marker = i === cursorIdx ? ">" : " ";
@@ -480,7 +480,12 @@ export function pickServerInteractive(
         );
         rows.forEach((a, i) => {
           const marker = i === cursor ? ">" : " ";
-          const label = a === "stop" ? `stop ${selected?.id}` : "back";
+          const label =
+            a === "stop"
+              ? `stop ${selected?.id}`
+              : a === "logs"
+                ? `logs ${selected?.id}`
+                : "back";
           process.stdout.write(` ${marker} ${label}\n`);
         });
         prevLines = rows.length + 1;
@@ -551,6 +556,10 @@ export function pickServerInteractive(
         const pick = rows[cursor];
         if (pick === "stop" && selected) {
           done({ server: selected, action: "stop" });
+          return true;
+        }
+        if (pick === "logs" && selected) {
+          done({ server: selected, action: "logs" });
           return true;
         }
         stage = "list"; // "back" — restore the list position

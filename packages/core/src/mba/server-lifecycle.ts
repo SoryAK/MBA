@@ -16,10 +16,10 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { dirname, join } from "node:path";
-import { closeSync, mkdirSync, openSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
 
 import { daemonLog } from "./daemon-log.js";
+import { getOrCreateLogBuffer } from "./server-log-buffer.js";
 
 export interface ServerBootOptions {
   /** Path to llama-server binary. */
@@ -97,18 +97,6 @@ export interface LifecycleSeams {
    */
   readonly mkdirImpl?: (path: string, opts: { recursive: boolean }) => void;
   /**
-   * Open a log file for append and return its fd (boot-script parity: the
-   * child writes straight to the file, no Node pipe). Defaults to
-   * `node:fs` `openSync(path, "a")`. Tests supply a fake to avoid real
-   * filesystem writes.
-   */
-  readonly openLogFdImpl?: (path: string) => number;
-  /**
-   * Close a log fd once the child owns it. Defaults to `node:fs`
-   * `closeSync`. Tests supply a no-op.
-   */
-  readonly closeLogFdImpl?: (fd: number) => void;
-  /**
    * Sleep for `ms` (poll interval). Defaults to `setTimeout`. Tests supply a
    * fake that advances a controllable clock so multi-minute waits run in
    * microseconds.
@@ -143,8 +131,6 @@ export function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
     healthDeadlineMs: seams?.healthDeadlineMs ?? 180_000,
     portCheckImpl: seams?.portCheckImpl ?? defaultPortCheck,
     mkdirImpl: seams?.mkdirImpl ?? ((p, o) => mkdirSync(p, o)),
-    openLogFdImpl: seams?.openLogFdImpl ?? ((p) => openSync(p, "a")),
-    closeLogFdImpl: seams?.closeLogFdImpl ?? ((fd) => closeSync(fd)),
     sleepImpl: seams?.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
   };
 }
@@ -347,8 +333,6 @@ export async function bootLlamaServer(
     now,
     healthDeadlineMs,
     mkdirImpl,
-    openLogFdImpl,
-    closeLogFdImpl,
     sleepImpl,
   } = resolveSeams(seams);
 
@@ -371,36 +355,26 @@ export async function bootLlamaServer(
     ...opts.flags,
   ];
 
-  // Create log directory if it doesn't exist.
-  const logDir = join(homedir(), ".local", "share", "mba", "logs");
-  mkdirImpl(logDir, { recursive: true });
-  const logPath = join(logDir, `llama-server-${opts.port}.log`);
-  const errLogPath = `${logPath}.err`;
-
-  // Boot-script parity: hand the child its OWN file descriptors for
-  // stdout/stderr (the script does `>LOG_OUT 2>LOG_ERR &`). The kernel
-  // owns the writes — no Node pipe to clog, no shared drain stream that
-  // closes when the first pipe ends (ERR_STREAM_WRITE_AFTER_END), no
-  // backpressure that can wedge a child mid-load.
-  const fdOut = openLogFdImpl(logPath);
-  const fdErr = openLogFdImpl(errLogPath);
+  // Pipe capture (Feature 2): stdout/stderr are Node pipes. The daemon
+  // line-splits them into a bounded per-port ring buffer (live view for
+  // `mba servers logs`) and tees every completed line to its own stdout, so
+  // the systemd journal keeps a persistent, rotated copy. No .log files.
+  const seamObj: LifecycleSeams = seams ?? {};
+  const buffer = getOrCreateLogBuffer(opts.port, seamObj);
+  buffer.subscribe((line) => {
+    process.stdout.write(`[llama:${opts.port}] ${line}\n`);
+  });
 
   let child: ChildProcess;
   try {
     child = spawnImpl(opts.binaryPath, args, {
       detached: true, // own process group → group-killable (G1)
-      stdio: ["ignore", fdOut, fdErr],
+      stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
-    closeLogFdImpl(fdOut);
-    closeLogFdImpl(fdErr);
     daemonLog(`[boot:${opts.port}] spawn FAILED: ${String(err)}`);
     throw new Error(`failed to spawn llama-server: ${String(err)}`);
   }
-
-  // The child now owns the fds (dup'd at spawn); close the daemon's copies.
-  closeLogFdImpl(fdOut);
-  closeLogFdImpl(fdErr);
 
   if (child.pid === undefined) {
     daemonLog(`[boot:${opts.port}] spawn succeeded but no PID assigned`);
@@ -412,6 +386,12 @@ export async function bootLlamaServer(
   daemonLog(
     `[boot:${opts.port}] spawned pid ${pid}: ${opts.binaryPath} ${args.join(" ")}`,
   );
+
+  // Wire the pipes: each data chunk is line-split by the buffer (which holds
+  // partial lines until a newline completes them). Both stdout and stderr
+  // feed the same per-port buffer so the live view is a single ordered stream.
+  child.stdout?.on("data", (chunk: Buffer) => buffer.append(chunk.toString("utf8")));
+  child.stderr?.on("data", (chunk: Buffer) => buffer.append(chunk.toString("utf8")));
 
   // Detach from the daemon's event loop so the daemon can exit independently.
   child.unref?.();

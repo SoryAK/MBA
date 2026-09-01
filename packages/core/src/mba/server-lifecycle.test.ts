@@ -9,6 +9,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import {
   waitForHealth,
@@ -22,27 +23,63 @@ import {
   resolveSeams,
   type LifecycleSeams,
 } from "./server-lifecycle.js";
+import { getLogBuffer, removeLogBuffer } from "./server-log-buffer.js";
 
-/** A fake ChildProcess: records the pid, swallows events, no real process. */
-function fakeChild(pid: number): ChildProcess {
+/**
+ * An emittable fake stream: tests push chunks via `emit(chunk)`. The
+ * lifecycle attaches a `data` listener to the child's stdout/stderr, so the
+ * fake must be an EventEmitter (not a null stand-in).
+ */
+function fakeStream(): { stream: EventEmitter; emit: (chunk: string) => void } {
+  const stream = new EventEmitter();
+  stream.resume = vi.fn();
+  stream.setEncoding = vi.fn();
+  return {
+    stream,
+    emit: (chunk: string) => {
+      stream.emit("data", Buffer.from(chunk));
+    },
+  };
+}
+
+/**
+ * A fake ChildProcess: records the pid, swallows events, no real process.
+ * stdout/stderr are emittable streams so the pipe-capture path can be driven.
+ */
+function fakeChild(pid: number): ChildProcess & {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  emitOut: (chunk: string) => void;
+  emitErr: (chunk: string) => void;
+} {
+  const out = fakeStream();
+  const err = fakeStream();
   return {
     pid,
     kill: vi.fn(),
     on: vi.fn(),
     once: vi.fn(),
     unref: vi.fn(),
-    stdout: null,
-    stderr: null,
+    stdout: out.stream,
+    stderr: err.stream,
     stdin: null,
-  } as unknown as ChildProcess;
+    emitOut: out.emit,
+    emitErr: err.emit,
+  } as unknown as ChildProcess & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    emitOut: (chunk: string) => void;
+    emitErr: (chunk: string) => void;
+  };
 }
 
 /** Build a spawn seam that returns a fixed fake child and records the options. */
 function spawnSeam(pid: number) {
-  const calls: Array<{ binary: string; args: string[]; opts: unknown }> = [];
+  const calls: Array<{ binary: string; args: string[]; opts: unknown; child: ReturnType<typeof fakeChild> }> = [];
   const spawnImpl = vi.fn((_binary: string, args: string[], opts: unknown) => {
-    calls.push({ binary: _binary, args, opts });
-    return fakeChild(pid);
+    const child = fakeChild(pid);
+    calls.push({ binary: _binary, args, opts, child });
+    return child;
   });
   return { spawnImpl, calls };
 }
@@ -64,15 +101,6 @@ function fakeClock(start = 0) {
 const aliveChildKill = (pid: number, signal?: NodeJS.Signals | number) =>
   signal === 0 ? pid > 0 : true;
 
-/**
- * Log-fd seams: fake fds so bootLlamaServer never opens real log files.
- * bootLlamaServer hands the child its own stdout/stderr fds (script parity),
- * so tests must inject these or the real `openSync` would touch the fs.
- */
-const logFdSeams = {
-  openLogFdImpl: vi.fn(() => 7),
-  closeLogFdImpl: vi.fn(),
-};
 describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -91,7 +119,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
+        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
 
     expect(state.pid).toBe(424242);
@@ -119,14 +147,80 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
+        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
 
     const opts = calls[0]!.opts as { detached?: boolean; stdio?: unknown[] };
     expect(opts.detached).toBe(true);
-    // Boot-script parity: stdout/stderr are real file descriptors (kernel
-    // owns the writes), NOT Node pipes — no clog, no shared drain stream.
-    expect(opts.stdio).toEqual(["ignore", 7, 7]);
+    // stdout/stderr are Node pipes: the daemon line-splits them into the
+    // in-memory ring buffer and tees each line to its own stdout (journal).
+    // No .log files, no fd hand-off.
+    expect(opts.stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("captures stdout lines into the per-port ring buffer and tees them to daemon stdout", async () => {
+    const { spawnImpl, calls } = spawnSeam(424242);
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+    const seams: LifecycleSeams = { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() };
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 8080,
+        flags: [],
+        fork: "upstream",
+        warmupTokens: 0,
+      },
+      seams,
+    );
+
+    // Drive the pipe: a complete line, then a partial line completed later.
+    const child = calls[0]!.child;
+    child.emitOut("loading model\n");
+    child.emitOut("partial ");
+    child.emitOut("line done\n");
+
+    const buffer = getLogBuffer(8080, seams);
+    expect(buffer).toBeDefined();
+    expect(buffer!.lines()).toEqual(["loading model", "partial line done"]);
+
+    // Each complete line is teed to the daemon's stdout, prefixed with the port.
+    expect(stdoutSpy).toHaveBeenCalledWith("[llama:8080] loading model\n");
+    expect(stdoutSpy).toHaveBeenCalledWith("[llama:8080] partial line done\n");
+    // The partial line is NOT teed until it completes.
+    expect(stdoutSpy).not.toHaveBeenCalledWith("[llama:8080] partial \n");
+
+    removeLogBuffer(8080, seams);
+  });
+
+  it("captures stderr lines into the same per-port ring buffer", async () => {
+    const { spawnImpl, calls } = spawnSeam(424242);
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+    const seams: LifecycleSeams = { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() };
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 8080,
+        flags: [],
+        fork: "upstream",
+        warmupTokens: 0,
+      },
+      seams,
+    );
+
+    const child = calls[0]!.child;
+    child.emitErr("warn: something\n");
+
+    const buffer = getLogBuffer(8080, seams);
+    expect(buffer!.lines()).toContain("warn: something");
+    expect(stdoutSpy).toHaveBeenCalledWith("[llama:8080] warn: something\n");
+
+    removeLogBuffer(8080, seams);
   });
 
   it("prepends --host 127.0.0.1 and --port from the boot context", async () => {
@@ -142,7 +236,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 0,
       },
-        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
+        { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
 
     const args = calls[0]!.args;
@@ -188,7 +282,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
           now: () => Date.now(),
           healthDeadlineMs: 100, // short stall window so the timeout fires fast
           mkdirImpl: vi.fn(),
-          ...logFdSeams,
         },
       ),
     ).rejects.toThrow(/stalled/);
@@ -221,7 +314,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         fork: "upstream",
         warmupTokens: 350,
       },
-      { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn(), ...logFdSeams },
+      { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
 
     expect(warmupCalled).toBe(true);
@@ -261,7 +354,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         now: clock.now,
         sleepImpl: (ms) => { clock.advance(ms); return Promise.resolve(); },
         mkdirImpl: vi.fn(),
-        ...logFdSeams,
       },
     );
 
