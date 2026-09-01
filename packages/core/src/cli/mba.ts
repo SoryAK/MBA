@@ -39,13 +39,17 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import {
   askPortInteractive,
+  askTextInteractive,
   askValueInteractive,
   pickFieldInteractive,
+  pickLabeledInteractive,
   pickModelInteractive,
   pickServerInteractive,
+  searchHfInteractive,
   type ModelDial,
   type ModelEntry,
 } from "./interactive.js";
+import { listHfGgufs, searchHfModels } from "../model/hf-resolve.js";
 import { selectRestartTargets } from "./restart-selection.js";
 import {
   defaultModelStoreRoot,
@@ -508,6 +512,81 @@ async function cmdPull(
   }
 }
 
+/** Derive a default model id from a repo name: `Qwen3-Coder-30B` → `qwen3-coder-30b`. */
+function deriveModelId(repo: string): string {
+  return (
+    repo
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "model"
+  );
+}
+
+/** Derive a default family from a repo owner: `Qwen` → `qwen`. */
+function deriveFamily(owner: string): string {
+  return (
+    owner
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "unknown"
+  );
+}
+
+/**
+ * Interactive `mba pull search` flow:
+ *   1. search HuggingFace → pick a repo
+ *   2. list the repo's GGUFs → pick a quant
+ *   3. confirm/edit the derived id + family
+ * then falls through to the existing pull path.
+ */
+async function cmdPullSearch(baseUrl: string): Promise<void> {
+  const repoId = await searchHfInteractive((q) => searchHfModels(q));
+  if (repoId === null) {
+    process.stdout.write("[mba] cancelled\n");
+    return;
+  }
+  const slash = repoId.indexOf("/");
+  if (slash <= 0) {
+    process.stderr.write(`[mba] error: unexpected repo id '${repoId}'\n`);
+    process.exit(1);
+  }
+  const owner = repoId.slice(0, slash);
+  const repo = repoId.slice(slash + 1);
+
+  const ggufs = await listHfGgufs(owner, repo);
+  if (ggufs.length === 0) {
+    process.stderr.write(`[mba] error: no GGUF files found in ${owner}/${repo}\n`);
+    process.exit(1);
+  }
+
+  const formatSize = (n: number): string =>
+    n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`;
+  const quant = await pickLabeledInteractive(
+    `pick a quant for ${owner}/${repo}`,
+    ggufs.map((f) => ({
+      label: f.size !== undefined ? `${f.path} (${formatSize(f.size)})` : f.path,
+      value: f.path,
+    })),
+  );
+  if (quant === null) {
+    process.stdout.write("[mba] cancelled\n");
+    return;
+  }
+
+  const id = await askTextInteractive("model id", deriveModelId(repo));
+  if (id === null) {
+    process.stdout.write("[mba] cancelled\n");
+    return;
+  }
+  const family = await askTextInteractive("family", deriveFamily(owner));
+  if (family === null) {
+    process.stdout.write("[mba] cancelled\n");
+    return;
+  }
+
+  await cmdPull(baseUrl, `${owner}/${repo}:${quant}`, id, undefined, family);
+}
+
 async function cmdSet(
   baseUrl: string,
   modelId: string,
@@ -919,6 +998,10 @@ Usage:
                                    HuggingFace shorthand (owner/repo[:Q4_K_M])
                                    auto-resolves the URL + sha256 (ADR-0099);
                                    other hosts need --sha256
+  mba pull search                  interactive: search HuggingFace → pick a
+                                   repo → pick a quant → confirm the derived
+                                   id/family → pull (bare mba pull on a TTY
+                                   does the same)
   mba migrate-paths                one-time move of state + model store from the
                                    legacy locations to the OS-aware ones (local
                                    only — does not need the service running)
@@ -985,6 +1068,12 @@ async function main(argv: readonly string[]): Promise<void> {
         break;
       case "pull": {
         const [url, ...flagArgs] = rest;
+        // `mba pull search` (or bare `mba pull` on a TTY) runs the interactive
+        // HuggingFace search flow: search → pick repo → pick quant → confirm id.
+        if (url === "search" || (!url && process.stdin.isTTY)) {
+          await cmdPullSearch(baseUrl);
+          break;
+        }
         let id: string | undefined;
         let sha256: string | undefined;
         let family: string | undefined;

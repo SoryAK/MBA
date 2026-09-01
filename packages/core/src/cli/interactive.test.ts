@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { askPortInteractive, pickServerInteractive, type ServerRow } from "./interactive.js";
+import {
+  askPortInteractive,
+  askTextInteractive,
+  pickLabeledInteractive,
+  pickServerInteractive,
+  searchHfInteractive,
+  type ServerRow,
+} from "./interactive.js";
 
 /**
  * Build a fake stdin stream that mimics the subset of the Node stdin API the
@@ -209,5 +216,165 @@ describe("pickServerInteractive", () => {
     await tick();
     stdin.emit("\x03");
     await expect(p).rejects.toThrow("cancelled");
+  });
+});
+
+describe("searchHfInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("searches on Enter, then picks the first result", async () => {
+    const search = vi.fn(async (q: string) => [
+      { id: "Qwen/Qwen3-Coder-30B", downloads: 1000, likes: 50 },
+      { id: "other/repo", downloads: 5, likes: 1 },
+    ]);
+    const p = searchHfInteractive(search);
+    await tick();
+    stdin.emit("q");
+    stdin.emit("w");
+    stdin.emit("\r"); // search
+    await tick();
+    await tick(); // let the async search resolve + redraw
+    stdin.emit("\r"); // pick first
+    await expect(p).resolves.toBe("Qwen/Qwen3-Coder-30B");
+    expect(search).toHaveBeenCalledWith("qw");
+  });
+
+  it("navigates down to the second result before picking", async () => {
+    const search = vi.fn(async () => [
+      { id: "a/one", downloads: 1 },
+      { id: "b/two", downloads: 2 },
+    ]);
+    const p = searchHfInteractive(search);
+    await tick();
+    stdin.emit("x");
+    stdin.emit("\r"); // search
+    await tick();
+    await tick();
+    stdin.emit("\x1b[B"); // down
+    stdin.emit("\r"); // pick second
+    await expect(p).resolves.toBe("b/two");
+  });
+
+  it("resolves null on Esc (cancel)", async () => {
+    const search = vi.fn(async () => []);
+    const p = searchHfInteractive(search);
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("rejects on Ctrl-C", async () => {
+    const search = vi.fn(async () => []);
+    const p = searchHfInteractive(search);
+    await tick();
+    stdin.emit("\x03");
+    await expect(p).rejects.toThrow("cancelled");
+  });
+
+  it("shows an error and stays open when the search throws", async () => {
+    const search = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const p = searchHfInteractive(search);
+    await tick();
+    stdin.emit("x");
+    stdin.emit("\r"); // search -> throws
+    await tick();
+    await tick();
+    // still open: Esc cancels
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+    expect(search).toHaveBeenCalled();
+  });
+});
+
+describe("pickLabeledInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  const items = [
+    { label: "model.Q4_K_M.gguf", value: "Q4_K_M" },
+    { label: "model.Q8_0.gguf", value: "Q8_0" },
+  ];
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("picks the first item's value", async () => {
+    const p = pickLabeledInteractive("pick a quant", items);
+    await tick();
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("Q4_K_M");
+  });
+
+  it("navigates down and picks the second item's value", async () => {
+    const p = pickLabeledInteractive("pick a quant", items);
+    await tick();
+    stdin.emit("\x1b[B");
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("Q8_0");
+  });
+
+  it("resolves null on Esc", async () => {
+    const p = pickLabeledInteractive("pick a quant", items);
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+});
+
+describe("askTextInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the typed text", async () => {
+    const p = askTextInteractive("model id", "default-id");
+    await tick();
+    stdin.emit("m");
+    stdin.emit("y");
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("my");
+  });
+
+  it("returns the default when Enter is pressed with empty input", async () => {
+    const p = askTextInteractive("model id", "default-id");
+    await tick();
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("default-id");
+  });
+
+  it("resolves null on Esc", async () => {
+    const p = askTextInteractive("model id", "default-id");
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("backspace clears the input", async () => {
+    const p = askTextInteractive("model id", "default-id");
+    await tick();
+    stdin.emit("a");
+    stdin.emit("b");
+    stdin.emit("\x7f");
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("a");
   });
 });

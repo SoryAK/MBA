@@ -4,6 +4,7 @@ import {
   parseHfRef,
   parseHfUrl,
   resolveHfSource,
+  searchHfModels,
 } from "./hf-resolve.js";
 
 const SHA_A = "a".repeat(64);
@@ -195,5 +196,66 @@ describe("resolveHfSource", () => {
       return new Response("nope", { status: 404 });
     }) as typeof fetch;
     await expect(resolveHfSource("owner/repo", badRepo)).rejects.toThrow(/repo not found/);
+  });
+});
+
+describe("searchHfModels", () => {
+  /**
+   * Fake HF model-search endpoint. Records the query string it was called with
+   * so tests can assert the search term and limit were passed through.
+   */
+  function fakeSearchFetch(
+    results: Array<{ id: string; downloads?: number; likes?: number }>,
+    seen: { url?: string },
+  ): typeof fetch {
+    return (async (input: string | URL | Request) => {
+      seen.url = String(input);
+      return Response.json(results);
+    }) as typeof fetch;
+  }
+
+  it("returns id/downloads/likes for each result", async () => {
+    const seen: { url?: string } = {};
+    const r = await searchHfModels(
+      "qwen3 coder",
+      {
+        doFetch: fakeSearchFetch(
+          [
+            { id: "Qwen/Qwen3-Coder-30B", downloads: 1000, likes: 50 },
+            { id: "other/repo", downloads: 5 },
+          ],
+          seen,
+        ),
+      },
+    );
+    expect(r).toEqual([
+      { id: "Qwen/Qwen3-Coder-30B", downloads: 1000, likes: 50 },
+      { id: "other/repo", downloads: 5, likes: undefined },
+    ]);
+  });
+
+  it("passes the search term and limit to the API", async () => {
+    const seen: { url?: string } = {};
+    await searchHfModels("llama", { limit: 7, doFetch: fakeSearchFetch([], seen) });
+    expect(seen.url).toContain("search=llama");
+    expect(seen.url).toContain("limit=7");
+  });
+
+  it("defaults the limit to 20 when omitted", async () => {
+    const seen: { url?: string } = {};
+    await searchHfModels("llama", { doFetch: fakeSearchFetch([], seen) });
+    expect(seen.url).toContain("limit=20");
+  });
+
+  it("returns an empty list for no matches", async () => {
+    const r = await searchHfModels("zzz-no-such-model", {
+      doFetch: fakeSearchFetch([], {}),
+    });
+    expect(r).toEqual([]);
+  });
+
+  it("surfaces a non-OK response as an HfResolveError", async () => {
+    const bad = (async () => new Response("nope", { status: 500 })) as typeof fetch;
+    await expect(searchHfModels("x", { doFetch: bad })).rejects.toThrow(HfResolveError);
   });
 });
