@@ -108,3 +108,48 @@ currently dead weight — auto-publish would put it to work.
 **Re-entry trigger:** When a second machine (or a teammate) needs `@mba-ai/core`
 from npm instead of a git clone — i.e. when the package has a real external
 consumer. Until then, local `npm link` / git-clone is the distribution path.
+
+---
+
+## Rust/Go core for daemon + AMPI low-level operations
+
+**Parked:** 2026-08-31 — surfaced mid-sprint (Feature 2: server log capture)
+via the Tooling Rabbit-Hole Gate; user chose to park.
+
+**Idea:** Move "low-level operations" — the daemon and AMPI's heavy
+server-interaction for TCB/BCC remediation — into a Rust or Go layer, on the
+hunch that those languages handle process/pipe/HTTP work better than
+TypeScript.
+
+**Why it was considered:** AMPI (ADR-0088) does a lot of interaction with
+servers; the daemon spawns and supervises llama-server processes. The
+intuition was that this is "low-level" work where TS is weak.
+
+**Design state (decided in discussion 2026-08-31):**
+
+- **Rejected for now — the work is orchestration, not low-level.** AMPI's
+  loop is *model-paced*, not CPU-paced: each iteration waits on a model
+  round-trip (seconds); the language overhead per step is microseconds.
+  Daemon + AMPI + TCB/BCC remediation are all state machines + HTTP + db
+  reads — Node's best-in-class area. Ollama (the reference architecture) is
+  Go, but with a 600-contributor team and a pre-dating architecture need.
+- **Cost of switching:** new build pipeline, FFI boundary, two CI lanes,
+  native builds on the APU, split debugging — for ~0ms measurable gain on
+  model-paced loops.
+- **Where Rust/Go WOULD earn its keep (the real triggers):**
+  1. Token-level streaming transforms in the proxy with sub-ms latency
+     requirements (today: whole tool-result rewrites, not token streams).
+  2. Single-binary distribution of MBA (a distribution decision, not
+     performance).
+  3. AMPI Notch-2 sandboxed high-performance expression engine that JS
+     cannot run safely (Notch 1's tiny formula language is fine in TS).
+  4. PTY attach for live server terminals — and even then the right move is
+     `node-pty` (a native module inside the existing TS app), not a language
+     migration.
+
+**Open questions:** none blocking — the re-entry triggers below are the
+decision criteria.
+
+**Re-entry trigger:** Any of (1)–(4) above becomes a real, scheduled goal.
+Until then the model's inference time is the bottleneck and no language
+change moves it.
