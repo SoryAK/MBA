@@ -549,9 +549,10 @@ async function interactiveBoot(
     process.stdout.write("[mba] cancelled\n");
     return;
   }
+  
   await cmdServersBoot(baseUrl, picked.id, port, serverType);
   
-  // Ask user if they want to see logs after successful boot
+  // Ask user if they want to see logs right after port is determined
   if (process.stdin.isTTY) {
     const showLogs = await askYesNo("Show logs now?");
     if (showLogs) {
