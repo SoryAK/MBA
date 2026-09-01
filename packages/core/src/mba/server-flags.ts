@@ -15,7 +15,7 @@
 import type { LlamaCppServerFlags } from "./types.js";
 
 /** Default llama.cpp boot flags. Mirror scripts/llama-server-up.sh defaults. */
-export const LLAMA_CPP_DEFAULTS: Required<LlamaCppServerFlags> = {
+export const LLAMA_CPP_DEFAULTS: ResolvedLlamaFlags = {
   ctxSize: 100000,
   gpuLayers: 100,
   threads: 8,
@@ -51,13 +51,55 @@ export type LlamaCppNumericFlag = keyof typeof LLAMA_CPP_RANGES;
 
 export const FLASH_ATTN_VALUES = ["on", "off"] as const;
 
+/**
+ * The llama.cpp flags MBA manages itself (emitted by `buildLlamaServerFlags`).
+ * Single source of truth for the `extraArgs` conflict guard (ADR-0100): a user
+ * who puts one of these in `extraArgs` is fighting a typed field, so the boot
+ * is rejected rather than letting two values race for the same flag.
+ */
+export const MANAGED_LLAMA_FLAGS: ReadonlySet<string> = new Set([
+  "ctx-size",
+  "ngl",
+  "threads",
+  "jinja",
+  "parallel",
+  "cache-reuse",
+  "cache-ram",
+  "reasoning-budget",
+  "reasoning-preserve",
+  "flash-attn",
+  "ctk",
+  "ctv",
+  "spec-type",
+  "spec-draft-n-max",
+]);
+
+/** Thrown when `extraArgs` collides with a flag MBA already manages. */
+export class LlamaFlagConflictError extends Error {}
+
+/** A fully-populated flag set: every managed field present, `extraArgs` optional. */
+type ResolvedLlamaFlags = Required<Omit<LlamaCppServerFlags, "extraArgs">> & {
+  readonly extraArgs?: Record<string, string | number | boolean>;
+};
+
+/** Mutable form of {@link ResolvedLlamaFlags} for the sanitize accumulator. */
+type MutableResolvedLlamaFlags = {
+  -readonly [K in keyof ResolvedLlamaFlags]: ResolvedLlamaFlags[K];
+};
+
 export interface SanitizedLlamaCppFlags {
   /** Fully-populated, in-range flag set ready for the boot path. */
-  readonly flags: Required<LlamaCppServerFlags>;
+  readonly flags: ResolvedLlamaFlags;
   /** Keys whose raw value had the wrong type and fell back to defaults. */
   readonly dropped: readonly string[];
   /** Keys whose raw value was out of range and got clamped. */
   readonly clamped: readonly string[];
+  /**
+   * `extraArgs` keys that collide with a flag MBA manages (ADR-0100). Reported,
+   * not thrown — `buildLlamaServerFlags` is the enforcement point that rejects
+   * the boot. Empty when there is no conflict.
+   */
+  readonly conflicts: readonly string[];
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -81,10 +123,11 @@ export function sanitizeLlamaCppServerFlags(
 ): SanitizedLlamaCppFlags {
   const dropped: string[] = [];
   const clamped: string[] = [];
+  const conflicts: string[] = [];
   const source =
     typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
 
-  const flags = { ...LLAMA_CPP_DEFAULTS };
+  const flags: MutableResolvedLlamaFlags = { ...LLAMA_CPP_DEFAULTS };
 
   for (const key of Object.keys(LLAMA_CPP_RANGES) as LlamaCppNumericFlag[]) {
     const range = LLAMA_CPP_RANGES[key];
@@ -130,7 +173,31 @@ export function sanitizeLlamaCppServerFlags(
     }
   }
 
-  return { flags, dropped, clamped };
+  // extraArgs (ADR-0100): an open-ended map of llama.cpp flags MBA does not
+  // manage. Shape-only validation here (the `--help` cross-check is a
+  // fast-follow); a managed-flag collision is REPORTED, not thrown — the boot
+  // path (`buildLlamaServerFlags`) is the enforcement point.
+  const extraRaw = source["extraArgs"];
+  if (extraRaw !== undefined) {
+    if (typeof extraRaw === "object" && extraRaw !== null && !Array.isArray(extraRaw)) {
+      const extra: Record<string, string | number | boolean> = {};
+      for (const [key, value] of Object.entries(extraRaw as Record<string, unknown>)) {
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+          extra[key] = value;
+        } else {
+          dropped.push(`extraArgs.${key}`);
+        }
+      }
+      flags.extraArgs = extra;
+      for (const key of Object.keys(extra)) {
+        if (MANAGED_LLAMA_FLAGS.has(key)) conflicts.push(key);
+      }
+    } else {
+      dropped.push("extraArgs");
+    }
+  }
+
+  return { flags, dropped, clamped, conflicts };
 }
 
 /**
@@ -149,7 +216,20 @@ export function sanitizeLlamaCppServerFlags(
  * })
  * // →  ["--ctx-size", "100000", "-ngl", "100", "--flash-attn", "on", "--spec-type", "draft-mtp", ...]
  */
-export function buildLlamaServerFlags(flags: Required<LlamaCppServerFlags>): string[] {
+export function buildLlamaServerFlags(flags: ResolvedLlamaFlags): string[] {
+  // Reject a recipe whose extraArgs collides with a flag MBA manages (ADR-0100).
+  // Failing here — before the process is spawned — keeps the boot error precise
+  // instead of letting llama-server die on a duplicate flag.
+  const conflicts = flags.extraArgs
+    ? Object.keys(flags.extraArgs).filter((k) => MANAGED_LLAMA_FLAGS.has(k))
+    : [];
+  if (conflicts.length > 0) {
+    throw new LlamaFlagConflictError(
+      `extraArgs collides with a flag MBA manages: ${conflicts.join(", ")} — ` +
+        `set it via the matching typed field instead (e.g. ctxSize, gpuLayers, flashAttn)`,
+    );
+  }
+
   const args: string[] = [];
 
   args.push("--ctx-size", String(flags.ctxSize));
@@ -174,6 +254,20 @@ export function buildLlamaServerFlags(flags: Required<LlamaCppServerFlags>): str
   if (flags.specType !== "none") {
     args.push("--spec-type", flags.specType);
     args.push("--spec-draft-n-max", String(flags.specDraftMax));
+  }
+
+  // Open-ended extraArgs (ADR-0100): appended AFTER the managed flags. A
+  // boolean true emits a bare flag; false omits it; string/number emit
+  // `--key value`. Conflicts were already rejected above.
+  if (flags.extraArgs) {
+    for (const [key, value] of Object.entries(flags.extraArgs)) {
+      if (value === false) continue;
+      if (value === true) {
+        args.push(`--${key}`);
+      } else {
+        args.push(`--${key}`, String(value));
+      }
+    }
   }
 
   return args;

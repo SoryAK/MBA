@@ -268,6 +268,14 @@ export interface LlamaCppServerFlags {
   readonly specType?: string;
   /** --spec-draft-n-max. Max speculative decode draft tokens when specType is not "none". */
   readonly specDraftMax?: number;
+  /**
+   * Open-ended llama.cpp flags MBA does not manage (ADR-0100). Key = flag name
+   * WITHOUT the leading `--` (e.g. `"n-cpu-moe"`, `"no-mmap"`); value = its
+   * value. A boolean `true` emits a bare flag (`--no-mmap`); `false` omits it;
+   * a string/number emits `--key value`. Keys that collide with a flag MBA
+   * already manages are rejected at boot (use the typed field instead).
+   */
+  readonly extraArgs?: Record<string, string | number | boolean>;
 }
 
 /**
