@@ -81,7 +81,7 @@ import {
 } from "./upstream-registry.js";
 import { bootServer } from "./server-boot.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
-import type { LifecycleSeams } from "../mba/index.js";
+import { getLogBuffer, type LifecycleSeams } from "../mba/index.js";
 
 export interface MbaServiceAppOptions {
   readonly paths?: MbaStorePaths;
@@ -359,6 +359,35 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       };
     });
     return c.json({ servers });
+  });
+
+  // GET /servers/logs?id=<id>&lines=<n> — the captured ring buffer for one
+  // booted server (Feature 2). The daemon pipes each owned llama-server's
+  // stdout/stderr into a per-port ring buffer; this route reads it. `lines`
+  // returns the last N lines (all when omitted). 404 for an unknown id.
+  // API-managed servers (ollama) have no owned process → no buffer → empty.
+  app.get("/servers/logs", (c) => {
+    const id = c.req.query("id");
+    if (!id) {
+      return c.json({ error: "query param 'id' is required" }, 400);
+    }
+    const registry = readRegistry(paths.upstreamsPath);
+    const entry = registry.find((e) => e.id === id);
+    if (!entry) {
+      return c.json({ error: `no registered server with id ${id}` }, 404);
+    }
+    const linesParam = c.req.query("lines");
+    let n: number | undefined;
+    if (linesParam !== undefined) {
+      const parsed = Number(linesParam);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return c.json({ error: "query param 'lines' must be a non-negative integer" }, 400);
+      }
+      n = parsed;
+    }
+    const buffer = getLogBuffer(entry.port, opts.lifecycleSeams ?? {});
+    const lines = buffer ? buffer.lines(n) : [];
+    return c.json({ id, lines });
   });
 
   app.post("/servers/boot", async (c) => {
