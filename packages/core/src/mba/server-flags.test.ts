@@ -14,6 +14,7 @@ import {
   FLASH_ATTN_VALUES,
   LLAMA_CPP_DEFAULTS,
   LLAMA_CPP_RANGES,
+  LlamaFlagConflictError,
   sanitizeLlamaCppServerFlags,
   buildLlamaServerFlags,
   type LlamaCppNumericFlag,
@@ -212,5 +213,92 @@ describe("buildLlamaServerFlags", () => {
       reasoningPreserve: false,
     });
     expect(disabled).not.toContain("--reasoning-preserve");
+  });
+});
+
+describe("extraArgs (open-ended llama.cpp flags)", () => {
+  it("sanitize preserves a valid extraArgs map", () => {
+    const { flags, dropped, conflicts } = sanitizeLlamaCppServerFlags({
+      extraArgs: { "n-cpu-moe": 4, "no-mmap": true, temp: 0.7 },
+    });
+    expect(flags.extraArgs).toEqual({ "n-cpu-moe": 4, "no-mmap": true, temp: 0.7 });
+    expect(dropped).toEqual([]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it("sanitize leaves extraArgs undefined when omitted", () => {
+    const { flags } = sanitizeLlamaCppServerFlags({ ctxSize: 32000 });
+    expect(flags.extraArgs).toBeUndefined();
+  });
+
+  it("sanitize drops a non-object extraArgs and reports it", () => {
+    for (const bad of [["--n-cpu-moe", "4"], "n-cpu-moe", 42, null]) {
+      const { flags, dropped } = sanitizeLlamaCppServerFlags({ extraArgs: bad });
+      expect(flags.extraArgs).toBeUndefined();
+      expect(dropped).toContain("extraArgs");
+    }
+  });
+
+  it("sanitize drops bad-typed extraArgs entries and reports them", () => {
+    const { flags, dropped } = sanitizeLlamaCppServerFlags({
+      extraArgs: { "n-cpu-moe": 4, "bad-flag": { nested: true }, "also-bad": ["x"] },
+    });
+    expect(flags.extraArgs).toEqual({ "n-cpu-moe": 4 });
+    expect([...dropped].sort()).toEqual(["extraArgs.also-bad", "extraArgs.bad-flag"]);
+  });
+
+  it("sanitize reports managed-flag conflicts (does not throw)", () => {
+    const { conflicts } = sanitizeLlamaCppServerFlags({
+      extraArgs: { "ctx-size": 50000, "n-cpu-moe": 4 },
+    });
+    expect(conflicts).toEqual(["ctx-size"]);
+  });
+
+  it("build emits boolean true as a bare flag, valued as --key value", () => {
+    const args = buildLlamaServerFlags({
+      ...LLAMA_CPP_DEFAULTS,
+      extraArgs: { "no-mmap": true, "n-cpu-moe": 4, temp: 0.7 },
+    });
+    expect(args).toContain("--no-mmap");
+    // --no-mmap is a bare flag: the token after it is the next flag, not "true".
+    expect(args[args.indexOf("--no-mmap") + 1]).not.toBe("true");
+    expect(args).toContain("--n-cpu-moe");
+    expect(args[args.indexOf("--n-cpu-moe") + 1]).toBe("4");
+    expect(args).toContain("--temp");
+    expect(args[args.indexOf("--temp") + 1]).toBe("0.7");
+  });
+
+  it("build omits boolean false extraArgs entries", () => {
+    const args = buildLlamaServerFlags({
+      ...LLAMA_CPP_DEFAULTS,
+      extraArgs: { "no-mmap": false, "n-cpu-moe": 4 },
+    });
+    expect(args).not.toContain("--no-mmap");
+    expect(args).toContain("--n-cpu-moe");
+  });
+
+  it("build appends extraArgs AFTER the managed flags", () => {
+    const args = buildLlamaServerFlags({
+      ...LLAMA_CPP_DEFAULTS,
+      extraArgs: { "n-cpu-moe": 4 },
+    });
+    const ctxIdx = args.indexOf("--ctx-size");
+    const extraIdx = args.indexOf("--n-cpu-moe");
+    expect(extraIdx).toBeGreaterThan(ctxIdx);
+  });
+
+  it("build throws LlamaFlagConflictError when extraArgs clobbers a managed flag", () => {
+    expect(() =>
+      buildLlamaServerFlags({
+        ...LLAMA_CPP_DEFAULTS,
+        extraArgs: { "ctx-size": 50000 },
+      }),
+    ).toThrow(LlamaFlagConflictError);
+    expect(() =>
+      buildLlamaServerFlags({
+        ...LLAMA_CPP_DEFAULTS,
+        extraArgs: { "ctx-size": 50000 },
+      }),
+    ).toThrow(/ctx-size/);
   });
 });
