@@ -140,6 +140,16 @@ describe("pickServerInteractive", () => {
     await expect(p).resolves.toEqual({ server: servers[0], action: "stop" });
   });
 
+  it("selects the logs action for a server", async () => {
+    const p = pickServerInteractive(servers);
+    await tick();
+    stdin.emit("\r"); // pick srv-1 -> action menu
+    await tick();
+    stdin.emit("\x1b[B"); // down -> "logs"
+    stdin.emit("\r"); // pick logs
+    await expect(p).resolves.toEqual({ server: servers[0], action: "logs" });
+  });
+
   it("navigates down to the second server", async () => {
     const p = pickServerInteractive(servers);
     await tick();
@@ -155,6 +165,7 @@ describe("pickServerInteractive", () => {
     await tick();
     stdin.emit("\r"); // action menu for srv-1
     await tick();
+    stdin.emit("\x1b[B"); // down -> "logs"
     stdin.emit("\x1b[B"); // down -> "back"
     stdin.emit("\r"); // back to the list
     await tick();

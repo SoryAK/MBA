@@ -12,6 +12,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMbaServiceApp } from "./server.js";
@@ -36,8 +37,19 @@ function writeAdapter(dir: string, rel: string, id: string, file: string): void 
   writeFileSync(yamlFile, lines.join("\n"));
 }
 
-/** A fake child process: records nothing, reports a pid, no-ops kill/unref. */
-function fakeChild(pid: number): ChildProcess {
+/**
+ * A fake child process: reports a pid, no-ops kill/unref. stdout/stderr are
+ * emittable streams so the pipe-capture path (ring buffer + tee) can be
+ * driven from tests.
+ */
+function fakeChild(pid: number): ChildProcess & {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  emitOut: (chunk: string) => void;
+  emitErr: (chunk: string) => void;
+} {
+  const out = new EventEmitter();
+  const err = new EventEmitter();
   return {
     pid,
     kill: vi.fn(),
@@ -45,7 +57,16 @@ function fakeChild(pid: number): ChildProcess {
     once: vi.fn(),
     unref: vi.fn(),
     stdio: [null, null, null],
-  } as unknown as ChildProcess;
+    stdout: out,
+    stderr: err,
+    emitOut: (chunk: string) => out.emit("data", Buffer.from(chunk)),
+    emitErr: (chunk: string) => err.emit("data", Buffer.from(chunk)),
+  } as unknown as ChildProcess & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    emitOut: (chunk: string) => void;
+    emitErr: (chunk: string) => void;
+  };
 }
 
 /**
@@ -55,15 +76,16 @@ function fakeChild(pid: number): ChildProcess {
  */
 function bootSeams(pid: number): {
   seams: LifecycleSeams;
-  spawnCalls: Array<{ binary: string; args: string[]; opts: unknown }>;
+  spawnCalls: Array<{ binary: string; args: string[]; opts: unknown; child: ReturnType<typeof fakeChild> }>;
   killCalls: Array<[number, NodeJS.Signals | number | undefined]>;
 } {
-  const spawnCalls: Array<{ binary: string; args: string[]; opts: unknown }> = [];
+  const spawnCalls: Array<{ binary: string; args: string[]; opts: unknown; child: ReturnType<typeof fakeChild> }> = [];
   const killCalls: Array<[number, NodeJS.Signals | number | undefined]> = [];
   const seams: LifecycleSeams = {
     spawnImpl: (binary, args, opts) => {
-      spawnCalls.push({ binary, args, opts });
-      return fakeChild(pid);
+      const child = fakeChild(pid);
+      spawnCalls.push({ binary, args, opts, child });
+      return child;
     },
     fetchImpl: (async (input: string | URL | Request) => {
       const url = String(input);
@@ -253,6 +275,54 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(call.args[call.args.indexOf("--port") + 1]).toBe("9123");
     expect(call.args).toContain("--slot-save-path");
     expect(call.opts).toMatchObject({ detached: true });
+  });
+
+  // --- GET /servers/logs ----------------------------------------------------
+
+  it("GET /servers/logs returns the captured lines for a booted server", async () => {
+    const { seams, spawnCalls } = bootSeams(424242);
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const boot = await app.request("/servers/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile, port: 9123 }),
+    });
+    expect(boot.status).toBe(201);
+
+    // Drive the pipe: the daemon line-splits into the ring buffer.
+    const child = spawnCalls[0]!.child;
+    child.emitOut("loading model\n");
+    child.emitOut("ready\n");
+
+    const res = await app.request("/servers/logs?id=llama-cpp-9123");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; lines: string[] };
+    expect(body.id).toBe("llama-cpp-9123");
+    expect(body.lines).toEqual(["loading model", "ready"]);
+  });
+
+  it("GET /servers/logs honours the lines query param (last N)", async () => {
+    const { seams, spawnCalls } = bootSeams(424242);
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    await app.request("/servers/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile, port: 9123 }),
+    });
+    const child = spawnCalls[0]!.child;
+    child.emitOut("one\ntwo\nthree\n");
+
+    const res = await app.request("/servers/logs?id=llama-cpp-9123&lines=2");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { lines: string[] };
+    expect(body.lines).toEqual(["two", "three"]);
+  });
+
+  it("GET /servers/logs returns 404 for an unknown id", async () => {
+    const { seams } = bootSeams(424242);
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const res = await app.request("/servers/logs?id=llama-cpp-9999");
+    expect(res.status).toBe(404);
   });
 
   it("POST /servers/boot refuses a port already in use (G2) with 409", async () => {

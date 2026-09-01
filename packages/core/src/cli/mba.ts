@@ -504,6 +504,9 @@ async function cmdServersList(baseUrl: string, plain: boolean): Promise<void> {
   }
   if (sel.action === "stop") {
     await cmdServersStop(baseUrl, sel.server.id);
+  } else if (sel.action === "logs") {
+    // Option (a): the picker's "logs" action drops straight into the live tail.
+    await cmdServersLogs(baseUrl, sel.server.id, undefined, true);
   }
 }
 
@@ -581,6 +584,62 @@ async function cmdServersStop(baseUrl: string, id: string): Promise<void> {
   process.stdout.write(`[mba] stopped ${id}\n`);
 }
 
+/**
+ * Show a server's captured log lines (Feature 2). The daemon pipes each owned
+ * llama-server's stdout/stderr into a per-port ring buffer; this reads it via
+ * GET /servers/logs. `--lines N` shows the last N (all when omitted).
+ * `--follow` polls the route every 2s and prints only new lines (Ctrl-C stops)
+ * — a live tail, not SSE/WebSocket. API-managed servers (ollama) have no owned
+ * process, so their buffer is empty.
+ */
+async function cmdServersLogs(
+  baseUrl: string,
+  id: string,
+  lines: number | undefined,
+  follow: boolean,
+): Promise<void> {
+  const qs = new URLSearchParams({ id });
+  if (lines !== undefined) qs.set("lines", String(lines));
+  const path = `/servers/logs?${qs.toString()}`;
+
+  if (!follow) {
+    const body = await serviceGet<{ id: string; lines: string[] }>(baseUrl, path);
+    for (const line of body.lines) process.stdout.write(`${line}\n`);
+    return;
+  }
+
+  // Live tail: poll every 2s, print only lines we haven't shown yet. We track
+  // how many lines we've printed and emit the forward tail each poll. The ring
+  // buffer is bounded, so under heavy output it can evict old lines and shrink
+  // below `printed` — when that happens we've lost the tail's anchor, so we
+  // re-anchor to the current length (no re-print; a few evicted lines are
+  // dropped, which is the correct behaviour for a bounded tail). A server that
+  // stops mid-follow yields a 404 — we stop cleanly rather than erroring.
+  let printed = 0;
+  process.stdout.write(`[mba] following ${id} (Ctrl-C to stop)\n`);
+  for (;;) {
+    let body: { id: string; lines: string[] };
+    try {
+      body = await serviceGet<{ id: string; lines: string[] }>(baseUrl, path);
+    } catch (err) {
+      if (err instanceof Error && /HTTP 404/.test(err.message)) {
+        process.stdout.write(`\n[mba] ${id} no longer registered — stopping\n`);
+        return;
+      }
+      throw err;
+    }
+    if (body.lines.length < printed) {
+      // Buffer evicted below our anchor — re-anchor, drop the evicted lines.
+      printed = body.lines.length;
+    } else {
+      const fresh = body.lines.slice(printed);
+      for (const line of fresh) process.stdout.write(`${line}\n`);
+      printed = body.lines.length;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<void> {
   const [sub, ...args] = rest;
   switch (sub) {
@@ -623,8 +682,30 @@ async function cmdServers(baseUrl: string, rest: readonly string[]): Promise<voi
       await cmdServersStop(baseUrl, id);
       return;
     }
+    case "logs": {
+      // mba servers logs <id> [--lines N] [--follow]
+      const follow = args.includes("--follow");
+      const linesIdx = args.indexOf("--lines");
+      let lines: number | undefined;
+      let positional = args;
+      if (linesIdx !== -1) {
+        const raw = args[linesIdx + 1];
+        const parsed = Number(raw);
+        if (!Number.isInteger(parsed) || parsed < 0) {
+          fail("usage: mba servers logs <id> [--lines N] [--follow]");
+        }
+        lines = parsed;
+        positional = [...args.slice(0, linesIdx), ...args.slice(linesIdx + 2)];
+      }
+      const [id] = positional;
+      if (!id) {
+        fail("usage: mba servers logs <id> [--lines N] [--follow]");
+      }
+      await cmdServersLogs(baseUrl, id, lines, follow);
+      return;
+    }
     default:
-      fail("usage: mba servers <list|boot|stop>\n  list [--plain]       list registered servers (interactive on a TTY; --plain forces the table)\n  boot <ref> <port>    boot a model server (waits for warmup) [--type ollama]\n  stop <id>            stop a registered server (by id)");
+      fail("usage: mba servers <list|boot|stop|logs>\n  list [--plain]       list registered servers (interactive on a TTY; --plain forces the table)\n  boot <ref> <port>    boot a model server (waits for warmup) [--type ollama]\n  stop <id>            stop a registered server (by id)\n  logs <id>            show a server's captured log lines [--lines N] [--follow]");
   }
 }
 
@@ -697,13 +778,16 @@ Usage:
   mba set <model> <field> <value>  set one dial (value parsed as JSON when possible)
   mba open <model> <file>          print the on-disk path (server_setup | yaml)
   mba servers list [--plain]       list registered model servers (interactive
-                                   on a TTY: pick a server, then stop it;
-                                   --plain forces the table)
+                                   on a TTY: pick a server, then stop or tail
+                                   its logs; --plain forces the table)
   mba servers boot <ref> <port>    boot a model server in-daemon (waits for warmup)
                                    [--type ollama] boots an ollama model tag
   mba servers boot                 interactive: pick a model (arrow keys + type
                                    to filter), then a port (Enter keeps default)
   mba servers stop <id>            stop a registered server (by id)
+  mba servers logs <id>            show a server's captured log lines
+                                   [--lines N] last N lines (default: all)
+                                   [--follow] live tail (polls every 2s, Ctrl-C stops)
   mba pull <url|owner/repo[:file-or-quant]> --id <id>
                                    [--sha256 <digest>] [--family <family>]
                                    one-command model onboarding (ADR-0098):
