@@ -402,6 +402,269 @@ export function askPortInteractive(
   });
 }
 
+// --- Interactive HuggingFace search prompts ----------------------------------
+
+/**
+ * Two-phase HuggingFace search prompt.
+ *
+ * Phase 1 (input): type a query, Enter to search, Esc to cancel, Ctrl-C to
+ * abort. Phase 2 (results): arrow-key menu over the returned repos, Enter to
+ * pick, Esc to cancel. If the search throws, the error is shown and the prompt
+ * returns to phase 1 so the user can retry.
+ *
+ * `searchFn` is injected so tests can fake the network call.
+ */
+export function searchHfInteractive(
+  searchFn: (
+    q: string,
+  ) => Promise<Array<{ id: string; downloads?: number; likes?: number }>>,
+): Promise<string | null> {
+  return new Promise<string | null>((resolve, reject) => {
+    const stdin = process.stdin;
+    let phase: "input" | "searching" | "results" = "input";
+    let query = "";
+    let results: Array<{ id: string; downloads?: number; likes?: number }> = [];
+    let cursor = 0;
+
+    const cleanup = () => {
+      stdin.setRawMode(false);
+      stdin.removeListener("data", onData);
+    };
+
+    const done = (value: string | null) => {
+      cleanup();
+      process.stdout.write("\n");
+      resolve(value);
+    };
+
+    const cancel = () => {
+      cleanup();
+      process.stdout.write("\n");
+      reject(new Error("cancelled"));
+    };
+
+    const renderInput = () => {
+      process.stdout.write(`\r\x1b[K  search HuggingFace > ${query}\x1b[7 >\x1b[0m`);
+    };
+
+    const renderResults = () => {
+      process.stdout.write(`\x1b[${results.length + 2}A\x1b[J`);
+      process.stdout.write(
+        `  ${results.length} result(s) for '${query}' — arrows to pick, Enter to select, Esc to cancel:\n`,
+      );
+      if (results.length === 0) {
+        process.stdout.write("  (no matches)\n");
+        return;
+      }
+      results.forEach((r, i) => {
+        const marker = i === cursor ? ">" : " ";
+        const dl = r.downloads !== undefined ? `  ↓${r.downloads}` : "";
+        const lk = r.likes !== undefined ? `  ♥${r.likes}` : "";
+        process.stdout.write(` ${marker} ${r.id}${dl}${lk}\n`);
+      });
+    };
+
+    const startSearch = async () => {
+      phase = "searching";
+      process.stdout.write(`\r\x1b[K  searching HuggingFace for '${query}'…\n`);
+      try {
+        results = await searchFn(query);
+      } catch (err) {
+        phase = "input";
+        process.stdout.write(
+          `\r\x1b[K  search failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        renderInput();
+        return;
+      }
+      phase = "results";
+      cursor = 0;
+      renderResults();
+    };
+
+    const onData = (buf: Buffer) => {
+      for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        if (phase === "input") {
+          if (key === "\r" || key === "\n") {
+            if (query.length === 0) continue;
+            void startSearch();
+            return;
+          } else if (key === "\x1b") {
+            done(null);
+            return;
+          } else if (key === "\x03") {
+            cancel();
+            return;
+          } else if (key === "\x7f" || key === "\b") {
+            query = query.slice(0, -1);
+            renderInput();
+          } else if (key.length === 1 && !key.startsWith("\x1b")) {
+            query += key;
+            renderInput();
+          }
+        } else if (phase === "searching") {
+          // Ignore keys while the search is in flight.
+          continue;
+        } else if (phase === "results") {
+          if (key === "\x1b[A") {
+            if (results.length === 0) continue;
+            cursor = (cursor - 1 + results.length) % results.length;
+            renderResults();
+          } else if (key === "\x1b[B") {
+            if (results.length === 0) continue;
+            cursor = (cursor + 1) % results.length;
+            renderResults();
+          } else if (key === "\r" || key === "\n") {
+            const pick = results[cursor];
+            if (pick) done(pick.id);
+            return;
+          } else if (key === "\x1b") {
+            done(null);
+            return;
+          } else if (key === "\x03") {
+            cancel();
+            return;
+          }
+        }
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    renderInput();
+  });
+}
+
+/**
+ * Arrow-key menu over labeled items. Enter resolves the picked item's `value`;
+ * Esc resolves null. Used for the quant picker in the `mba pull search` flow.
+ */
+export function pickLabeledInteractive(
+  title: string,
+  items: Array<{ label: string; value: string }>,
+): Promise<string | null> {
+  return new Promise<string | null>((resolve, reject) => {
+    const stdin = process.stdin;
+    let cursor = 0;
+
+    const render = () => {
+      process.stdout.write(`\x1b[${items.length + 1}A\x1b[J`);
+      process.stdout.write(
+        `  ${title} — arrows to pick, Enter to select, Esc to cancel:\n`,
+      );
+      if (items.length === 0) {
+        process.stdout.write("  (none)\n");
+        return;
+      }
+      items.forEach((it, i) => {
+        const marker = i === cursor ? ">" : " ";
+        process.stdout.write(` ${marker} ${it.label}\n`);
+      });
+    };
+
+    const done = (value: string | null) => {
+      stdin.setRawMode(false);
+      stdin.removeListener("data", onData);
+      process.stdout.write("\n");
+      resolve(value);
+    };
+
+    const onData = (buf: Buffer) => {
+      for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        if (key === "\x1b[A") {
+          if (items.length === 0) continue;
+          cursor = (cursor - 1 + items.length) % items.length;
+          render();
+        } else if (key === "\x1b[B") {
+          if (items.length === 0) continue;
+          cursor = (cursor + 1) % items.length;
+          render();
+        } else if (key === "\r" || key === "\n") {
+          const pick = items[cursor];
+          if (pick) done(pick.value);
+          return;
+        } else if (key === "\x1b") {
+          done(null);
+          return;
+        } else if (key === "\x03") {
+          stdin.setRawMode(false);
+          stdin.removeListener("data", onData);
+          process.stdout.write("\n");
+          reject(new Error("cancelled"));
+          return;
+        }
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    // First frame (render() assumes a previous frame to move back over).
+    process.stdout.write(`  ${title} — arrows to pick, Enter to select, Esc to cancel:\n`);
+    items.forEach((it, i) => {
+      const marker = i === cursor ? ">" : " ";
+      process.stdout.write(` ${marker} ${it.label}\n`);
+    });
+  });
+}
+
+/**
+ * Raw-mode text prompt. Enter with an empty input returns `defaultValue`;
+ * otherwise returns the typed text. Esc returns null (cancel).
+ */
+export function askTextInteractive(
+  field: string,
+  defaultValue: string,
+): Promise<string | null> {
+  return new Promise<string | null>((resolve, reject) => {
+    const stdin = process.stdin;
+    let input = "";
+
+    const render = () => {
+      process.stdout.write(
+        `\r\x1b[K  ${field} [${defaultValue}] > ${input}\x1b[7 >\x1b[0m`,
+      );
+    };
+
+    const done = (value: string | null) => {
+      stdin.setRawMode(false);
+      stdin.removeListener("data", onData);
+      process.stdout.write("\n");
+      resolve(value);
+    };
+
+    const onData = (buf: Buffer) => {
+      for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        if (key === "\r" || key === "\n") {
+          done(input.length === 0 ? defaultValue : input);
+          return;
+        } else if (key === "\x1b") {
+          done(null);
+          return;
+        } else if (key === "\x7f" || key === "\b") {
+          input = input.slice(0, -1);
+          render();
+        } else if (key === "\x03") {
+          stdin.setRawMode(false);
+          stdin.removeListener("data", onData);
+          process.stdout.write("\n");
+          reject(new Error("cancelled"));
+          return;
+        } else if (key.length === 1 && !key.startsWith("\x1b")) {
+          input += key;
+          render();
+        }
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    render();
+  });
+}
+
 // --- Interactive server picker + action menu ---------------------------------
 
 /** One row of GET /servers, as shown by the interactive picker. */
