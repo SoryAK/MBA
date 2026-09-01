@@ -30,10 +30,16 @@ import { getLogBuffer, removeLogBuffer } from "./server-log-buffer.js";
  * lifecycle attaches a `data` listener to the child's stdout/stderr, so the
  * fake must be an EventEmitter (not a null stand-in).
  */
-function fakeStream(): { stream: EventEmitter; emit: (chunk: string) => void } {
-  const stream = new EventEmitter();
-  stream.resume = vi.fn();
-  stream.setEncoding = vi.fn();
+type FakeStream = EventEmitter & {
+  resume: () => void;
+  setEncoding: (enc: string) => void;
+};
+
+function fakeStream(): { stream: FakeStream; emit: (chunk: string) => void } {
+  const stream = Object.assign(new EventEmitter(), {
+    resume: vi.fn(),
+    setEncoding: vi.fn(),
+  });
   return {
     stream,
     emit: (chunk: string) => {
