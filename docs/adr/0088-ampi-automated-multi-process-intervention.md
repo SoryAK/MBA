@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Proposed — *boundary section superseded by [ADR-0101](./0101-ampi-daemon-as-proxy-and-intervention-subsystem.md) (Proposed): the proxy-centric orchestrator assumption is replaced by the daemon-as-proxy model. The Notch-1 decision, structural-termination requirements, and recipe-power model remain authoritative.*
 
 ## Context
 
