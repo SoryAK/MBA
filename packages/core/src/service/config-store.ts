@@ -60,6 +60,8 @@ export interface MbaStorePaths {
   readonly serviceInfoPath: string;
   /** Upstream model-server registry (ADR-0097 Phase 1). */
   readonly upstreamsPath: string;
+  /** Unix-domain-socket path the service listens on (ADR-0101 Step 1). */
+  readonly udsPath: string;
 }
 
 /** Result of a store read. */
@@ -83,6 +85,7 @@ export function defaultStorePaths(baseDir: string = defaultStateDir()): MbaStore
     versionPath: join(baseDir, "mba", "version.json"),
     serviceInfoPath: join(baseDir, "mba", "service.json"),
     upstreamsPath: join(baseDir, "mba", "upstreams.json"),
+    udsPath: join(baseDir, "mba", "mba.sock"),
   };
 }
 
@@ -126,6 +129,8 @@ export interface MbaServiceInfo {
   readonly port: number;
   readonly pid: number;
   readonly startedAt: string;
+  /** Unix-domain-socket path, present when the UDS listener is up. */
+  readonly udsPath?: string;
 }
 
 export function writeServiceInfo(paths: MbaStorePaths, info: MbaServiceInfo): void {
@@ -134,7 +139,7 @@ export function writeServiceInfo(paths: MbaStorePaths, info: MbaServiceInfo): vo
 
 export function readServiceInfoOrNull(paths: MbaStorePaths): MbaServiceInfo | null {
   const raw = readJsonOrNull(paths.serviceInfoPath) as
-    | { port?: unknown; pid?: unknown; startedAt?: unknown }
+    | { port?: unknown; pid?: unknown; startedAt?: unknown; udsPath?: unknown }
     | null;
   if (
     !raw ||
@@ -144,7 +149,12 @@ export function readServiceInfoOrNull(paths: MbaStorePaths): MbaServiceInfo | nu
   ) {
     return null;
   }
-  return { port: raw.port, pid: raw.pid, startedAt: raw.startedAt };
+  return {
+    port: raw.port,
+    pid: raw.pid,
+    startedAt: raw.startedAt,
+    udsPath: typeof raw.udsPath === "string" ? raw.udsPath : undefined,
+  };
 }
 
 function atomicWriteJson(path: string, value: unknown): void {
