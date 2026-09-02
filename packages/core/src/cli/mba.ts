@@ -773,7 +773,27 @@ async function interactiveBoot(
     }
   }
 
-  await cmdServersBoot(baseUrl, picked.id, port, serverType);
+  const entry = await cmdServersBoot(baseUrl, picked.id, port, serverType);
+
+  // llama.cpp: show the tail of the boot log right after warmup completes, so
+  // the user sees the server's own startup output (model load, context, etc.)
+  // without a separate `mba servers logs` call. Best-effort — a log-fetch
+  // failure must not fail an already-successful boot. Ollama has no owned
+  // process, so its buffer is empty and we skip it.
+  if (serverType === "llama.cpp") {
+    try {
+      const logs = await serviceGet<{ lines: string[] }>(
+        baseUrl,
+        `/servers/logs?id=${entry.id}&lines=20`,
+      );
+      if (logs.lines.length > 0) {
+        process.stdout.write(`[mba] last ${logs.lines.length} log lines:\n`);
+        for (const line of logs.lines) process.stdout.write(`${line}\n`);
+      }
+    } catch {
+      // Boot already succeeded; a log-fetch hiccup is not worth surfacing.
+    }
+  }
 }
 
 async function cmdServersBoot(
@@ -781,7 +801,7 @@ async function cmdServersBoot(
   modelRef: string,
   port: number,
   serverType: "llama.cpp" | "ollama",
-): Promise<void> {
+): Promise<BootResult> {
   if (serverType === "ollama") {
     process.stdout.write(`[mba] loading ${modelRef} into ollama (waits for load)…\n`);
     const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", {
@@ -790,7 +810,7 @@ async function cmdServersBoot(
       port,
     });
     process.stdout.write(`[mba] booted ${entry.id} on port ${entry.port}\n`);
-    return;
+    return entry;
   }
   const modelFile = await resolveModelFile(baseUrl, modelRef);
   process.stdout.write(`[mba] booting ${modelFile} on port ${port} (waits for warmup)…\n`);
@@ -801,6 +821,7 @@ async function cmdServersBoot(
   process.stdout.write(
     `[mba] booted ${entry.id} (pid ${entry.pid}) on port ${entry.port}\n`,
   );
+  return entry;
 }
 
 async function cmdServersStop(baseUrl: string, id: string): Promise<void> {
