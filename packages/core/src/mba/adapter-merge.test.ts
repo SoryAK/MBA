@@ -10,8 +10,11 @@ import { deepMergeObjects } from "./adapter-merge.js";
 
 describe("deepMergeObjects", () => {
   it("deep-merges a nested extraArgs map key-by-key (child augments parent)", () => {
-    const parent = { "llama.cpp": { ctxSize: 100000, extraArgs: { "no-mmap": true, temp: 0.7 } } };
-    const child = { "llama.cpp": { extraArgs: { "n-cpu-moe": 4 } } };
+    // Both literals are typed as Record<string, unknown> so deepMergeObjects'
+    // single type parameter T unifies (the child rung legitimately omits
+    // ctxSize that the parent rung carries).
+    const parent: Record<string, unknown> = { "llama.cpp": { ctxSize: 100000, extraArgs: { "no-mmap": true, temp: 0.7 } } };
+    const child: Record<string, unknown> = { "llama.cpp": { extraArgs: { "n-cpu-moe": 4 } } };
     const merged = deepMergeObjects(parent, child);
     // Parent keys survive; child key is added; the scalar ctxSize is untouched.
     expect(merged["llama.cpp"]).toEqual({

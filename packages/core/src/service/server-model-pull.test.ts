@@ -127,7 +127,7 @@ describe("POST /models/pull (SSE progress stream)", () => {
       expect(res.headers.get("content-type")).toContain("text/event-stream");
 
       const events = await parseSse(res);
-      const last = events[events.length - 1];
+      const last = events[events.length - 1]!; // SSE stream always ends with a terminal event
       expect(last.type).toBe("error");
       expect(String(last.message)).toMatch(/sha256/i);
       // No scaffold left behind on failure.

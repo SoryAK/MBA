@@ -272,7 +272,7 @@ describe("listHfGgufs", () => {
   });
 
   it("returns an empty file list when the repo has no GGUFs", async () => {
-    const noGguf = (async (input: RequestInfo | URL) => {
+    const noGguf = (async (input: string | URL | Request) => {
       const u = String(input);
       if (u.includes("/tree/")) {
         return Response.json([{ type: "file", path: "README.md" }]);
