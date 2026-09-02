@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   HfResolveError,
+  listHfGgufs,
   parseHfRef,
   parseHfUrl,
   resolveHfSource,
@@ -257,5 +258,32 @@ describe("searchHfModels", () => {
   it("surfaces a non-OK response as an HfResolveError", async () => {
     const bad = (async () => new Response("nope", { status: 500 })) as typeof fetch;
     await expect(searchHfModels("x", { doFetch: bad })).rejects.toThrow(HfResolveError);
+  });
+});
+
+describe("listHfGgufs", () => {
+  it("returns the pinned ref alongside the GGUF files", async () => {
+    const r = await listHfGgufs("owner", "repo", fakeHfFetch());
+    expect(r.ref).toBe(DEFAULT_REF);
+    expect(r.files).toEqual([
+      { path: "model.Q4_K_M.gguf", sha256: SHA_A, size: 100 },
+      { path: "model.Q8_0.gguf", sha256: SHA_B, size: 200 },
+    ]);
+  });
+
+  it("returns an empty file list when the repo has no GGUFs", async () => {
+    const noGguf = (async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes("/tree/")) {
+        return Response.json([{ type: "file", path: "README.md" }]);
+      }
+      if (u.includes("/api/models/owner/repo")) {
+        return Response.json({ sha: DEFAULT_REF });
+      }
+      throw new Error(`unexpected: ${u}`);
+    }) as typeof fetch;
+    const r = await listHfGgufs("owner", "repo", noGguf);
+    expect(r.ref).toBe(DEFAULT_REF);
+    expect(r.files).toEqual([]);
   });
 });
