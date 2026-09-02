@@ -5,6 +5,56 @@
 
 ---
 
+## PR-gating CI (merge gate for `main`)
+
+**Parked:** 2026-09-02 — after diagnosing why Jenkins builds #24–#26 failed
+(typecheck-breaking test files landed on `main` *before* CI reported it).
+
+**Idea:** Make broken code unable to reach `main`. Today Jenkins is a
+post-push *monitor* (Poll SCM on `main`): it reports red after the fact but
+cannot block the push. The industry-standard gate is CI-on-PR + branch
+protection ("require status checks to pass"), so a red typecheck/test blocks
+the merge.
+
+**Why:** The failed code already landed on `main` — the user asked what the
+point of CI is if it can't prevent that. Answer: as configured, it's a
+drift/health monitor, not a gate. A gate requires GitHub to receive a status
+check and branch protection to enforce it.
+
+**Design state (decided in discussion):**
+
+- **Target: GitHub Actions + branch protection** — the industry-standard
+  setup. Workflow mirrors the Jenkins stages (`npm ci` → typecheck → test →
+  build), triggered on `pull_request` (+ `push` to main as backstop), Node 22.
+  Branch protection on `main`: require the `CI` check + require PRs.
+- **Jenkins's fate:** retire it once Actions lands. Its only structural
+  advantage is *local* execution (reaching a local model server / GPU / LAN) —
+  the modern replacement for that is a **self-hosted Actions runner** on the
+  user's box, not a second CI system. Keep the `Jenkinsfile` in-repo as
+  reference.
+- **Rejected for now:** Jenkins + tunnel (cloudflared/ngrok daemon so GitHub
+  webhooks reach `localhost:8082`) — real merge-block but a daemon to
+  babysit; tunnel dies → gate silently stops working. Jenkins PR-polling —
+  laggy + fiddly PR-ref config.
+- **Interim option discussed:** lefthook pre-push (typecheck+test locally) —
+  would have stopped this incident, but skippable (`--no-verify`) and
+  single-machine only. Not built; superseded if Actions lands soon.
+
+**Open questions (The Griller — unanswered, parked with the card):**
+
+1. Is "no GitHub Actions access" temporary (plan/seat) or permanent? If
+   temporary, just wait — don't build the tunnel.
+2. Direct pushes to `main`: hard-block (strict default) or allowed-but-checked?
+3. Keep Jenkins polling `main` in the interim, or park it fully until the
+   publish stage / Actions lands?
+
+**Re-entry trigger:** GitHub Actions access is resolved (enabled on the repo
+or plan upgraded). Resume prompt: "add `.github/workflows/ci.yml` mirroring
+the Jenkinsfile stages, set branch protection on main, and park the Jenkins
+poll."
+
+---
+
 ## ✅ `mba` interactive config CLI (fzf-style guided flow) — **BUILT 2026-08-23**
 
 **Parked:** 2026-08-22 · **Built:** 2026-08-23 — see [ADR-0096](../adr/0096-mba-config-cli.md)
