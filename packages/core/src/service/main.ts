@@ -31,6 +31,7 @@ import { defaultModelStoreRoot, defaultStateDir, ensureDir } from "./paths.js";
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { startMbaService } from "./server.js";
+import { startUdsListener, type UdsHandle } from "./uds-listener.js";
 import { resolveVsCodeLmConfigPath } from "./vscode-lm-config.js";
 import { killAllOwnedGroups, ownedGroupCount, type LifecycleSeams } from "../mba/index.js";
 
@@ -73,13 +74,28 @@ const handle = await startMbaService({
   switchEnabled,
   lifecycleSeams,
 });
+
+// ADR-0101 Step 1: also serve the app over a Unix socket for MCP clients.
+// A socket failure must not kill the daemon — the TCP control plane and the
+// model proxy stay up regardless, so we warn and continue without the UDS.
+let uds: UdsHandle | null = null;
+try {
+  uds = await startUdsListener(handle.app, paths.udsPath);
+} catch (err) {
+  console.warn(`[mba] UDS listener failed to start: ${String(err)}`);
+}
+
 writeServiceInfo(paths, {
   port: handle.port,
   pid: process.pid,
   startedAt: new Date().toISOString(),
+  udsPath: uds?.socketPath,
 });
 
 console.log(`[mba] service listening on ${handle.url}`);
+if (uds) {
+  console.log(`[mba] UDS listening on ${uds.socketPath}`);
+}
 console.log(`[mba] store base: ${paths.baseDir}`);
 console.log(`[mba] initial version: ${initial.version}`);
 console.log(`[mba] discovery file: ${paths.serviceInfoPath}`);
@@ -128,6 +144,9 @@ async function shutdown(signal: string): Promise<void> {
       console.log(`[mba] killing ${owned} owned server group(s)…`);
     }
     await killAllOwnedGroups(lifecycleSeams);
+    if (uds) {
+      await uds.close();
+    }
     await handle.close();
   } finally {
     process.exit(0);

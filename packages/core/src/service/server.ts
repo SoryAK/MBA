@@ -70,6 +70,7 @@ import {
   type SwitchExecutor,
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
+import { createModelProxyRoutes } from "./model-proxy.js";
 import { pullModel } from "../model/model-pull.js";
 import {
   listUpstreams,
@@ -108,6 +109,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   const startedAt = Date.now();
 
   const app = new Hono();
+
+  // --- Model-request proxy (ADR-0101 Step 1) ------------------------------
+  // The daemon IS the proxy: model requests arrive at /v1/chat/completions
+  // and are piped verbatim to the upstream llama-server. No upstream → 503.
+  app.route("/v1", createModelProxyRoutes({ upstreamUrl: opts.upstreamUrl, fetch: opts.fetch }));
 
   app.get("/resolve_config", (c) => {
     const model = c.req.query("model");
@@ -645,6 +651,8 @@ async function probeModelLoaded(
 export interface MbaServiceHandle {
   readonly port: number;
   readonly url: string;
+  /** The hono app, exposed so the daemon can also serve it over a UDS. */
+  readonly app: Hono;
   close(): Promise<void>;
 }
 
@@ -664,6 +672,7 @@ export function startMbaService(opts: MbaServiceAppOptions = {}): Promise<MbaSer
         resolve({
           port: info.port,
           url: `http://127.0.0.1:${info.port}`,
+          app,
           close: () =>
             new Promise<void>((res, rej) => {
               server.close((err) => (err ? rej(err) : res()));
