@@ -275,17 +275,26 @@ export interface HfGgufFile {
   readonly size?: number;
 }
 
+/** The pinned revision plus the GGUF files published in a HuggingFace repo. */
+export interface HfGgufListing {
+  /** The pinned commit sha of the default branch (or the requested ref). */
+  readonly ref: string;
+  /** GGUF files in the repo. Empty when the repo has no GGUFs. */
+  readonly files: HfGgufFile[];
+}
+
 /**
  * List the GGUF files published in a HuggingFace repo (default branch).
  *
  * Used by the interactive `mba pull search` flow to offer a quant picker.
- * Returns an empty list when the repo has no GGUFs.
+ * Returns the pinned `ref` alongside the files so callers can build a full
+ * resolve URL and skip the second tree fetch during pull.
  */
 export async function listHfGgufs(
   owner: string,
   repo: string,
   doFetch: typeof fetch = fetch,
-): Promise<HfGgufFile[]> {
-  const { files } = await listRepoFiles(doFetch, owner, repo);
-  return ggufFiles(files);
+): Promise<HfGgufListing> {
+  const { ref, files } = await listRepoFiles(doFetch, owner, repo);
+  return { ref, files: ggufFiles(files) };
 }
