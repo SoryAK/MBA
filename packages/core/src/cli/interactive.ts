@@ -447,8 +447,7 @@ export function searchHfInteractive(
       process.stdout.write(`\r\x1b[K  search HuggingFace > ${query}\x1b[7 >\x1b[0m`);
     };
 
-    const renderResults = () => {
-      process.stdout.write(`\x1b[${results.length + 2}A\x1b[J`);
+    const drawResults = () => {
       process.stdout.write(
         `  ${results.length} result(s) for '${query}' — arrows to pick, Enter to select, Esc to cancel:\n`,
       );
@@ -462,6 +461,18 @@ export function searchHfInteractive(
         const lk = r.likes !== undefined ? `  ♥${r.likes}` : "";
         process.stdout.write(` ${marker} ${r.id}${dl}${lk}\n`);
       });
+    };
+
+    // First results frame: the only prior line is the "searching…" status, so
+    // there is no results frame to move back over — do not emit a cursor-up.
+    const firstResultsRender = () => {
+      drawResults();
+    };
+
+    // Redraw over a previous results frame: 1 header line + N rows = N+1 lines.
+    const renderResults = () => {
+      process.stdout.write(`\x1b[${results.length + 1}A\x1b[J`);
+      drawResults();
     };
 
     const startSearch = async () => {
@@ -479,7 +490,7 @@ export function searchHfInteractive(
       }
       phase = "results";
       cursor = 0;
-      renderResults();
+      firstResultsRender();
     };
 
     const onData = (buf: Buffer) => {

@@ -553,7 +553,7 @@ async function cmdPullSearch(baseUrl: string): Promise<void> {
   const owner = repoId.slice(0, slash);
   const repo = repoId.slice(slash + 1);
 
-  const ggufs = await listHfGgufs(owner, repo);
+  const { ref, files: ggufs } = await listHfGgufs(owner, repo);
   if (ggufs.length === 0) {
     process.stderr.write(`[mba] error: no GGUF files found in ${owner}/${repo}\n`);
     process.exit(1);
@@ -584,7 +584,12 @@ async function cmdPullSearch(baseUrl: string): Promise<void> {
     return;
   }
 
-  await cmdPull(baseUrl, `${owner}/${repo}:${quant}`, id, undefined, family);
+  // Build a full resolve URL pinned to the ref we already fetched, and pass the
+  // file's sha256. Together these short-circuit resolveHfSource in the pull
+  // path, so the repo tree is not fetched a second time.
+  const picked = ggufs.find((f) => f.path === quant);
+  const url = `https://huggingface.co/${owner}/${repo}/resolve/${ref}/${quant}`;
+  await cmdPull(baseUrl, url, id, picked?.sha256, family);
 }
 
 async function cmdSet(

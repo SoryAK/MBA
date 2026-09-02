@@ -294,6 +294,33 @@ describe("searchHfInteractive", () => {
     await expect(p).resolves.toBeNull();
     expect(search).toHaveBeenCalled();
   });
+
+  it("does not move the cursor up on the first results frame, but does on redraws", async () => {
+    const write = vi.spyOn(process.stdout, "write");
+    const search = vi.fn(async () => [
+      { id: "a/one", downloads: 1 },
+      { id: "b/two", downloads: 2 },
+    ]);
+    const p = searchHfInteractive(search);
+    await tick();
+    stdin.emit("x");
+    stdin.emit("\r"); // search
+    await tick();
+    await tick(); // first results frame
+
+    const firstFrame = write.mock.calls.map((c) => String(c[0])).join("");
+    // First frame must NOT contain a cursor-up (no prior results frame to overwrite).
+    expect(firstFrame).not.toMatch(/\x1b\[\d+A/);
+
+    // Now redraw via a down-arrow: must move up exactly (results.length + 1) = 3 lines.
+    write.mockClear();
+    stdin.emit("\x1b[B"); // down -> redraw
+    const redraw = write.mock.calls.map((c) => String(c[0])).join("");
+    expect(redraw).toContain("\x1b[3A");
+
+    stdin.emit("\x1b"); // Esc to settle
+    await expect(p).resolves.toBeNull();
+  });
 });
 
 describe("pickLabeledInteractive", () => {
