@@ -162,8 +162,8 @@ describe("pullModel", () => {
           }),
         );
         expect(events.length).toBeGreaterThan(0);
-        expect(events[0].downloaded).toBeGreaterThan(0);
-        expect(events[events.length - 1].downloaded).toBe(GGUF.length);
+        expect(events[0]!.downloaded).toBeGreaterThan(0);
+        expect(events[events.length - 1]!.downloaded).toBe(GGUF.length);
         expect(events.every((e) => e.total === GGUF.length)).toBe(true);
       } finally {
         rmSync(store, { recursive: true, force: true });
@@ -185,8 +185,8 @@ describe("pullModel", () => {
           }),
         );
         expect(events.length).toBeGreaterThan(0);
-        expect(events[0].downloaded).toBeGreaterThanOrEqual(10);
-        expect(events[events.length - 1].downloaded).toBe(GGUF.length);
+        expect(events[0]!.downloaded).toBeGreaterThanOrEqual(10);
+        expect(events[events.length - 1]!.downloaded).toBe(GGUF.length);
         expect(events.every((e) => e.total === GGUF.length)).toBe(true);
       } finally {
         rmSync(store, { recursive: true, force: true });
@@ -213,8 +213,9 @@ describe("pullModel", () => {
         headers: { "content-length": String(total), "accept-ranges": "bytes" },
       })) as unknown as typeof fetch;
 
-    const warnings: NodeJS.Warnings = [];
-    const onWarning = (w: NodeJS.Warnings) => warnings.push(w);
+    // process.on("warning") passes an Error object (see @types/node docs).
+    const warnings: Error[] = [];
+    const onWarning = (w: Error) => warnings.push(w);
     process.on("warning", onWarning);
     const store = freshStore();
     try {
