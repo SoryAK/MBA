@@ -741,21 +741,39 @@ async function interactiveBoot(
     process.stdout.write("[mba] cancelled\n");
     return;
   }
-  
-  await cmdServersBoot(baseUrl, picked.id, port, serverType);
-  
-  // Ask user if they want to see logs right after port is determined
-  if (process.stdin.isTTY) {
-    const showLogs = await askYesNo("Show logs now?");
-    if (showLogs) {
-      // Get the server ID from the boot result to show logs
-      const { servers } = await serviceGet<{ servers: ServerEntry[] }>(baseUrl, "/servers");
-      const latestServer = servers.find(s => s.port === port);
-      if (latestServer) {
-        await cmdServersLogs(baseUrl, latestServer.id, undefined, true);
+
+  // llama.cpp: preview the resolved flags BEFORE booting. The boot call blocks
+  // until warmup, so the user needs to see the command that's about to run —
+  // especially the server_setup.json dials (incl. extraArgs) — and confirm.
+  // The daemon resolves via the exact chain the boot uses, so the printed
+  // flags are provably the bytes that get spawned.
+  if (serverType === "llama.cpp") {
+    const modelFile = await resolveModelFile(baseUrl, picked.id);
+    let cliArgs: string[];
+    try {
+      const recipe = await servicePost<{ cliArgs: string[] }>(baseUrl, "/servers/resolve", {
+        modelFile,
+      });
+      cliArgs = recipe.cliArgs;
+    } catch {
+      // Preview is best-effort: if resolution fails here, the boot will fail
+      // with the same error and a clearer message. Don't block on the preview.
+      process.stdout.write("[mba] could not preview flags — proceeding to boot\n");
+      await cmdServersBoot(baseUrl, picked.id, port, serverType);
+      return;
+    }
+    process.stdout.write(`[mba] resolved flags for ${picked.id}:\n`);
+    for (const arg of cliArgs) process.stdout.write(`  ${arg}\n`);
+    if (process.stdin.isTTY) {
+      const proceed = await askYesNo("Boot with these flags?");
+      if (!proceed) {
+        process.stdout.write("[mba] cancelled\n");
+        return;
       }
     }
   }
+
+  await cmdServersBoot(baseUrl, picked.id, port, serverType);
 }
 
 async function cmdServersBoot(

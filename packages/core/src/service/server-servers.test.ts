@@ -21,9 +21,20 @@ import { readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-regi
 import type { LifecycleSeams } from "../mba/server-lifecycle.js";
 
 /** Write a minimal switchable adapter (leaf with a weights file). */
-function writeAdapter(dir: string, rel: string, id: string, file: string): void {
+function writeAdapter(
+  dir: string,
+  rel: string,
+  id: string,
+  file: string,
+  bindings: Record<string, string> = {},
+  name?: string,
+): void {
   const yamlFile = join(dir, rel);
   mkdirSync(join(yamlFile, ".."), { recursive: true });
+  const bindingLines =
+    Object.keys(bindings).length === 0
+      ? ["bindings: {}"]
+      : ["bindings:", ...Object.entries(bindings).map(([k, v]) => `  ${k}: ${v}`)];
   const lines = [
     "apiVersion: mba.c-yard.dev/v1alpha1",
     "kind: ModelBehavioralAdapter",
@@ -31,8 +42,9 @@ function writeAdapter(dir: string, rel: string, id: string, file: string): void 
     `  id: ${id}`,
     "identity:",
     "  model:",
+    ...(name ? [`    name: ${name}`] : []),
     `    file: "${file}"`,
-    "bindings: {}",
+    ...bindingLines,
   ];
   writeFileSync(yamlFile, lines.join("\n"));
 }
@@ -240,6 +252,95 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
       servers: Array<{ id: string; healthy: boolean; resolved: boolean }>;
     };
     expect(body.servers[0]).toMatchObject({ id: "llama-cpp-9999", healthy: false, resolved: false });
+  });
+
+  // --- POST /servers/resolve ------------------------------------------------
+
+  it("POST /servers/resolve returns the effective flags without booting", async () => {
+    const app = createMbaServiceApp({ paths, adapterDir });
+    const res = await app.request("/servers/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      modelId: string;
+      modelFile: string;
+      cliArgs: string[];
+      warmupTokens: number;
+    };
+    expect(body.modelId).toBe("qwen3.8-27b");
+    expect(body.modelFile).toBe(modelFile);
+    expect(Array.isArray(body.cliArgs)).toBe(true);
+    expect(body.cliArgs.length).toBeGreaterThan(0);
+    // cliArgs are the tuning flags only — the model file is a separate field
+    // (deployment facts are excluded from the recipe's cliArgs).
+    expect(body.cliArgs).not.toContain("-m");
+    expect(typeof body.warmupTokens).toBe("number");
+  });
+
+  it("POST /servers/resolve appends extraArgs from server_setup.json (ADR-0100)", async () => {
+    // A richer fixture: the adapter declares a `server_setup` binding (a path
+    // relative to the adapter YAML's dir) whose JSON carries extraArgs. The
+    // resolved flags must include them, appended after the managed flags.
+    //
+    // The 4-rung merge (resolveMbaConfig) scans `<base>/adapters`, so the
+    // adapter tree must live under an `adapters/` subfolder of a base dir —
+    // a bare temp dir would resolve to defaults only.
+    const baseDir = mkdtempSync(join(tmpdir(), "mba-svc-servers-base-"));
+    const richAdapterDir = join(baseDir, "adapters");
+    const setupFile = join(richAdapterDir, "qwen", "qwen3.8-27b", "server_setup.json");
+    mkdirSync(join(richAdapterDir, "qwen", "qwen3.8-27b"), { recursive: true });
+    writeFileSync(
+      setupFile,
+      JSON.stringify({
+        "llama.cpp": { extraArgs: { temp: 1, "top-p": 0.95, "top-k": 20 } },
+      }),
+      "utf8",
+    );
+    writeAdapter(
+      richAdapterDir,
+      "qwen/qwen3.8-27b/qwen3.8-27b.yaml",
+      "qwen3.8-27b",
+      modelFile,
+      { server_setup: "server_setup.json" },
+      "qwen3.8-27b",
+    );
+    const app = createMbaServiceApp({ paths, adapterDir: richAdapterDir });
+    const res = await app.request("/servers/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { cliArgs: string[] };
+    expect(body.cliArgs).toContain("--temp");
+    expect(body.cliArgs[body.cliArgs.indexOf("--temp") + 1]).toBe("1");
+    expect(body.cliArgs).toContain("--top-p");
+    expect(body.cliArgs[body.cliArgs.indexOf("--top-p") + 1]).toBe("0.95");
+    expect(body.cliArgs).toContain("--top-k");
+    expect(body.cliArgs[body.cliArgs.indexOf("--top-k") + 1]).toBe("20");
+  });
+
+  it("POST /servers/resolve rejects a missing modelFile with 400", async () => {
+    const app = createMbaServiceApp({ paths, adapterDir });
+    const res = await app.request("/servers/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /servers/resolve rejects an unknown modelFile with 404", async () => {
+    const app = createMbaServiceApp({ paths, adapterDir });
+    const res = await app.request("/servers/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile: join(modelDir, "nope.gguf") }),
+    });
+    expect(res.status).toBe(404);
   });
 
   // --- POST /servers/boot ---------------------------------------------------

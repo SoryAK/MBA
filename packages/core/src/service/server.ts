@@ -79,7 +79,7 @@ import {
   upsertEntry,
   writeRegistry,
 } from "./upstream-registry.js";
-import { bootServer } from "./server-boot.js";
+import { bootServer, resolveBootRecipe } from "./server-boot.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
 import { getLogBuffer, type LifecycleSeams } from "../mba/index.js";
 
@@ -406,6 +406,38 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     const buffer = getLogBuffer(entry.port, opts.lifecycleSeams ?? {});
     const lines = buffer ? buffer.lines(n) : [];
     return c.json({ id, lines });
+  });
+
+  // Pre-boot recipe preview (ADR-0100 companion): resolve the effective
+  // llama.cpp flags for a weights file WITHOUT booting. Runs the exact
+  // resolveBootRecipe chain the boot path uses, so the flags the CLI prints
+  // are provably the bytes that get spawned. Lets the user verify their
+  // server_setup.json dials (incl. extraArgs) before the slow boot starts.
+  app.post("/servers/resolve", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { modelFile?: unknown };
+    if (typeof input.modelFile !== "string" || input.modelFile.length === 0) {
+      return c.json({ error: "body.modelFile is required" }, 400);
+    }
+    try {
+      const recipe = resolveBootRecipe(input.modelFile, opts.adapterDir ?? "");
+      return c.json({
+        modelId: recipe.modelId,
+        modelFile: recipe.modelFile,
+        cliArgs: recipe.cliArgs,
+        warmupTokens: recipe.warmupTokens,
+      });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "recipe resolution failed" },
+        404,
+      );
+    }
   });
 
   app.post("/servers/boot", async (c) => {
