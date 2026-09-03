@@ -46,9 +46,12 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
+import type { DatabaseSync } from "node:sqlite";
 import { readRegistry, listUpstreams, type UpstreamEntry } from "./upstream-registry.js";
 import { readModelCatalog } from "./model-catalog.js";
 import { probeEntryHealth } from "./server-types.js";
+import { intervene } from "./intervention.js";
+import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 
 export interface ModelProxyOptions {
   /**
@@ -65,6 +68,17 @@ export interface ModelProxyOptions {
   readonly healthTtlMs?: number;
   /** Injectable fetch for the upstream call + health probes (tests). */
   readonly fetch?: typeof fetch;
+  /**
+   * TCB config getter (ADR-0101 Step 2). A getter — not a value — so the
+   * proxy always sees the latest config after a `/set_rules` mutation. When
+   * omitted, intervention is a no-op and the body forwards verbatim.
+   */
+  readonly tcbConfig?: () => ToolCircuitBreakerConfig;
+  /**
+   * Kill-state DB handle (ADR-0101 Step 2). `undefined` disables escalation
+   * (trips still rewrite tool results, but no kill-state is persisted).
+   */
+  readonly bcbDb?: DatabaseSync;
 }
 
 /** Strip a trailing slash so `${base}/v1/…` never double-slashes. */
@@ -152,14 +166,32 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
   }
 
   app.post("/chat/completions", async (c) => {
-    // Read the raw body and forward it verbatim. The request is JSON, so the
-    // text round-trips exactly through UTF-8; forwarding the string keeps the
-    // forwarded body byte-identical to what the client sent. We parse a COPY
-    // for the `model` field only — the forwarded body is never re-serialized.
+    // Read the raw body. The request is JSON, so the text round-trips exactly
+    // through UTF-8; forwarding the string keeps the forwarded body
+    // byte-identical to what the client sent (unless intervention mutates it).
     const body = await c.req.text();
+
+    // --- TCB intervention (ADR-0101 Step 2) ------------------------------
+    // Guard at the door: inspect every request that passes. When no TCB
+    // config is wired in, this is a no-op and the body forwards verbatim.
+    // A kill short-circuits here — the upstream is never touched.
+    let forwardBody = body;
+    if (opts.tcbConfig) {
+      const result = intervene(
+        body,
+        c.req.header("user-agent") ?? "",
+        opts.tcbConfig(),
+        opts.bcbDb,
+      );
+      if (result.action === "kill") {
+        return result.response;
+      }
+      forwardBody = result.body;
+    }
+
     let model: string | undefined;
     try {
-      const parsed = JSON.parse(body) as { model?: unknown };
+      const parsed = JSON.parse(forwardBody) as { model?: unknown };
       model = typeof parsed.model === "string" ? parsed.model : undefined;
     } catch {
       model = undefined;
@@ -172,7 +204,7 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
       // Dumb-proxy mode: no booted servers tracked. Fall back to the static
       // upstream if one is configured; otherwise nothing is loaded.
       if (opts.upstreamUrl) {
-        return forward(c, opts.upstreamUrl, body);
+        return forward(c, opts.upstreamUrl, forwardBody);
       }
       return c.json(
         { error: "no model loaded — boot one with `mba servers boot <model> <port>`" },
@@ -202,7 +234,7 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     // Walk candidates newest-first; forward to the first healthy one.
     for (const candidate of candidates) {
       if (await isHealthy(candidate)) {
-        return forward(c, `http://127.0.0.1:${candidate.port}`, body);
+        return forward(c, `http://127.0.0.1:${candidate.port}`, forwardBody);
       }
     }
 

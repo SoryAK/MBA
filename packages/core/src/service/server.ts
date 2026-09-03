@@ -53,12 +53,15 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
+import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import {
   defaultStorePaths,
   readGlobalConfig,
   setRules,
   type MbaStorePaths,
 } from "./config-store.js";
+import { openBcbDb } from "../bcb/kill-state.js";
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
@@ -104,6 +107,17 @@ export interface MbaServiceAppOptions {
    * lifetime and call `killAllOwnedGroups` on exit.
    */
   readonly lifecycleSeams?: LifecycleSeams;
+  /**
+   * TCB config getter (ADR-0101 Step 2). Injectable for tests. When omitted,
+   * the daemon reads the global TCB config on every request (so a
+   * `/set_rules` mutation is picked up without a restart).
+   */
+  readonly tcbConfig?: () => ToolCircuitBreakerConfig;
+  /**
+   * Kill-state DB handle (ADR-0101 Step 2). Injectable for tests. When
+   * omitted, the daemon opens `bcb-kill-state.db` under its baseDir.
+   */
+  readonly bcbDb?: DatabaseSync;
 }
 
 export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
@@ -118,6 +132,13 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   // `model` field (TTL-cached health probes), then piped verbatim to the
   // matching server. `MBA_UPSTREAM_URL` is a fallback for the empty-registry
   // (dumb-proxy) case only.
+  // TCB intervention (ADR-0101 Step 2): the daemon owns the escalation
+  // kill-state. Both seams are injectable for tests; the daemon defaults are
+  // a per-request global-config read (so a /set_rules mutation is picked up
+  // without a restart) and a kill-state DB under the baseDir.
+  const tcbConfig = opts.tcbConfig ?? (() => readGlobalConfig(paths).tcb);
+  const bcbDb = opts.bcbDb ?? openBcbDb(join(paths.baseDir, "bcb-kill-state.db"));
+
   app.route(
     "/v1",
     createModelProxyRoutes({
@@ -126,6 +147,8 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       adapterDir: opts.adapterDir,
       healthTtlMs: opts.healthTtlMs,
       fetch: opts.fetch,
+      tcbConfig,
+      bcbDb,
     }),
   );
 
