@@ -90,6 +90,8 @@ export interface MbaServiceAppOptions {
   readonly adapterDir?: string;
   /** Upstream llama-server base URL (e.g. `http://127.0.0.1:8080`). */
   readonly upstreamUrl?: string;
+  /** Proxy health-probe cache TTL in ms (default 5000). */
+  readonly healthTtlMs?: number;
   /** Arm model switching (ADR-0093: OFF by default). */
   readonly switchEnabled?: boolean;
   /** Switch executor — injectable for tests; default boots in-daemon via the server plane. */
@@ -110,10 +112,22 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 
   const app = new Hono();
 
-  // --- Model-request proxy (ADR-0101 Step 1) ------------------------------
+  // --- Model-request proxy (ADR-0101 Step 1b — registry routing) ----------
   // The daemon IS the proxy: model requests arrive at /v1/chat/completions
-  // and are piped verbatim to the upstream llama-server. No upstream → 503.
-  app.route("/v1", createModelProxyRoutes({ upstreamUrl: opts.upstreamUrl, fetch: opts.fetch }));
+  // and are resolved PER REQUEST from the upstream registry by the request's
+  // `model` field (TTL-cached health probes), then piped verbatim to the
+  // matching server. `MBA_UPSTREAM_URL` is a fallback for the empty-registry
+  // (dumb-proxy) case only.
+  app.route(
+    "/v1",
+    createModelProxyRoutes({
+      upstreamUrl: opts.upstreamUrl,
+      registryPath: paths.upstreamsPath,
+      adapterDir: opts.adapterDir,
+      healthTtlMs: opts.healthTtlMs,
+      fetch: opts.fetch,
+    }),
+  );
 
   app.get("/resolve_config", (c) => {
     const model = c.req.query("model");
