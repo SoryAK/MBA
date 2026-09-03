@@ -230,3 +230,27 @@ export const serverTypeOps: Record<ServerType, ServerTypeOps> = {
 export function getServerTypeOps(type: string): ServerTypeOps | null {
   return (serverTypeOps as Record<string, ServerTypeOps>)[type] ?? null;
 }
+
+/**
+ * Probe one registry entry's health, dispatching on its `serverType`.
+ *
+ * This is the SAME probe `GET /servers` uses (per-type `ops.health`), so the
+ * proxy and the server plane never disagree about whether a server is up.
+ * Unknown server types fall back to a generic `GET /health` on the entry's
+ * port. Advisory: never throws — unreachable or non-2xx is simply `false`.
+ */
+export async function probeEntryHealth(
+  entry: UpstreamEntry,
+  fetchImpl: typeof fetch,
+): Promise<boolean> {
+  const ops = getServerTypeOps(entry.serverType);
+  if (ops) return ops.health(entry, fetchImpl);
+  try {
+    const res = await fetchImpl(`http://127.0.0.1:${entry.port}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
