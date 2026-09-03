@@ -1,10 +1,13 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { createMbaServiceApp } from "./server.js";
 import { defaultStorePaths } from "./config-store.js";
 import { writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
+import { openBcbDb } from "../bcb/kill-state.js";
+import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 
 const UPSTREAM = "http://127.0.0.1:8081";
 
@@ -388,5 +391,133 @@ describe("model proxy — registry routing (ADR-0101 Step 1b)", () => {
 
     expect(res.status).toBe(200);
     expect(chatCalls).toEqual([8081]);
+  });
+});
+
+describe("model proxy — TCB intervention (ADR-0101 Step 2)", () => {
+  const MODEL_A = "/models/a/A.gguf";
+
+  /** A TCB config where read_file trips eofOverflow and escalates to kill. */
+  const killConfig: ToolCircuitBreakerConfig = {
+    tools: {
+      read_file: {
+        eofOverflow: {
+          enabled: true,
+          escalation: {
+            tiers: [
+              { tier: "nudge", afterIgnoredTrips: 0 },
+              { tier: "kill", afterIgnoredTrips: 1, action: "return-error" },
+            ],
+            counterMode: "monotonic",
+          },
+        },
+      },
+    },
+  };
+
+  /** A request whose last assistant turn reads past EOF of `smallFile`. */
+  function eofBody(smallFile: string): Record<string, unknown> {
+    return {
+      model: MODEL_A,
+      messages: [
+        { role: "system", content: "you are cline" },
+        { role: "user", content: "read the file" },
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: {
+                name: "read_file",
+                arguments: JSON.stringify({ filePath: smallFile, startLine: 1, endLine: 100 }),
+              },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_1", content: "a\nb\nc" },
+      ],
+    };
+  }
+
+  function setup(opts: { smallFile: string; db: DatabaseSync }) {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    writeRegistry(paths.upstreamsPath, [
+      entry("llama-cpp-8080", MODEL_A, 8080, "2026-01-01T00:00:00.000Z"),
+    ]);
+    const { fetch: fetchImpl, chatCalls } = registryFetch({ health: { 8080: true } });
+    const app = createMbaServiceApp({
+      paths,
+      fetch: fetchImpl,
+      tcbConfig: () => killConfig,
+      bcbDb: opts.db,
+    });
+    return { app, chatCalls };
+  }
+
+  it("forwards a clean request verbatim (no tool calls)", async () => {
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const smallFile = join(mkdtempSync(join(tmpdir(), "mba-file-")), "small.txt");
+    writeFileSync(smallFile, "a\nb\nc");
+    const { app, chatCalls } = setup({ smallFile, db });
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body: JSON.stringify({ model: MODEL_A, messages: [{ role: "user", content: "hi" }] }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(chatCalls).toEqual([8080]);
+    db.close();
+  });
+
+  it("nudges on the first eofOverflow trip and forwards the mutated body", async () => {
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const smallFile = join(mkdtempSync(join(tmpdir(), "mba-file-")), "small.txt");
+    writeFileSync(smallFile, "a\nb\nc");
+    const { app, chatCalls } = setup({ smallFile, db });
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body: JSON.stringify(eofBody(smallFile)),
+    });
+
+    // The trip rewrites the tool result, so the request is still forwarded
+    // (nudge tier) — the upstream is hit once.
+    expect(res.status).toBe(200);
+    expect(chatCalls).toEqual([8080]);
+    db.close();
+  });
+
+  it("kills on the second ignored trip and returns 400 without calling upstream", async () => {
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const smallFile = join(mkdtempSync(join(tmpdir(), "mba-file-")), "small.txt");
+    writeFileSync(smallFile, "a\nb\nc");
+    const { app, chatCalls } = setup({ smallFile, db });
+
+    const body = JSON.stringify(eofBody(smallFile));
+    // First trip (nudge) — forwarded.
+    const first = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body,
+    });
+    expect(first.status).toBe(200);
+
+    // Second trip (kill) — short-circuited, upstream never called again.
+    const second = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body,
+    });
+    expect(second.status).toBe(400);
+    expect(second.headers.get("content-type")).toBe("application/json");
+    const err = (await second.json()) as { error: { type: string } };
+    expect(err.error.type).toBe("bcb_kill");
+    // Only the first (nudge) request reached the upstream.
+    expect(chatCalls).toEqual([8080]);
+    db.close();
   });
 });
