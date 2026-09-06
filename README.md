@@ -96,7 +96,7 @@ Requires Node ≥ 20.
 ## Documentation
 
 - [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — the full system manual
-- [`docs/adr/`](docs/adr/) — architecture decision records (0084–0098)
+- [`docs/adr/`](docs/adr/) — architecture decision records (0084–0102)
 
 ## License
 
