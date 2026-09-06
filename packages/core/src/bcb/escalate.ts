@@ -33,7 +33,10 @@ import type { ToolCircuitBreakerConfig, ToolCircuitBreakerKill, ToolCircuitBreak
 export interface TcbEscalationResult {
   readonly tier: "nudge" | "mask" | "kill";
   readonly ignoredTrips: number;
-  /** Present only when tier === "kill". */
+  /** Present when the rung summons AMPI. */
+  readonly action?: "ampi";
+  readonly recipe?: string;
+  /** Present only when tier === "kill" and the action is a hard kill. */
   readonly kill?: ToolCircuitBreakerKill;
 }
 
@@ -79,6 +82,19 @@ export function evaluateBcbEscalation(
   const decision = evaluateEscalation({ ladder, tripCount });
   if (!decision) return undefined;
   const ignoredTrips = tripCount - 1;
+
+  // AMPI is a rung action, not a kill-only path. Any tier may summon it.
+  if (decision.action === "ampi") {
+    if (decision.tier === "kill") {
+      resetBcbKillState(db, sessionId, trip.tool, trip.rule);
+    }
+    return {
+      tier: decision.tier,
+      ignoredTrips,
+      action: "ampi",
+      recipe: decision.recipe,
+    };
+  }
 
   if (decision.tier === "kill") {
     resetBcbKillState(db, sessionId, trip.tool, trip.rule);

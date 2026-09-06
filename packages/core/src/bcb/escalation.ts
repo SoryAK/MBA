@@ -46,6 +46,7 @@ function decide(
     tier: t.tier,
     tierIndex,
     ...(t.action !== undefined ? { action: t.action } : {}),
+    ...(t.recipe !== undefined ? { recipe: t.recipe } : {}),
     ...(t.revivalCalls !== undefined ? { revivalCalls: t.revivalCalls } : {}),
     resetCounter,
   };

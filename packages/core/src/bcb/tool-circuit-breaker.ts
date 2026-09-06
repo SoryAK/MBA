@@ -170,6 +170,7 @@ export type {
   ToolCircuitBreakerTrip,
   ToolCircuitBreakerKill,
   KillAction,
+  EscalationAction,
   KillRule,
   EscalationTierName,
   EscalationTier,

@@ -7,6 +7,13 @@ import type { KillRule, ToolCircuitBreakerConfig, ToolRuleSet } from "./types.js
 const KILL_ACTIONS = new Set(["return-error", "close-stream", "drop-tools", "block-tool"]);
 const TIER_NAMES = new Set(["nudge", "mask", "kill"]);
 
+function isEscalationAction(value: unknown, recipe: unknown): boolean {
+  if (value === "ampi") {
+    return typeof recipe === "string" && recipe.length > 0;
+  }
+  return typeof value === "string" && KILL_ACTIONS.has(value);
+}
+
 function isKillRule(value: unknown): value is KillRule {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -25,7 +32,8 @@ function isEscalationLadder(value: unknown): boolean {
     const t = tier as Record<string, unknown>;
     if (typeof t.tier !== "string" || !TIER_NAMES.has(t.tier)) return false;
     if (typeof t.afterIgnoredTrips !== "number" || !Number.isInteger(t.afterIgnoredTrips)) return false;
-    if (t.action !== undefined && (typeof t.action !== "string" || !KILL_ACTIONS.has(t.action))) return false;
+    if (t.action !== undefined && !isEscalationAction(t.action, t.recipe)) return false;
+    if (t.action !== "ampi" && t.recipe !== undefined) return false;
     if (t.revivalCalls !== undefined && (typeof t.revivalCalls !== "number" || !Number.isInteger(t.revivalCalls))) return false;
   }
   if (v.counterMode !== undefined && v.counterMode !== "monotonic" && v.counterMode !== "reset-per-tier") return false;
