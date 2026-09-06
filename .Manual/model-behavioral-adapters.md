@@ -138,9 +138,7 @@ alerts:
       level: warn
 ```
 
-The canonical `apiVersion` is `mba.ai/v1alpha1`. The legacy value
-`mba.ai/v1alpha1` is still accepted for backward compatibility, but
-new adapters should use `mba.ai/v1alpha1`.
+The canonical and only recognized `apiVersion` is `mba.ai/v1alpha1`.
 
 Family adapters carry `identity.model.family` (plus `lineage`) and their
 default binding files — no `file`, no `profile`. Environment-specific dials

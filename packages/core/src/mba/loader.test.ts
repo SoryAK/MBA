@@ -63,7 +63,7 @@ describe("loader cache", () => {
     expect(loadStructuralConfig(join(dir, "s299.json"))).toEqual({ i: 299 });
   });
 
-  it("loads adapters with the legacy the original project.dev apiVersion for backward compatibility", () => {
+  it("rejects the legacy the original project.dev apiVersion", () => {
     const path = join(dir, "legacy.yaml");
     writeFileSync(
       path,
@@ -78,7 +78,6 @@ describe("loader cache", () => {
         "bindings: {}",
       ].join("\n"),
     );
-    const adapter = loadAdapterYaml(path);
-    expect(adapter.metadata.id).toBe("legacy-model");
+    expect(() => loadAdapterYaml(path)).toThrow("invalid MBA adapter shape");
   });
 });

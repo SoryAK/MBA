@@ -115,7 +115,7 @@ describe("readModelCatalog", () => {
     expect(entries[0]?.clientUrl).toBeUndefined();
   });
 
-  it("accepts the legacy the original project.dev apiVersion for backward compatibility", () => {
+  it("rejects the legacy the original project.dev apiVersion", () => {
     const file = join(root, "qwen/legacy/legacy.yaml");
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(
@@ -131,7 +131,6 @@ describe("readModelCatalog", () => {
         "bindings: {}",
       ].join("\n"),
     );
-    const entries = readModelCatalog(root);
-    expect(entries.map((e) => e.id)).toEqual(["legacy-model"]);
+    expect(() => readModelCatalog(root)).toThrow("invalid MBA adapter shape");
   });
 });
