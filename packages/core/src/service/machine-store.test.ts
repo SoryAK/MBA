@@ -114,6 +114,29 @@ describe("machine-store", () => {
     expect(result.diff).toEqual([]);
   });
 
+  it("refresh detects newly added CPU fields and writes them", () => {
+    const oldProfile: MachineInfo = {
+      os: "linux",
+      cpuCores: 16,
+      totalRamBytes: 32 * 1024 * 1024 * 1024,
+    };
+    const newProfile: MachineInfo = {
+      ...oldProfile,
+      cpuPhysicalCores: 8,
+      cpuModel: "Example CPU Model",
+      cpuArchitecture: "x86_64",
+      cpuSpeedMHz: 2400,
+      cpuFlags: ["fpu", "avx", "avx2"],
+    };
+    writeMachineInfo(paths, oldProfile);
+    const env = { MBA_MACHINE_INFO: JSON.stringify(newProfile) };
+    const result = refreshMachineInfo(paths, env);
+    expect(result.changed).toBe(true);
+    expect(result.diff).toContain("cpuModel: ? → Example CPU Model");
+    expect(result.diff).toContain("cpuArchitecture: ? → x86_64");
+    expect(readMachineInfo(paths)).toEqual(newProfile);
+  });
+
   it("refresh writes detected info when the env override is absent and no profile exists", () => {
     const result = refreshMachineInfo(paths, {});
     expect(result.fromEnv).toBe(false);

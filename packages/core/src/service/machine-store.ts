@@ -125,6 +125,21 @@ function diffMachineInfo(
 
   if (a.os !== b.os) lines.push(`os: ${a.os} → ${b.os}`);
   if (a.cpuCores !== b.cpuCores) lines.push(`cpuCores: ${a.cpuCores} → ${b.cpuCores}`);
+  if (a.cpuPhysicalCores !== b.cpuPhysicalCores) {
+    lines.push(`cpuPhysicalCores: ${a.cpuPhysicalCores ?? "?"} → ${b.cpuPhysicalCores ?? "?"}`);
+  }
+  if (a.cpuModel !== b.cpuModel) {
+    lines.push(`cpuModel: ${a.cpuModel ?? "?"} → ${b.cpuModel ?? "?"}`);
+  }
+  if (a.cpuArchitecture !== b.cpuArchitecture) {
+    lines.push(`cpuArchitecture: ${a.cpuArchitecture ?? "?"} → ${b.cpuArchitecture ?? "?"}`);
+  }
+  if (a.cpuSpeedMHz !== b.cpuSpeedMHz) {
+    lines.push(`cpuSpeedMHz: ${a.cpuSpeedMHz ?? "?"} → ${b.cpuSpeedMHz ?? "?"}`);
+  }
+  if (!arraysEqual(a.cpuFlags, b.cpuFlags)) {
+    lines.push(`cpuFlags: changed`);
+  }
   if (a.totalRamBytes !== b.totalRamBytes) {
     lines.push(`totalRam: ${formatBytes(a.totalRamBytes)} → ${formatBytes(b.totalRamBytes)}`);
   }
@@ -154,14 +169,31 @@ function diffMachineInfo(
 }
 
 function formatMachineInfo(info: MachineInfo): string {
-  const parts = [
-    `${info.cpuCores} cores`,
-    `${formatBytes(info.totalRamBytes)} RAM`,
-  ];
+  const parts: string[] = [];
+  if (info.cpuModel) {
+    parts.push(info.cpuModel);
+  }
+  if (info.cpuPhysicalCores !== undefined) {
+    parts.push(`${info.cpuPhysicalCores}/${info.cpuCores} cores`);
+  } else {
+    parts.push(`${info.cpuCores} cores`);
+  }
+  if (info.cpuArchitecture) parts.push(info.cpuArchitecture);
+  parts.push(`${formatBytes(info.totalRamBytes)} RAM`);
   if (info.gpus && info.gpus.length > 0) {
     parts.push(info.gpus.map(normalizeGpu).join(", "));
   }
   return `${info.os}, ${parts.join(", ")}`;
+}
+
+function arraysEqual(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 /**
