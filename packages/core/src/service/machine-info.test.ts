@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  countPhysicalCores,
   detectMachineInfo,
+  extractCpuFlags,
   machineInfoFromEnv,
   parseLspciGpus,
   parseMeminfo,
@@ -21,6 +23,66 @@ describe("detectMachineInfo", () => {
     expect(typeof info!.totalRamBytes).toBe("number");
     expect(info!.totalRamBytes).toBeGreaterThan(0);
     expect(info!.os).toBe(process.platform);
+  });
+
+  it("returns CPU model, architecture, and flags on Linux", () => {
+    if (process.platform !== "linux") return;
+    const info = detectMachineInfo();
+    expect(info).toBeDefined();
+    expect(typeof info!.cpuModel).toBe("string");
+    expect(info!.cpuModel!.length).toBeGreaterThan(0);
+    expect(typeof info!.cpuArchitecture).toBe("string");
+    expect(info!.cpuArchitecture!.length).toBeGreaterThan(0);
+    expect(Array.isArray(info!.cpuFlags)).toBe(true);
+    expect(info!.cpuFlags!.length).toBeGreaterThan(0);
+  });
+});
+
+describe("countPhysicalCores", () => {
+  it("counts unique physical cores from /proc/cpuinfo-style text", () => {
+    const text = [
+      "processor\t: 0",
+      "physical id\t: 0",
+      "core id\t\t: 0",
+      "",
+      "processor\t: 1",
+      "physical id\t: 0",
+      "core id\t\t: 0",
+      "",
+      "processor\t: 2",
+      "physical id\t: 0",
+      "core id\t\t: 1",
+      "",
+      "processor\t: 3",
+      "physical id\t: 1",
+      "core id\t\t: 0",
+    ].join("\n");
+    expect(countPhysicalCores(text)).toBe(3);
+  });
+
+  it("returns undefined when no core ids are present", () => {
+    expect(countPhysicalCores("processor\t: 0")).toBeUndefined();
+  });
+});
+
+describe("extractCpuFlags", () => {
+  it("extracts the flags list from the first processor block", () => {
+    const text = [
+      "processor\t: 0",
+      "flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm cpuid_fault invpcid_single ssbd ibrs ibpb stibp ibrs_enhanced fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid xsaveopt arat",
+      "",
+      "processor\t: 1",
+      "flags\t\t: should be ignored",
+    ].join("\n");
+    const flags = extractCpuFlags(text);
+    expect(flags).toBeDefined();
+    expect(flags).toContain("avx");
+    expect(flags).toContain("avx2");
+    expect(flags).not.toContain("should");
+  });
+
+  it("returns undefined when no flags line is present", () => {
+    expect(extractCpuFlags("processor\t: 0")).toBeUndefined();
   });
 });
 

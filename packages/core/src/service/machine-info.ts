@@ -12,16 +12,33 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { cpus, totalmem } from "node:os";
+import { cpus, machine, totalmem } from "node:os";
 
 export interface GpuInfo {
   readonly name?: string;
   readonly vramBytes?: number;
 }
 
-export interface MachineInfo {
-  readonly os: "linux" | "darwin" | "win32" | string;
+export interface CpuInfo {
+  /**
+   * Number of logical CPUs (threads) visible to the OS. This is the value
+   * llama.cpp `--threads` usually refers to, but AMPI may prefer physical cores.
+   */
   readonly cpuCores: number;
+  /** Number of physical CPU cores, if detectable. */
+  readonly cpuPhysicalCores?: number;
+  /** CPU model name, e.g. "AMD Ryzen 9 7940HS". */
+  readonly cpuModel?: string;
+  /** CPU base/reported speed in MHz. */
+  readonly cpuSpeedMHz?: number;
+  /** CPU architecture, e.g. "x86_64" or "arm64". */
+  readonly cpuArchitecture?: string;
+  /** CPU feature flags (Linux /proc/cpuinfo), e.g. avx, avx2, avx512f. */
+  readonly cpuFlags?: readonly string[];
+}
+
+export interface MachineInfo extends CpuInfo {
+  readonly os: "linux" | "darwin" | "win32" | string;
   readonly totalRamBytes: number;
   readonly gpus?: readonly GpuInfo[];
 }
@@ -32,9 +49,9 @@ export interface MachineInfo {
  * healthy Node runtime. GPU detection is best-effort.
  */
 export function detectMachineInfo(): MachineInfo | undefined {
-  const cpuCores = detectCpuCores();
+  const cpuInfo = detectCpuInfo();
   const totalRam = detectTotalRam();
-  if (cpuCores === undefined || totalRam === undefined) {
+  if (cpuInfo === undefined || totalRam === undefined) {
     return undefined;
   }
 
@@ -43,16 +60,78 @@ export function detectMachineInfo(): MachineInfo | undefined {
 
   return {
     os,
-    cpuCores,
+    ...cpuInfo,
     totalRamBytes: totalRam,
     ...(gpus !== undefined && gpus.length > 0 ? { gpus } : {}),
   };
 }
 
-function detectCpuCores(): number | undefined {
+function detectCpuInfo(): CpuInfo | undefined {
   const list = cpus();
-  if (Array.isArray(list) && list.length > 0) {
-    return list.length;
+  if (!Array.isArray(list) || list.length === 0) {
+    return undefined;
+  }
+  const first = list[0];
+  if (!first) return undefined;
+
+  return {
+    cpuCores: list.length,
+    cpuModel: first.model?.trim() || undefined,
+    cpuSpeedMHz: typeof first.speed === "number" && first.speed > 0 ? first.speed : undefined,
+    cpuArchitecture: machine() || undefined,
+    ...(process.platform === "linux" ? readLinuxCpuInfo() : {}),
+  };
+}
+
+function readLinuxCpuInfo(): {
+  cpuPhysicalCores?: number;
+  cpuFlags?: readonly string[];
+} {
+  const result: {
+    cpuPhysicalCores?: number;
+    cpuFlags?: readonly string[];
+  } = {};
+  if (!existsSync("/proc/cpuinfo")) return result;
+
+  try {
+    const text = readFileSync("/proc/cpuinfo", "utf8");
+    const physicalCores = countPhysicalCores(text);
+    if (physicalCores !== undefined) result.cpuPhysicalCores = physicalCores;
+    const flags = extractCpuFlags(text);
+    if (flags !== undefined) result.cpuFlags = flags;
+  } catch {
+    // Ignore — best-effort.
+  }
+  return result;
+}
+
+/** Exported for tests. Count physical cores by unique core IDs in /proc/cpuinfo text. */
+export function countPhysicalCores(text: string): number | undefined {
+  const coreIds = new Set<string>();
+  let physicalId = "0";
+  let coreId: string | undefined;
+  for (const line of text.split(/\r?\n/)) {
+    const physicalMatch = line.match(/^physical id\s*:\s*(\d+)/i);
+    if (physicalMatch) {
+      physicalId = physicalMatch[1] ?? "0";
+      continue;
+    }
+    const coreMatch = line.match(/^core id\s*:\s*(\d+)/i);
+    if (coreMatch) {
+      coreId = coreMatch[1];
+      coreIds.add(`${physicalId}:${coreId}`);
+    }
+  }
+  return coreIds.size > 0 ? coreIds.size : undefined;
+}
+
+/** Exported for tests. Extract the CPU flags from the first processor block in /proc/cpuinfo text. */
+export function extractCpuFlags(text: string): readonly string[] | undefined {
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^flags\s*:\s*(.+)$/i);
+    if (match && match[1]) {
+      return match[1].trim().split(/\s+/);
+    }
   }
   return undefined;
 }

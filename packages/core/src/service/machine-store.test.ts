@@ -133,4 +133,10 @@ describe("machine-store", () => {
     expect(text).toContain("\"cpuCores\": 8");
     expect(JSON.parse(text)).toEqual(INFO);
   });
+
+  it("rejects a profile with malformed cpuFlags", () => {
+    const badInfo = { ...INFO, cpuFlags: ["avx", 123] };
+    writeMachineInfo(paths, badInfo as typeof INFO);
+    expect(readMachineInfo(paths)).toBeUndefined();
+  });
 });
