@@ -5,8 +5,8 @@
  * trip for the same tool/rule/target. When the count reaches the configured
  * `ignoredTrips` limit, the daemon escalates to the rule's kill action.
  *
- * Copied from the original project `packages/proxy/src/db/bcb-kill-state.ts` (ADR-0101
- * Step 2). Uses `node:sqlite` (Node 22 built-in) — no native dependency.
+ * Adapted from the original proxy's kill-state module (ADR-0101 Step 2).
+ * Uses `node:sqlite` (Node 22 built-in) — no native dependency.
  *
  * Session identity is `sha256(harness + systemPrompt)` (see `escalate.ts`),
  * so a system-prompt change resets counters — deliberate per-user request.

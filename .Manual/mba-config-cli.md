@@ -30,8 +30,7 @@ a restart is required.
 ## Internal Workflow
 
 1. **Service discovery** — `resolveServiceUrl()` checks, in order: explicit
-   `baseUrl` (not exposed in v1), `MBA_SERVICE_URL` env (deprecated alias
-   `MBA_SERVICE_URL`), then `~/.mba/mba/service.json` (written by the
+   `baseUrl` (not exposed in v1), `MBA_SERVICE_URL` env, then `~/.mba/mba/service.json` (written by the
    service on startup). No discovery → exit 2 with a hint.
 2. **`mba models`** — `GET /models` → interactive menu (TTY) or plain list
    (non-TTY / piped). Menu: up/down arrows, type-to-filter on id+name, Enter

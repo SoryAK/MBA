@@ -1,7 +1,7 @@
 /**
  * TCB context builder (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/proxy/src/server.ts` (`buildBcbContext` +
+ * Adapted from the original proxy implementation (`buildBcbContext` +
  * `parseToolArguments`). Resolves live line counts from disk for read targets
  * so the `eofOverflow` / `readClamp` rules can compare a requested range
  * against the file's actual length.

@@ -302,9 +302,9 @@ process** (not per-project). Files are truth under `~/.mba/`:
   the built-in defaults. (The one-time migration from the legacy per-project
   `.legacy-store/bcb/tool-circuit-breakers.json` location shipped with the
   first global-store release and was removed once migration was complete.)
-- **Base-dir migration:** the store originally lived under `~/.mba` (a
-  legacy internal origin). On first boot with the default location, any state
-  found there is copied into `~/.mba` (copy, never overwrite; legacy files are
+- **Base-dir migration:** the store originally lived under a legacy internal
+  origin directory. On first boot with the default location, any state found
+  there was copied into `~/.mba` (copy, never overwrite; legacy files were
   left in place). Skipped when `MBA_BASE_DIR` is set explicitly.
 - **Writes are atomic** (temp file → rename); every mutation bumps
   `version.json`.
@@ -318,7 +318,7 @@ process** (not per-project). Files are truth under `~/.mba/`:
 MBA also ships a standalone MCP (Model Context Protocol) server at
 `tools/mba-mcp-server/`. It exposes MBA tools to any MCP host (VS Code
 Copilot, Cline, Claude Desktop, etc.) so adapter behavior is not locked
-inside the the original project proxy. It is the **control plane** for the global service:
+inside the original proxy. It is the **control plane** for the global service:
 the service tools are thin HTTP wrappers — the MCP server never edits the
 `~/.mba/` JSON files directly, so the service stays the single writer.
 
@@ -381,7 +381,7 @@ exist and which binding sections they carry. For a per-model full report
 `mba_resolve_config` with the model id; the registry does not duplicate that.
 
 **Service tools** discover the service in this order: explicit `baseUrl` →
-`MBA_SERVICE_URL` env (deprecated alias: `MBA_SERVICE_URL`) →
+`MBA_SERVICE_URL` env →
 `~/.mba/mba/service.json` discovery file.
 Each call has a 1500 ms timeout. When the service is down, the tool returns a
 clear `service unreachable: …` error (with `isError: true`) instead of

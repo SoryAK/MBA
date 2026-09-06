@@ -1,8 +1,8 @@
 /**
  * Tests for the SQLite-backed BCB kill-state (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/proxy/src/db/bcb-kill-state.ts`. Tracks, per
- * session, how many times in a row the model ignored a TCB trip for the same
+ * Adapted from the original proxy's kill-state module. Tracks, per session,
+ * how many times in a row the model ignored a TCB trip for the same
  * tool/rule/target. Uses `node:sqlite` (Node 22 built-in) — no native dep.
  */
 

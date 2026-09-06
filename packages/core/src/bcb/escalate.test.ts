@@ -1,7 +1,7 @@
 /**
  * Tests for evaluateBcbEscalation (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/proxy/src/server.ts`, adapted:
+ * Adapted from the original proxy implementation:
  * - session key is `sha256(harness + systemPrompt)` (was `sha256(systemPrompt)`),
  *   so no-prompt requests isolate per-harness instead of sharing one counter.
  * - degrades to "no escalation" (returns undefined) when the harness is

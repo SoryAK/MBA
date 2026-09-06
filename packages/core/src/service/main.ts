@@ -8,8 +8,7 @@
  * Run with: `npm run dev -w @mba-ai/core` (or `npm start -w @mba-ai/core`).
  *
  * Env:
- *   MBA_BASE_DIR         — store base dir (default: OS-aware, see service/paths.ts;
- *                          `MBA_BASE_DIR` is a deprecated alias)
+ *   MBA_BASE_DIR         — store base dir (default: OS-aware, see service/paths.ts)
  *   MBA_ADAPTER_DIR      — adapter tree root (default: OS-aware model store, see service/paths.ts)
  *   MBA_UPSTREAM_URL     — upstream llama-server base URL (e.g. http://127.0.0.1:8080)
  *   MBA_MODEL_SWITCH     — "on" arms model switching (ADR-0093: OFF by default)
@@ -24,7 +23,6 @@
 import { homedir } from "node:os";
 import {
   defaultStorePaths,
-  migrateLegacyBaseDir,
   readGlobalConfig,
   writeServiceInfo,
 } from "./config-store.js";
@@ -37,8 +35,7 @@ import { startUdsListener, type UdsHandle } from "./uds-listener.js";
 import { resolveVsCodeLmConfigPath } from "./vscode-lm-config.js";
 import { killAllOwnedGroups, ownedGroupCount, type LifecycleSeams } from "../mba/index.js";
 
-// `MBA_BASE_DIR` is a deprecated alias kept for existing setups.
-const baseDir = process.env.MBA_BASE_DIR ?? process.env.MBA_BASE_DIR;
+const baseDir = process.env.MBA_BASE_DIR;
 const paths = defaultStorePaths(baseDir);
 const adapterDir = process.env.MBA_ADAPTER_DIR ?? defaultModelStoreRoot();
 // MBA owns the model store root: a fresh install gets a real directory on
@@ -50,15 +47,6 @@ const endpointSyncEnabled = process.env.MBA_ENDPOINT_SYNC !== "off";
 const vscodeLmConfig =
   process.env.MBA_VSCODE_LM_CONFIG ?? resolveVsCodeLmConfigPath(homedir());
 const vscodeLmApiKeyRef = process.env.MBA_VSCODE_LM_API_KEY_REF;
-
-// One-time migration from the legacy `~/.mba` base dir. Only when the
-// default location is in use — an explicit MBA_BASE_DIR is the user's choice.
-if (!baseDir) {
-  const migrated = migrateLegacyBaseDir();
-  if (migrated.length > 0) {
-    console.log(`[mba] migrated ${migrated.length} file(s) from ~/.mba to ${defaultStateDir()}`);
-  }
-}
 
 // First-boot seed happens here so the store is warm before the first request.
 const initial = readGlobalConfig(paths);
