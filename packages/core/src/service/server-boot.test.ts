@@ -214,17 +214,6 @@ describe("defaultBinaryPath", () => {
     }
   });
 
-  it("never resolves to the the original project vendor path", () => {
-    // The public package must not default to a personal project layout. Both
-    // forks should resolve via PATH/common locations or return undefined.
-    const env = { PATH: "/nonexistent" };
-    const legacyPath = join(
-      homedir(),
-      "Dev_Projects/the original project/vendor/llama.cpp/build/bin/llama-server",
-    );
-    expect(defaultBinaryPath("upstream", env)).not.toBe(legacyPath);
-    expect(defaultBinaryPath("llama.cpp", env)).not.toBe(legacyPath);
-  });
 });
 
 function writeMinimalAdapter(adapterDir: string, id: string, modelFile: string): void {

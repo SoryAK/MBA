@@ -332,10 +332,10 @@ Add to your `mcp.json`:
 "mba": {
   "type": "stdio",
   "command": "npx",
-  "args": ["tsx", "/path/to/project/tools/mba-mcp-server/src/server.ts"],
+  "args": ["tsx", "/path/to/@mba-ai/mcp-server/src/server.ts"],
   "env": {
-    "MBA_DIR": "/path/to/project/.MBA",
-    "MBA_WORKSPACE_ROOT": "/path/to/project"
+    "MBA_DIR": "/path/to/your/project/.MBA",
+    "MBA_WORKSPACE_ROOT": "/path/to/your/project"
   }
 }
 ```
