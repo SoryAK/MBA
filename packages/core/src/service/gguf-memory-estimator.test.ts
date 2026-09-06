@@ -202,6 +202,43 @@ describe("estimateRecipeMemory", () => {
     expect(gpu.ramBytes).toBeLessThan(cpu.ramBytes);
   });
 
+  it("splits weights, KV cache, and compute buffer proportionally for partial offload", () => {
+    const fileSize = 1 * 1024 * 1024 * 1024;
+    const path = createMinimalGgufFile(dir, {
+      blockCount: 32,
+      hiddenSize: 4096,
+      headCount: 32,
+      headCountKv: 8,
+      fileSizeBytes: fileSize,
+    });
+    const half = estimateRecipeMemory(recipe(path, { ctxSize: 4096, gpuLayers: 16 }))!;
+    // 16 / 32 = 50% offloaded
+    expect(half.split.vramWeightsBytes).toBeGreaterThan(0);
+    expect(half.split.ramWeightsBytes).toBeGreaterThan(0);
+    expect(half.split.vramWeightsBytes + half.split.ramWeightsBytes).toBe(half.breakdown.weightsBytes);
+    expect(half.split.vramKvCacheBytes + half.split.ramKvCacheBytes).toBe(half.breakdown.kvCacheBytes);
+    expect(half.split.vramComputeBufferBytes + half.split.ramComputeBufferBytes).toBe(
+      half.breakdown.computeBufferBytes,
+    );
+  });
+
+  it("puts all memory in RAM when gpuLayers is 0", () => {
+    const fileSize = 1 * 1024 * 1024 * 1024;
+    const path = createMinimalGgufFile(dir, {
+      blockCount: 32,
+      hiddenSize: 4096,
+      headCount: 32,
+      headCountKv: 8,
+      fileSizeBytes: fileSize,
+    });
+    const est = estimateRecipeMemory(recipe(path, { ctxSize: 4096, gpuLayers: 0 }))!;
+    expect(est.vramBytes).toBe(0);
+    expect(est.split.vramWeightsBytes).toBe(0);
+    expect(est.split.vramKvCacheBytes).toBe(0);
+    expect(est.split.vramComputeBufferBytes).toBe(0);
+    expect(est.split.ramOverheadBytes).toBe(est.breakdown.overheadBytes);
+  });
+
   it("caps gpuLayers at the block count", () => {
     const path = createMinimalGgufFile(dir, {
       blockCount: 32,

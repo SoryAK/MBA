@@ -29,12 +29,22 @@ export interface MemoryEstimate {
   readonly ramBytes: number;
   /** Bytes that must live in GPU VRAM (0 if gpuLayers is 0). */
   readonly vramBytes: number;
-  /** Breakdown for diagnostics. */
+  /** Breakdown by component for diagnostics. */
   readonly breakdown: {
     readonly weightsBytes: number;
     readonly kvCacheBytes: number;
     readonly computeBufferBytes: number;
     readonly overheadBytes: number;
+  };
+  /** Breakdown of where each component lives. */
+  readonly split: {
+    readonly ramWeightsBytes: number;
+    readonly ramKvCacheBytes: number;
+    readonly ramComputeBufferBytes: number;
+    readonly ramOverheadBytes: number;
+    readonly vramWeightsBytes: number;
+    readonly vramKvCacheBytes: number;
+    readonly vramComputeBufferBytes: number;
   };
 }
 
@@ -280,19 +290,26 @@ export function estimateRecipeMemory(
 
   const totalBytes = weightsBytes + kvCacheBytes + computeBufferBytes + overheadBytes;
 
-  // Split between RAM and VRAM based on gpuLayers.
-  let vramWeightsBytes = 0;
-  let ramWeightsBytes = weightsBytes;
-  if (gpuLayers > 0) {
-    const offloadRatio = gpuLayers / arch.blockCount;
-    vramWeightsBytes = Math.round(weightsBytes * offloadRatio);
-    ramWeightsBytes = weightsBytes - vramWeightsBytes;
-  }
+  // Split between RAM and VRAM based on the offload ratio. The ratio applies
+  // to weights, KV cache, and compute buffers consistently for partial offload.
+  const offloadRatio = gpuLayers > 0 ? gpuLayers / arch.blockCount : 0;
+  const keepRatio = 1 - offloadRatio;
 
-  // v1: KV cache lives in VRAM if any GPU layers are used, otherwise in RAM.
-  // Compute buffer is counted as RAM for CPU-only and VRAM for GPU offload.
-  const vramBytes = vramWeightsBytes + (gpuLayers > 0 ? kvCacheBytes : 0);
-  const ramBytes = ramWeightsBytes + (gpuLayers === 0 ? kvCacheBytes : 0) + computeBufferBytes + overheadBytes;
+  const vramWeightsBytes = Math.round(weightsBytes * offloadRatio);
+  const ramWeightsBytes = weightsBytes - vramWeightsBytes;
+
+  const vramKvCacheBytes = Math.round(kvCacheBytes * offloadRatio);
+  const ramKvCacheBytes = kvCacheBytes - vramKvCacheBytes;
+
+  // Compute scratch is split by the same ratio. The active layer workspace is
+  // allocated on the device that is running the offloaded layers; when the
+  // ratio is 0 or 1 the split is exact, and for partial offload we keep it
+  // proportional as a conservative approximation.
+  const vramComputeBufferBytes = Math.round(computeBufferBytes * offloadRatio);
+  const ramComputeBufferBytes = computeBufferBytes - vramComputeBufferBytes;
+
+  const ramBytes = ramWeightsBytes + ramKvCacheBytes + ramComputeBufferBytes + overheadBytes;
+  const vramBytes = vramWeightsBytes + vramKvCacheBytes + vramComputeBufferBytes;
 
   return {
     totalBytes,
@@ -303,6 +320,15 @@ export function estimateRecipeMemory(
       kvCacheBytes,
       computeBufferBytes,
       overheadBytes,
+    },
+    split: {
+      ramWeightsBytes,
+      ramKvCacheBytes,
+      ramComputeBufferBytes,
+      ramOverheadBytes: overheadBytes,
+      vramWeightsBytes,
+      vramKvCacheBytes,
+      vramComputeBufferBytes,
     },
   };
 }

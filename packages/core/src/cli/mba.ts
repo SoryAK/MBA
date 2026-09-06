@@ -52,6 +52,7 @@ import {
 import { listHfGgufs, searchHfModels } from "../model/hf-resolve.js";
 import { selectRestartTargets } from "./restart-selection.js";
 import { migrateAdapters } from "./migrate-adapters.js";
+import { cmdEstimateMemory } from "./estimate-memory.js";
 import {
   defaultModelStoreRoot,
   defaultStateDir,
@@ -1132,6 +1133,13 @@ Usage:
   mba migrate adapters [--write]   rewrite old adapter YAML apiVersion values to
                                    the current canonical value (local only; dry
                                    run by default — pass --write to apply)
+  mba estimate-memory <model.gguf> [flags]
+                                   local-only memory estimate from GGUF metadata.
+                                   flags: --ctx-size, --gpu-layers, --batch-size,
+                                   --ubatch-size, --cache-type-k, --cache-type-v,
+                                   --flash-attn. Compares against the persisted
+                                   machine profile and reports the max ctxSize
+                                   that fits.
   mba ... --yes                    skip the restart prompt (never restarts)
 
 Environment:
@@ -1159,6 +1167,10 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (command === "migrate" && rest[0] === "adapters") {
     cmdMigrateAdapters(rest.slice(1));
+    return;
+  }
+  if (command === "estimate-memory") {
+    cmdEstimateMemory(rest);
     return;
   }
 
