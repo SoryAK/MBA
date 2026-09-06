@@ -31,6 +31,7 @@ import {
 import { defaultModelStoreRoot, defaultStateDir, ensureDir } from "./paths.js";
 import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
+import { refreshMachineInfo } from "./machine-store.js";
 import { startMbaService } from "./server.js";
 import { startUdsListener, type UdsHandle } from "./uds-listener.js";
 import { resolveVsCodeLmConfigPath } from "./vscode-lm-config.js";
@@ -62,6 +63,33 @@ if (!baseDir) {
 // First-boot seed happens here so the store is warm before the first request.
 const initial = readGlobalConfig(paths);
 
+// ADR-0103: detect or refresh the persisted machine profile at boot.
+const machineRefresh = refreshMachineInfo(paths);
+if (machineRefresh.fromEnv) {
+  console.log("[mba] machine profile: loaded from MBA_MACHINE_INFO override");
+} else if (machineRefresh.changed) {
+  console.log("[mba] machine profile: detected changes");
+  for (const line of machineRefresh.diff) {
+    console.log(`[mba]   ${line}`);
+  }
+}
+if (machineRefresh.info !== undefined) {
+  console.log(
+    `[mba] machine: ${machineRefresh.info.cpuCores} cores, ${formatBytes(machineRefresh.info.totalRamBytes)} RAM` +
+      (machineRefresh.info.gpus && machineRefresh.info.gpus.length > 0
+        ? `, ${machineRefresh.info.gpus.map((g) => g.name ?? "GPU").join(", ")}`
+        : ""),
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024 * 1024)).toFixed(1)} TiB`;
+  if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${n} B`;
+}
+
 // G1: one shared lifecycle seams instance for the daemon's lifetime. The
 // owned-group registry lives on it, so the exit handler can kill every
 // server process group the daemon booted.
@@ -73,6 +101,7 @@ const handle = await startMbaService({
   upstreamUrl,
   switchEnabled,
   lifecycleSeams,
+  machineInfo: machineRefresh.info,
 });
 
 // ADR-0101 Step 1: also serve the app over a Unix socket for MCP clients.
