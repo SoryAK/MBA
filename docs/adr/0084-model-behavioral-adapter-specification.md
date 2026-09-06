@@ -191,11 +191,11 @@ Event names are dot-separated and consumer-defined. Examples in the original pro
 - Writers SHOULD update adapter files atomically (write to a temp file, then rename into place).
 - **Last-good semantics:** if any bound file fails to parse or resolve, the consumer keeps the previous successfully-loaded config for that adapter and emits `mba:load-error`. A torn read must fail closed (rules stay active), never open (rules silently disabled).
 - Unknown `rule` IDs and unknown `params` keys are warn-and-ignore for forward compatibility; they never hard-fail the binding file.
-- Consumers MUST reject adapters with an unrecognized `apiVersion` rather than best-effort parsing them. The canonical `apiVersion` is `mba.ai/v1alpha1`; the legacy value `mba.ai/v1alpha1` is accepted for backward compatibility.
+- Consumers MUST reject adapters with an unrecognized `apiVersion` rather than best-effort parsing them. The only recognized `apiVersion` is `mba.ai/v1alpha1`.
 
-### Consumer contract (the original project)
+### Consumer contract
 
-At request time the original project will:
+At request time the MBA daemon will:
 
 1. Resolve all matching MBA adapters for the request context and merge them by ascending specificity.
 2. Load the bound BCB, TCB, and structural config files relative to each adapter YAML.

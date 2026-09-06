@@ -12,11 +12,6 @@ import YAML from "yaml";
 import { createGgufMetadataCache } from "../model/gguf-metadata-cache.js";
 
 const MBA_API_VERSION = "mba.ai/v1alpha1";
-const LEGACY_MBA_API_VERSION = "mba.ai/v1alpha1";
-const SUPPORTED_API_VERSIONS = new Set([
-  MBA_API_VERSION,
-  LEGACY_MBA_API_VERSION,
-]);
 import { type GgufMetadata } from "../model/gguf-metadata.js";
 
 export interface MbaAdapter {
@@ -111,7 +106,7 @@ export interface LoadedAdapter {
 function isAdapter(value: unknown): value is MbaAdapter {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  if (!SUPPORTED_API_VERSIONS.has(String(v.apiVersion))) return false;
+  if (String(v.apiVersion) !== MBA_API_VERSION) return false;
   if (v.kind !== "ModelBehavioralAdapter") return false;
   if (typeof v.metadata !== "object" || v.metadata === null) return false;
   if (typeof (v.metadata as Record<string, unknown>).id !== "string") return false;
