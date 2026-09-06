@@ -26,6 +26,7 @@ import {
 } from "../mba/index.js";
 import { applyMachineOverlay, type MachineOverlayResult } from "./machine-overlay.js";
 import type { MachineInfo } from "./machine-info.js";
+import type { MachineOverlayMode } from "./config-store.js";
 import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
 
 /** The resolution context knobs (harness/ide/runtime) for env-folder selection. */
@@ -73,11 +74,16 @@ export interface ResolvedRecipe {
  * @throws {Error} when no adapter under `adapterDir` declares `modelFile`
  *   (the model is not in the MBA tree).
  */
+export interface MachineOverlayOptions {
+  readonly machineInfo?: MachineInfo;
+  readonly machineOverlay?: MachineOverlayMode;
+}
+
 export function resolveRecipe(
   modelFile: string,
   adapterDir: string,
   ctx: RecipeResolutionContext,
-  machineInfo?: MachineInfo,
+  overlayOptions?: MachineOverlayOptions,
 ): ResolvedRecipe {
   const catalog = readModelCatalog(adapterDir);
   const entry: CatalogEntry | undefined = catalog.find((c) => c.modelFile === modelFile);
@@ -113,11 +119,25 @@ export function resolveRecipe(
 
   const { flags, dropped, clamped } = sanitizeLlamaCppServerFlags(resolved.server["llama.cpp"]);
 
+  const { machineInfo, machineOverlay = "enforce" } = overlayOptions ?? {};
+
   let effectiveFlags = flags;
-  let overlay: MachineOverlayResult = { flags, annotations: [], fits: true };
-  if (machineInfo !== undefined) {
+  let overlay: MachineOverlayResult = {
+    flags,
+    annotations: [],
+    originalFits: true,
+    clampedFits: true,
+  };
+  let fitsMachine = true;
+  if (machineInfo !== undefined && machineOverlay !== "off") {
     overlay = applyMachineOverlay(flags, modelFile, machineInfo);
-    effectiveFlags = overlay.flags;
+    if (machineOverlay === "enforce") {
+      effectiveFlags = overlay.flags;
+      fitsMachine = overlay.clampedFits;
+    } else {
+      // "warn" mode: keep the original flags but report whether they fit.
+      fitsMachine = overlay.originalFits;
+    }
   }
 
   const cliArgs = buildLlamaServerFlags(effectiveFlags);
@@ -136,6 +156,6 @@ export function resolveRecipe(
     clamped,
     cliArgs,
     annotations: overlay.annotations,
-    fitsMachine: overlay.fits,
+    fitsMachine,
   };
 }

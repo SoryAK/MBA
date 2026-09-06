@@ -1049,6 +1049,45 @@ function cmdMigrateAdapters(args: readonly string[]): void {
   }
 }
 
+/**
+ * `mba machine-overlay [enforce|warn|off]` — show or set the enforcement mode.
+ *
+ * With no argument, prints the current mode. With an argument, POSTs the new
+ * mode to the service and writes it to the global config.
+ */
+async function cmdMachineOverlay(baseUrl: string, args: readonly string[]): Promise<void> {
+  const valid = ["enforce", "warn", "off"] as const;
+  const [mode] = args;
+  if (mode !== undefined && !(valid as readonly string[]).includes(mode)) {
+    fail(`usage: mba machine-overlay [${valid.join("|")}]`);
+  }
+
+  if (mode === undefined) {
+    const res = await fetch(`${baseUrl}/config/machine-overlay`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      fail(`service error: HTTP ${res.status} ${text}`.trim());
+    }
+    const body = (await res.json()) as { mode: string };
+    process.stdout.write(`[mba] machine-overlay mode: ${body.mode}\n`);
+    return;
+  }
+
+  const res = await fetch(`${baseUrl}/config/machine-overlay`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    fail(`service error: HTTP ${res.status} ${text}`.trim());
+  }
+  const body = (await res.json()) as { mode: string; version: number };
+  process.stdout.write(
+    `[mba] machine-overlay mode set to ${body.mode} (config version ${body.version})\n`,
+  );
+}
+
 // --- Entry point ---------------------------------------------------------------
 
 const USAGE = `mba — model config CLI (talks to the MBA service)
@@ -1059,6 +1098,10 @@ Usage:
   mba config <model>               show every dial with its current value
   mba set <model> <field> <value>  set one dial (value parsed as JSON when possible)
   mba open <model> <file>          print the on-disk path (server_setup | yaml)
+  mba machine-overlay [enforce|warn|off]
+                                   show or set how MBA applies machine specs to
+                                   recipes (enforce = clamp, warn = log only,
+                                   off = ignore)
   mba servers list [--plain]       list registered model servers (interactive
                                    on a TTY: pick a server, then stop or tail
                                    its logs; --plain forces the table)
@@ -1151,6 +1194,9 @@ async function main(argv: readonly string[]): Promise<void> {
         await cmdOpen(baseUrl, modelId, file);
         break;
       }
+      case "machine-overlay":
+        await cmdMachineOverlay(baseUrl, rest);
+        break;
       case "servers":
         await cmdServers(baseUrl, rest);
         break;
