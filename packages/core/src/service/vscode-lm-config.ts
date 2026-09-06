@@ -14,8 +14,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export function resolveVsCodeLmConfigPath(homeDir: string): string {
+export function resolveVsCodeLmConfigPath(homeDir: string): string | undefined {
   const userDir = join(homeDir, ".config", "Code", "User");
+  // No VS Code installation detected on this machine — caller should skip sync.
+  if (!existsSync(userDir)) return undefined;
+
   const settingsPath = join(userDir, "settings.json");
   try {
     if (existsSync(settingsPath)) {

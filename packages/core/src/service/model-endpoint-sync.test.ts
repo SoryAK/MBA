@@ -16,7 +16,7 @@ import {
   type ClientBlock,
 } from "./model-endpoint-sync.js";
 
-const API_KEY_REF = "${input:chat.lm.secret.<REDACTED>}";
+const API_KEY_REF = "${input:mba.localApiKey}";
 
 function writeAdapter(
   dir: string,
