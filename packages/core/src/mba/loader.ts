@@ -22,11 +22,6 @@ import type {
 } from "./types.js";
 
 export const MBA_API_VERSION = "mba.ai/v1alpha1";
-export const LEGACY_MBA_API_VERSION = "mba.ai/v1alpha1";
-export const SUPPORTED_API_VERSIONS = new Set([
-  MBA_API_VERSION,
-  LEGACY_MBA_API_VERSION,
-]);
 
 interface CacheEntry<T> {
   mtimeMs: number;
@@ -101,7 +96,7 @@ function lastGood<T>(path: string, cache: Map<string, CacheEntry<T>>, fresh: () 
 export function isMbaAdapter(value: unknown): value is MbaAdapter {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  if (!SUPPORTED_API_VERSIONS.has(String(v.apiVersion))) return false;
+  if (String(v.apiVersion) !== MBA_API_VERSION) return false;
   if (v.kind !== "ModelBehavioralAdapter") return false;
   if (typeof v.metadata !== "object" || v.metadata === null) return false;
   if (typeof (v.metadata as Record<string, unknown>).id !== "string") return false;
@@ -118,9 +113,6 @@ export function loadAdapterYaml(path: string): MbaAdapter {
     const parsed = YAML.parse(text) as unknown;
     if (!isMbaAdapter(parsed)) {
       throw new Error(`invalid MBA adapter shape in ${path}`);
-    }
-    if (!SUPPORTED_API_VERSIONS.has(parsed.apiVersion)) {
-      throw new Error(`unsupported MBA apiVersion ${parsed.apiVersion} in ${path}`);
     }
     return parsed;
   });
