@@ -4,6 +4,7 @@ import {
   machineInfoFromEnv,
   parseLspciGpus,
   parseMeminfo,
+  parseNvidiaSmiCsv,
   parseNvidiaSmiXml,
   parseSystemProfiler,
   parseVramString,
@@ -57,6 +58,29 @@ describe("parseNvidiaSmiXml", () => {
 
   it("returns undefined when no gpu blocks are present", () => {
     expect(parseNvidiaSmiXml("<root></root>")).toBeUndefined();
+  });
+});
+
+describe("parseNvidiaSmiCsv", () => {
+  it("extracts name and VRAM from a single GPU", () => {
+    const gpus = parseNvidiaSmiCsv("Example NVIDIA GPU, 8192 MiB\n");
+    expect(gpus).toEqual([{ name: "Example NVIDIA GPU", vramBytes: 8192 * 1024 * 1024 }]);
+  });
+
+  it("extracts multiple GPUs", () => {
+    const csv = ["Example NVIDIA GPU, 8192 MiB", "NVIDIA GeForce RTX 4090, 24576 MiB"].join(
+      "\n",
+    );
+    const gpus = parseNvidiaSmiCsv(csv);
+    expect(gpus).toHaveLength(2);
+    expect(gpus![1]).toEqual({
+      name: "NVIDIA GeForce RTX 4090",
+      vramBytes: 24576 * 1024 * 1024,
+    });
+  });
+
+  it("returns undefined for empty CSV", () => {
+    expect(parseNvidiaSmiCsv("")).toBeUndefined();
   });
 });
 
