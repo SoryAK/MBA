@@ -24,6 +24,8 @@ import {
   sanitizeLlamaCppServerFlags,
   type MbaResolvedConfig,
 } from "../mba/index.js";
+import { applyMachineOverlay, type MachineOverlayResult } from "./machine-overlay.js";
+import type { MachineInfo } from "./machine-info.js";
 import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
 
 /** The resolution context knobs (harness/ide/runtime) for env-folder selection. */
@@ -59,6 +61,10 @@ export interface ResolvedRecipe {
   readonly clamped: ReturnType<typeof sanitizeLlamaCppServerFlags>["clamped"];
   /** Tuning CLI args (from `buildLlamaServerFlags`) — deployment facts excluded. */
   readonly cliArgs: string[];
+  /** Machine-overlay clamping notes (empty when no machine info was supplied). */
+  readonly annotations: readonly string[];
+  /** Whether the recipe fits the supplied machine (true if no machine info). */
+  readonly fitsMachine: boolean;
 }
 
 /**
@@ -71,6 +77,7 @@ export function resolveRecipe(
   modelFile: string,
   adapterDir: string,
   ctx: RecipeResolutionContext,
+  machineInfo?: MachineInfo,
 ): ResolvedRecipe {
   const catalog = readModelCatalog(adapterDir);
   const entry: CatalogEntry | undefined = catalog.find((c) => c.modelFile === modelFile);
@@ -105,7 +112,15 @@ export function resolveRecipe(
   });
 
   const { flags, dropped, clamped } = sanitizeLlamaCppServerFlags(resolved.server["llama.cpp"]);
-  const cliArgs = buildLlamaServerFlags(flags);
+
+  let effectiveFlags = flags;
+  let overlay: MachineOverlayResult = { flags, annotations: [], fits: true };
+  if (machineInfo !== undefined) {
+    overlay = applyMachineOverlay(flags, modelFile, machineInfo);
+    effectiveFlags = overlay.flags;
+  }
+
+  const cliArgs = buildLlamaServerFlags(effectiveFlags);
 
   return {
     modelId: entry.id,
@@ -116,9 +131,11 @@ export function resolveRecipe(
     declaredName,
     declaredFamily,
     resolved,
-    flags,
+    flags: effectiveFlags,
     dropped,
     clamped,
     cliArgs,
+    annotations: overlay.annotations,
+    fitsMachine: overlay.fits,
   };
 }

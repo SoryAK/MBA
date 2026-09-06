@@ -43,6 +43,8 @@ import { existsSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { readClientBlock } from "./model-endpoint-sync.js";
 import { resolveRecipe } from "./recipe-resolution.js";
+import { defaultStorePaths, type MbaStorePaths } from "./config-store.js";
+import { readMachineInfo } from "./machine-store.js";
 import { defaultModelStoreRoot } from "./paths.js";
 
 interface CliArgs {
@@ -131,13 +133,21 @@ function main(): void {
   // resolveMbaConfig → sanitize → buildLlamaServerFlags. The in-daemon
   // resolveBootRecipe runs the same chain, so the flags the script sets and
   // the flags the proxy applies are provably the same bytes.
+  // ADR-0103: if a machine profile has been persisted, apply it now.
+  const paths: MbaStorePaths = defaultStorePaths();
+  const machineInfo = readMachineInfo(paths);
   let recipe;
   try {
-    recipe = resolveRecipe(modelFile, adapterDir, {
-      harness: args.harness,
-      ide: args.ide,
-      serverRuntime: args.runtime,
-    });
+    recipe = resolveRecipe(
+      modelFile,
+      adapterDir,
+      {
+        harness: args.harness,
+        ide: args.ide,
+        serverRuntime: args.runtime,
+      },
+      machineInfo,
+    );
   } catch (err) {
     fail(
       `${err instanceof Error ? err.message : String(err)} — ` +
@@ -176,6 +186,7 @@ function main(): void {
     selectedIds: [...resolved.selectedIds],
     diagnostics: resolved.diagnostics.map((d) => ({ kind: d.kind, message: d.message })),
     sanitize: { dropped: recipe.dropped, clamped: recipe.clamped },
+    machine: { annotations: recipe.annotations, fitsMachine: recipe.fitsMachine },
   };
 
   if (hardDiagnostics.length > 0) {
