@@ -21,6 +21,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { daemonLog, resolveSeams, type LifecycleSeams } from "../mba/index.js";
+import type { MachineInfo } from "./machine-info.js";
 import { resolveRecipe } from "./recipe-resolution.js";
 import { listUpstreams, readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
@@ -103,6 +104,10 @@ export interface BootRecipe {
   readonly cliArgs: string[];
   /** Post-boot warm-up generation length (tokens). */
   readonly warmupTokens: number;
+  /** Machine-overlay clamping notes (empty if no machine info was supplied). */
+  readonly annotations: readonly string[];
+  /** Whether the recipe fits the supplied machine (true if no machine info). */
+  readonly fitsMachine: boolean;
 }
 
 /**
@@ -114,17 +119,28 @@ export interface BootRecipe {
  * @throws {Error} when no adapter under `adapterDir` declares `modelFile`
  *   (the model is not in the MBA tree — the route maps this to 404).
  */
-export function resolveBootRecipe(modelFile: string, adapterDir: string): BootRecipe {
-  const recipe = resolveRecipe(modelFile, adapterDir, {
-    harness: "copilot",
-    ide: "vscode",
-    serverRuntime: "llamacpp",
-  });
+export function resolveBootRecipe(
+  modelFile: string,
+  adapterDir: string,
+  machineInfo?: MachineInfo,
+): BootRecipe {
+  const recipe = resolveRecipe(
+    modelFile,
+    adapterDir,
+    {
+      harness: "copilot",
+      ide: "vscode",
+      serverRuntime: "llamacpp",
+    },
+    machineInfo,
+  );
   return {
     modelId: recipe.modelId,
     modelFile: recipe.modelFile,
     cliArgs: recipe.cliArgs,
     warmupTokens: recipe.flags.warmupTokens ?? 350,
+    annotations: recipe.annotations,
+    fitsMachine: recipe.fitsMachine,
   };
 }
 
@@ -148,6 +164,8 @@ export interface BootServerInput {
   readonly binaryPath?: string;
   /** ollama: daemon base URL (default `OLLAMA_DEFAULT_HOST`). */
   readonly host?: string;
+  /** Detected/persisted machine profile for recipe clamping. */
+  readonly machineInfo?: MachineInfo;
   /** Lifecycle seams (spawn/fetch/kill) — injectable for tests. */
   readonly seams?: LifecycleSeams;
 }
@@ -258,10 +276,18 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   let recipe: BootRecipe | undefined;
   if (serverType !== "ollama") {
     try {
-      recipe = resolveBootRecipe(modelKey, input.adapterDir);
+      recipe = resolveBootRecipe(modelKey, input.adapterDir, input.machineInfo);
       daemonLog(
         `[boot] recipe resolved: modelId=${recipe.modelId} warmup=${recipe.warmupTokens} args=[${recipe.cliArgs.join(" ")}]`,
       );
+      if (recipe.annotations.length > 0) {
+        for (const annotation of recipe.annotations) {
+          daemonLog(`[boot] overlay: ${annotation}`);
+        }
+      }
+      if (!recipe.fitsMachine) {
+        daemonLog(`[boot] WARNING: recipe does not fit detected machine; boot may fail`);
+      }
     } catch (err) {
       daemonLog(`[boot] recipe resolution FAILED: ${err instanceof Error ? err.message : String(err)}`);
       return {

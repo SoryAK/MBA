@@ -85,6 +85,7 @@ import {
 } from "./upstream-registry.js";
 import { bootServer, resolveBootRecipe } from "./server-boot.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
+import type { MachineInfo } from "./machine-info.js";
 import { getLogBuffer, type LifecycleSeams } from "../mba/index.js";
 
 export interface MbaServiceAppOptions {
@@ -118,6 +119,8 @@ export interface MbaServiceAppOptions {
    * omitted, the daemon opens `bcb-kill-state.db` under its baseDir.
    */
   readonly bcbDb?: DatabaseSync;
+  /** Detected/persisted machine profile for recipe clamping (ADR-0103). */
+  readonly machineInfo?: MachineInfo;
 }
 
 export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
@@ -533,6 +536,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
       adapterDir: opts.adapterDir ?? "",
       registryPath: paths.upstreamsPath,
+      machineInfo: opts.machineInfo,
       seams: opts.lifecycleSeams,
     });
     if (!result.ok) {
@@ -636,6 +640,7 @@ async function defaultSwitchExecutor(
     port,
     adapterDir: opts.adapterDir ?? "",
     registryPath: (opts.paths ?? defaultStorePaths()).upstreamsPath,
+    machineInfo: opts.machineInfo,
     seams: opts.lifecycleSeams,
   });
   if (!result.ok) {

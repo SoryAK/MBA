@@ -78,7 +78,7 @@ export const MANAGED_LLAMA_FLAGS: ReadonlySet<string> = new Set([
 export class LlamaFlagConflictError extends Error {}
 
 /** A fully-populated flag set: every managed field present, `extraArgs` optional. */
-type ResolvedLlamaFlags = Required<Omit<LlamaCppServerFlags, "extraArgs">> & {
+export type ResolvedLlamaFlags = Required<Omit<LlamaCppServerFlags, "extraArgs">> & {
   readonly extraArgs?: Record<string, string | number | boolean>;
 };
 
