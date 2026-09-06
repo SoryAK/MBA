@@ -384,7 +384,8 @@ function printConfig(cfg: ModelConfig): void {
     for (const f of fields) {
       const current = f.current === null ? "(unset)" : String(f.current);
       const restart = f.restartRequired ? "  [restart]" : "";
-      const hint = f.hint ? `  (${f.hint})` : "";
+      const hints = [f.hint, f.machineHint].filter(Boolean).join("; ");
+      const hint = hints ? `  (${hints})` : "";
       process.stdout.write(`    ${f.field.padEnd(16)} ${current}${restart}${hint}\n`);
     }
     process.stdout.write("\n");
@@ -409,7 +410,8 @@ async function guidedFlow(baseUrl: string, modelId: string, assumeNo: boolean): 
       return;
     }
     const current = picked.current === null ? "" : String(picked.current);
-    const raw = await askValueInteractive(picked.field, current, picked.hint);
+    const hints = [picked.hint, picked.machineHint].filter(Boolean).join("; ");
+    const raw = await askValueInteractive(picked.field, current, hints);
     if (raw === null) {
       process.stdout.write("[mba] edit cancelled\n");
       continue;
