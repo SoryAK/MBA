@@ -17,8 +17,9 @@
  * recipe read; process spawning goes through the injected `LifecycleSeams`.
  */
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { daemonLog, resolveSeams, type LifecycleSeams } from "../mba/index.js";
 import { resolveRecipe } from "./recipe-resolution.js";
 import { listUpstreams, readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
@@ -27,19 +28,69 @@ import { getServerTypeOps, type ServerType } from "./server-types.js";
 /** The two llama.cpp fork variants (boot-script parity). */
 export type Fork = "upstream" | "llama.cpp";
 
+const LLAMA_SERVER_NAMES = ["llama-server", "llama-server.exe"] as const;
+
+function findOnPath(
+  name: string,
+  pathEnv: string | undefined,
+): string | undefined {
+  if (!pathEnv || pathEnv.length === 0) return undefined;
+  for (const dir of pathEnv.split(delimiter)) {
+    if (!dir || dir.length === 0) continue;
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function findFirstExisting(candidates: readonly string[]): string | undefined {
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
 /**
- * Map a fork to its llama-server binary (boot-script parity):
- *   upstream   → ~/llama.cpp/build/bin/llama-server
- *   llama.cpp → ~/Dev_Projects/the original project/vendor/llama.cpp/build/bin/llama-server
- * An explicit `MBA_LLAMA_SERVER_BIN` overrides both.
+ * Resolve the llama-server binary for a fork.
+ *
+ * Search order:
+ *   1. `MBA_LLAMA_SERVER_BIN` environment override.
+ *   2. `llama-server` (or `llama-server.exe`) on `PATH`.
+ *   3. Common absolute locations: `~/.local/bin/llama-server`,
+ *      `~/llama.cpp/build/bin/llama-server`, `/usr/local/bin/llama-server`,
+ *      `/usr/bin/llama-server`.
+ *
+ * Returns `undefined` when no candidate is found. The caller must handle the
+ * missing-binary case before spawning.
  */
-export function defaultBinaryPath(fork: Fork, env: NodeJS.ProcessEnv = process.env): string {
+export function defaultBinaryPath(
+  _fork: Fork,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const override = env.MBA_LLAMA_SERVER_BIN;
   if (override && override.length > 0) return override;
-  if (fork === "llama.cpp") {
-    return join(homedir(), "Dev_Projects/the original project/vendor/llama.cpp/build/bin/llama-server");
+
+  const pathEnv = env.PATH ?? env.Path;
+  for (const name of LLAMA_SERVER_NAMES) {
+    const onPath = findOnPath(name, pathEnv);
+    if (onPath) return onPath;
   }
-  return join(homedir(), "llama.cpp/build/bin/llama-server");
+
+  const common = [
+    join(homedir(), ".local", "bin", "llama-server"),
+    join(homedir(), "llama.cpp", "build", "bin", "llama-server"),
+    "/usr/local/bin/llama-server",
+    "/usr/bin/llama-server",
+  ];
+  return findFirstExisting(common);
+}
+
+/** Error message when a llama-server binary cannot be found. */
+function binaryNotFoundError(path: string | undefined): string {
+  const base =
+    "llama-server binary not found. Install llama.cpp, ensure llama-server is on your PATH, or set MBA_LLAMA_SERVER_BIN to the absolute path.";
+  if (!path) return base;
+  return `llama-server binary not found at ${path}. ${base}`;
 }
 
 /** A resolved, ready-to-boot recipe for one weights file. */
@@ -221,6 +272,22 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
     }
   }
 
+  // Resolve the binary path for llama.cpp and fail fast if it is missing.
+  // ollama has no binary to spawn; the daemon talks to the ollama host over HTTP.
+  const binaryPath =
+    serverType !== "ollama"
+      ? (input.binaryPath ?? defaultBinaryPath(fork))
+      : undefined;
+  if (serverType !== "ollama" && (binaryPath === undefined || !existsSync(binaryPath))) {
+    const message = binaryNotFoundError(binaryPath);
+    daemonLog(`[boot] FAILED: ${message}`);
+    return {
+      ok: false,
+      code: "boot-failed",
+      error: message,
+    };
+  }
+
   // Dispatch to the type's boot (health + warmup for llama.cpp; load for
   // ollama). A failure reports `boot-failed` and leaves no registry entry.
   try {
@@ -231,7 +298,7 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
         port: input.port,
         host: input.host,
         fork,
-        binaryPath: input.binaryPath ?? (serverType !== "ollama" ? defaultBinaryPath(fork) : undefined),
+        binaryPath,
         cliArgs: recipe?.cliArgs,
         warmupTokens: recipe?.warmupTokens,
       },
