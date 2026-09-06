@@ -45,6 +45,7 @@ import { readClientBlock } from "./model-endpoint-sync.js";
 import { resolveRecipe } from "./recipe-resolution.js";
 import { defaultStorePaths, type MbaStorePaths } from "./config-store.js";
 import { readMachineInfo } from "./machine-store.js";
+import { readGlobalConfig } from "./config-store.js";
 import { defaultModelStoreRoot } from "./paths.js";
 
 interface CliArgs {
@@ -136,6 +137,7 @@ function main(): void {
   // ADR-0103: if a machine profile has been persisted, apply it now.
   const paths: MbaStorePaths = defaultStorePaths();
   const machineInfo = readMachineInfo(paths);
+  const machineOverlay = readGlobalConfig(paths).machineOverlay;
   let recipe;
   try {
     recipe = resolveRecipe(
@@ -146,7 +148,7 @@ function main(): void {
         ide: args.ide,
         serverRuntime: args.runtime,
       },
-      machineInfo,
+      { machineInfo, machineOverlay },
     );
   } catch (err) {
     fail(

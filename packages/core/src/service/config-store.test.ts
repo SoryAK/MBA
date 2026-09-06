@@ -6,6 +6,7 @@ import {
   defaultStorePaths,
   migrateLegacyBaseDir,
   readGlobalConfig,
+  setMachineOverlay,
   setRules,
   writeServiceInfo,
   readServiceInfoOrNull,
@@ -102,6 +103,31 @@ describe("config-store", () => {
     }
     // The file is always valid JSON.
     JSON.parse(readFileSync(paths.tcbPath, "utf8"));
+  });
+
+  it("defaults machineOverlay to enforce", () => {
+    const cfg = readGlobalConfig(paths);
+    expect(cfg.machineOverlay).toBe("enforce");
+  });
+
+  it("reads back a persisted machine-overlay mode", () => {
+    readGlobalConfig(paths);
+    setMachineOverlay(paths, "warn");
+    const cfg = readGlobalConfig(paths);
+    expect(cfg.machineOverlay).toBe("warn");
+  });
+
+  it("bumps the version on set_machine_overlay", () => {
+    readGlobalConfig(paths);
+    const r1 = setMachineOverlay(paths, "off");
+    expect(r1.version).toBe(1);
+    expect(r1.machineOverlay).toBe("off");
+    expect(readGlobalConfig(paths).version).toBe(1);
+  });
+
+  it("throws on an invalid machine-overlay mode", () => {
+    readGlobalConfig(paths);
+    expect(() => setMachineOverlay(paths, "nope" as never)).toThrow(/invalid mode/);
   });
 });
 

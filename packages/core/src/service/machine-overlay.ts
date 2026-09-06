@@ -26,11 +26,10 @@ export interface MachineOverlayResult {
   readonly flags: ResolvedLlamaFlags;
   /** Human-readable lines explaining every clamp. */
   readonly annotations: readonly string[];
-  /**
-   * Whether the clamped recipe still fits in the machine. If false, the model
-   * cannot run on this machine even at the lowest useful dials.
-   */
-  readonly fits: boolean;
+  /** Whether the original, unclamped recipe fits the machine. */
+  readonly originalFits: boolean;
+  /** Whether the returned clamped recipe fits the machine. */
+  readonly clampedFits: boolean;
 }
 
 type Writable<T> = { -readonly [P in keyof T]: T[P] };
@@ -39,6 +38,17 @@ type ClampedFlags = Writable<Partial<ResolvedLlamaFlags>>;
 
 const RAM_HEADROOM = 0.85; // Leave 15% for OS / other apps.
 const VRAM_HEADROOM = 0.9; // Leave 10% for display / driver overhead.
+
+function recipeFits(
+  estimate: ReturnType<typeof estimateRecipeMemory>,
+  availableRam: number,
+  availableVram: number | undefined,
+): boolean {
+  if (estimate === undefined) return false;
+  const fitsRam = estimate.ramBytes <= availableRam;
+  const fitsVram = availableVram === undefined || estimate.vramBytes <= availableVram;
+  return fitsRam && fitsVram;
+}
 
 /**
  * Clamp a llama.cpp recipe to the host machine. Missing fields are left
@@ -54,7 +64,7 @@ export function applyMachineOverlay(
 
   if (!existsSync(modelFile)) {
     annotations.push(`model file not found at ${modelFile}; overlay skipped`);
-    return { flags: { ...flags }, annotations, fits: true };
+    return { flags: { ...flags }, annotations, originalFits: true, clampedFits: true };
   }
 
   const availableRam = Math.floor(machine.totalRamBytes * RAM_HEADROOM);
@@ -83,32 +93,37 @@ export function applyMachineOverlay(
   }
 
   // --- ctxSize via memory estimator ---
-  const recipeShape = flagsToRecipeShape(modelFile, flags);
-  const estimate = estimateRecipeMemory(recipeShape);
-  if (estimate === undefined) {
+  const originalRecipeShape = flagsToRecipeShape(modelFile, flags);
+  const originalEstimate = estimateRecipeMemory(originalRecipeShape);
+  const originalFits = recipeFits(originalEstimate, availableRam, availableVram);
+
+  if (originalEstimate === undefined) {
     annotations.push("could not estimate memory from GGUF metadata; ctxSize not clamped");
-  } else if (estimate.ramBytes > availableRam || (availableVram !== undefined && estimate.vramBytes > availableVram)) {
+  } else if (!originalFits) {
     const maxCtx = findMaxFittingCtxSize(
-      { ...recipeShape, gpuLayers: clamped.gpuLayers ?? flags.gpuLayers ?? 0 },
+      { ...originalRecipeShape, gpuLayers: clamped.gpuLayers ?? flags.gpuLayers ?? 0 },
       availableRam,
       availableVram,
       flags.ctxSize,
     );
     if (maxCtx === undefined || maxCtx < 1) {
       annotations.push("model does not fit in available RAM/VRAM even with ctxSize=1");
-      return { flags: { ...flags, ...clamped }, annotations, fits: false };
-    }
-    if (flags.ctxSize === undefined || maxCtx < flags.ctxSize) {
+    } else if (flags.ctxSize === undefined || maxCtx < flags.ctxSize) {
       const original = flags.ctxSize ?? "default";
       clamped.ctxSize = maxCtx;
       annotations.push(`ctxSize clamped from ${original} to ${maxCtx} to fit RAM/VRAM`);
     }
   }
 
+  const clampedFlags: ResolvedLlamaFlags = { ...flags, ...clamped };
+  const clampedEstimate = estimateRecipeMemory(flagsToRecipeShape(modelFile, clampedFlags));
+  const clampedFits = recipeFits(clampedEstimate, availableRam, availableVram);
+
   return {
-    flags: { ...flags, ...clamped },
+    flags: clampedFlags,
     annotations,
-    fits: true,
+    originalFits,
+    clampedFits,
   };
 }
 

@@ -105,7 +105,8 @@ describe("applyMachineOverlay", () => {
     const m = machine({ cpuCores: 8, totalRamBytes: 16 * 1024 * 1024 * 1024 });
     const flags = baseFlags({ ctxSize: 2048, threads: 4, gpuLayers: 0 });
     const result = applyMachineOverlay(flags, model, m);
-    expect(result.fits).toBe(true);
+    expect(result.clampedFits).toBe(true);
+    expect(result.originalFits).toBe(true);
     expect(result.annotations).toEqual([]);
     expect(result.flags).toEqual(flags);
   });
@@ -181,7 +182,8 @@ describe("applyMachineOverlay", () => {
     });
     const m = machine({ cpuCores: 4, totalRamBytes: 500 * 1024 * 1024 });
     const result = applyMachineOverlay(baseFlags({ ctxSize: 65536, gpuLayers: 0 }), model, m);
-    expect(result.fits).toBe(true);
+    expect(result.clampedFits).toBe(true);
+    expect(result.originalFits).toBe(false);
     expect(result.flags.ctxSize).toBeDefined();
     expect(result.flags.ctxSize).toBeLessThan(65536);
     expect(result.annotations.some((a) => a.startsWith("ctxSize clamped"))).toBe(true);
@@ -197,7 +199,8 @@ describe("applyMachineOverlay", () => {
     });
     const m = machine({ cpuCores: 4, totalRamBytes: 100 * 1024 * 1024 });
     const result = applyMachineOverlay(baseFlags({ ctxSize: 4096, gpuLayers: 0 }), model, m);
-    expect(result.fits).toBe(false);
+    expect(result.clampedFits).toBe(false);
+    expect(result.originalFits).toBe(false);
   });
 
   it("annotates and skips when the model file is missing", () => {
@@ -206,6 +209,7 @@ describe("applyMachineOverlay", () => {
     const result = applyMachineOverlay(flags, "/nonexistent/model.gguf", m);
     expect(result.flags).toEqual(flags);
     expect(result.annotations).toEqual(["model file not found at /nonexistent/model.gguf; overlay skipped"]);
-    expect(result.fits).toBe(true);
+    expect(result.clampedFits).toBe(true);
+    expect(result.originalFits).toBe(true);
   });
 });

@@ -57,8 +57,12 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   defaultStorePaths,
+  isMachineOverlayMode,
+  MACHINE_OVERLAY_MODES,
   readGlobalConfig,
+  setMachineOverlay,
   setRules,
+  type MachineOverlayMode,
   type MbaStorePaths,
 } from "./config-store.js";
 import { openBcbDb } from "../bcb/kill-state.js";
@@ -121,6 +125,12 @@ export interface MbaServiceAppOptions {
   readonly bcbDb?: DatabaseSync;
   /** Detected/persisted machine profile for recipe clamping (ADR-0103). */
   readonly machineInfo?: MachineInfo;
+  /**
+   * Machine-overlay enforcement mode getter. When omitted, the daemon reads
+   * the global config on every boot so a `/config/machine-overlay` mutation
+   * is picked up without a restart.
+   */
+  readonly machineOverlay?: () => MachineOverlayMode;
 }
 
 export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
@@ -140,6 +150,8 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   // a per-request global-config read (so a /set_rules mutation is picked up
   // without a restart) and a kill-state DB under the baseDir.
   const tcbConfig = opts.tcbConfig ?? (() => readGlobalConfig(paths).tcb);
+  const machineOverlay =
+    opts.machineOverlay ?? (() => readGlobalConfig(paths).machineOverlay);
   const bcbDb = opts.bcbDb ?? openBcbDb(join(paths.baseDir, "bcb-kill-state.db"));
 
   app.route(
@@ -163,6 +175,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       model: model ?? null,
       tcb: cfg.tcb,
       ruleClasses: cfg.ruleClasses,
+      machineOverlay: cfg.machineOverlay,
     });
   });
 
@@ -191,6 +204,36 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     }
   });
 
+  app.get("/config/machine-overlay", (c) => {
+    const cfg = readGlobalConfig(paths);
+    return c.json({ mode: cfg.machineOverlay });
+  });
+
+  app.post("/config/machine-overlay", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { mode?: unknown };
+    if (!input || typeof input !== "object" || !isMachineOverlayMode(input.mode)) {
+      return c.json(
+        { error: `body.mode must be one of ${MACHINE_OVERLAY_MODES.join(", ")}` },
+        400,
+      );
+    }
+    try {
+      const result = setMachineOverlay(paths, input.mode);
+      return c.json({ mode: result.machineOverlay, version: result.version });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "set_machine_overlay failed" },
+        500,
+      );
+    }
+  });
+
   app.get("/status", (c) => {
     const cfg = readGlobalConfig(paths);
     return c.json({
@@ -201,6 +244,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         tcbPath: paths.tcbPath,
         ruleClassesPath: paths.ruleClassesPath,
         versionPath: paths.versionPath,
+        machineOverlayPath: paths.machineOverlayPath,
       },
     });
   });
@@ -537,6 +581,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       adapterDir: opts.adapterDir ?? "",
       registryPath: paths.upstreamsPath,
       machineInfo: opts.machineInfo,
+      machineOverlay: machineOverlay(),
       seams: opts.lifecycleSeams,
     });
     if (!result.ok) {
@@ -641,6 +686,7 @@ async function defaultSwitchExecutor(
     adapterDir: opts.adapterDir ?? "",
     registryPath: (opts.paths ?? defaultStorePaths()).upstreamsPath,
     machineInfo: opts.machineInfo,
+    machineOverlay: readGlobalConfig(opts.paths ?? defaultStorePaths()).machineOverlay,
     seams: opts.lifecycleSeams,
   });
   if (!result.ok) {
