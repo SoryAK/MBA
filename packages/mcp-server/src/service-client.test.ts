@@ -30,7 +30,6 @@ describe("service-client", () => {
   afterEach(() => {
     rmSync(baseDir, { recursive: true, force: true });
     delete process.env.MBA_SERVICE_URL;
-    delete process.env.MBA_SERVICE_URL;
   });
 
   describe("readServiceInfoOrNull", () => {
@@ -74,11 +73,6 @@ describe("service-client", () => {
     it("falls back to MBA_SERVICE_URL", () => {
       process.env.MBA_SERVICE_URL = "http://127.0.0.1:2";
       expect(resolveServiceBaseUrl({ baseDir })).toBe("http://127.0.0.1:2");
-    });
-
-    it("falls back to the deprecated MBA_SERVICE_URL alias", () => {
-      process.env.MBA_SERVICE_URL = "http://127.0.0.1:3";
-      expect(resolveServiceBaseUrl({ baseDir })).toBe("http://127.0.0.1:3");
     });
 
     it("falls back to the discovery file", () => {

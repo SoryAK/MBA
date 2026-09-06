@@ -1,7 +1,7 @@
 /**
  * Passive client fingerprint (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/core/src/capture-record.ts` (ADR 0016): the
+ * Adapted from the original capture-record implementation (ADR 0016): the
  * harness leaks who it is in the system prompt + User-Agent, so `fingerprint`
  * never injects anything — it only reads what the client already sends.
  *
@@ -9,9 +9,6 @@
  * `escalate.ts`): the session key is `sha256(harness + systemPrompt)`, so a
  * no-prompt request is isolated per-harness instead of pooling every
  * no-prompt client into one counter.
- *
- * NOTE: this is a COPY, not a move. the original project keeps its own `fingerprint` in
- * `capture-record.ts`; dedup is deferred until the original project work resumes.
  */
 
 export type Harness = "cline" | "continue" | "copilot" | "ai-toolkit" | "unknown";

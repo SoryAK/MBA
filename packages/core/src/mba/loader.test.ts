@@ -63,12 +63,12 @@ describe("loader cache", () => {
     expect(loadStructuralConfig(join(dir, "s299.json"))).toEqual({ i: 299 });
   });
 
-  it("rejects the legacy the original project.dev apiVersion", () => {
+  it("rejects a legacy apiVersion", () => {
     const path = join(dir, "legacy.yaml");
     writeFileSync(
       path,
       [
-        "apiVersion: mba.ai/v1alpha1",
+        "apiVersion: mba.legacy/v1alpha1",
         "kind: ModelBehavioralAdapter",
         "metadata:",
         "  id: legacy-model",

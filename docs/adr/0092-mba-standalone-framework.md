@@ -16,12 +16,12 @@ Key questions covered in discussion:
 1. **Data plane vs control plane** — the proxy resolves config per request; that cannot go through MCP IPC. Resolution stays in-process (SDK import); MCP is control plane only (registry, lifecycle, rule management).
 2. **Server lifecycle ownership** — who owns model server processes? The framework (MBA service) owns lifecycle; the proxy consumes resolved config and talks to servers.
 3. **Move vs duplicate** — the BCB/TCB/AMPI engine is absorbed into the framework, not duplicated. It is core to the product, not a plugin.
-4. **Repo question** — a framework for others needs a clean public API, independent versioning, and no the original project proxy coupling. But graduating to a separate repo before the boundary is proven in-repo is premature.
+4. **Repo question** — a framework for others needs a clean public API, independent versioning, and no original proxy coupling. But graduating to a separate repo before the boundary is proven in-repo is premature.
 5. **Core vs plugin** — BCB/TCB/AMPI is core (the differentiator). Model-tailored skills are a second-cut surface (no existing code).
 
 ## Decision Drivers
 
-- Reusability: other projects/platforms must be able to adopt MBA without the the original project proxy
+- Reusability: other projects/platforms must be able to adopt MBA without the original proxy
 - Clean public API: framework surface must be explicit and versionable
 - Zero per-request overhead: proxy resolution must stay in-process
 - Migration safety: the boundary must be proven in-repo before repo graduation
@@ -67,7 +67,7 @@ Key questions covered in discussion:
 ### Option C — Immediate new repo
 
 - ✅ Cleanest long-term separation
-- ❌ Public API unproven; versioning/publishing before the boundary is exercised; the original project proxy becomes an external dependency mid-refactor
+- ❌ Public API unproven; versioning/publishing before the boundary is exercised; original proxy becomes an external dependency mid-refactor
 
 ## Explicit Deferrals
 

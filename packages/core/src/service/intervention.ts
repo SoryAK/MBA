@@ -10,7 +10,7 @@
  * decision out. It owns the "how" (detect + escalate + build the response);
  * the proxy route owns the "why/when" (status codes, forwarding).
  *
- * Pipeline (mirrors the original project `server.ts` `runToolPipeline` TCB block):
+ * Pipeline (mirrors the original proxy's `runToolPipeline` TCB block):
  *   parse body → fingerprint client → build line-count context →
  *   applyToolCircuitBreakers → (if trips) evaluateBcbEscalation →
  *   (if kill) buildBcbKillResponse.

@@ -1,7 +1,7 @@
 /**
  * Tests for the passive client fingerprint (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/core/src/capture-record.ts` (ADR 0016): the
+ * Adapted from the original capture-record implementation (ADR 0016): the
  * harness leaks who it is in the system prompt + User-Agent, so `fingerprint`
  * never injects anything. The daemon needs this to key BCB kill-state by
  * client identity (see `escalate.ts`).

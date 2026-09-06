@@ -61,7 +61,7 @@ Breaks on any machine where the active profile differs.
 was retired, so `resolve-server-recipe.ts` looked like dead code to delete. It is
 **live**: `scripts/llama-server-up.sh:375` calls
 `npm run resolve-server-recipe -w @mba-ai/core -- --model-file "$MODEL_PATH"` to
-source its boot dials. Deleting it would break the the original project boot script.
+source its boot dials. Deleting it would break the original boot script.
 
 The real defect was the duplication: `service/server-boot.ts` `resolveBootRecipe`
 re-implemented the entire chain (catalog find → YAML read for declared

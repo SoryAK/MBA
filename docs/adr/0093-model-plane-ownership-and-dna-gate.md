@@ -8,7 +8,7 @@
 ## Context and Problem Statement
 
 The local stack has three layers: the MBA service (1st layer, global, owns the
-adapter catalog in `~/models/adapters`), the the original project proxy (2nd layer, per
+adapter catalog in `~/models/adapters`), the original proxy (2nd layer, per
 project, does KV reuse + BCB/TCB), and the llama.cpp server (dumb, serves
 whatever model it was booted with).
 
