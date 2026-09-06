@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectMachineInfo,
   machineInfoFromEnv,
+  parseLspciGpus,
   parseMeminfo,
   parseNvidiaSmiXml,
   parseSystemProfiler,
@@ -115,6 +116,26 @@ describe("parseWindowsVideoControllers", () => {
     ]);
     const gpus = parseWindowsVideoControllers(json);
     expect(gpus).toHaveLength(2);
+  });
+});
+
+describe("parseLspciGpus", () => {
+  it("extracts clean device names from lspci output", () => {
+    const output = [
+      "00:00.0 VGA compatible controller: NVIDIA Corporation GA104 [Example NVIDIA GPU GDDR6X] (rev a1)",
+      "00:00.1 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Raphael (rev c1)",
+      "01:00.0 3D controller: NVIDIA Corporation GA102 [GeForce RTX 3090]",
+    ].join("\n");
+    const gpus = parseLspciGpus(output);
+    expect(gpus).toEqual([
+      { name: "NVIDIA Corporation GA104 [Example NVIDIA GPU GDDR6X]" },
+      { name: "Advanced Micro Devices, Inc. [AMD/ATI] Raphael" },
+      { name: "NVIDIA Corporation GA102 [GeForce RTX 3090]" },
+    ]);
+  });
+
+  it("returns undefined for output with no GPU controllers", () => {
+    expect(parseLspciGpus("00:00.0 Ethernet controller: Intel Corporation I219-V")).toBeUndefined();
   });
 });
 

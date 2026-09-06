@@ -110,16 +110,23 @@ function detectLinuxGpus(): readonly GpuInfo[] | undefined {
 }
 
 function detectNvidiaSmi(): readonly GpuInfo[] | undefined {
-  try {
-    const output = execFileSync("nvidia-smi", ["-q", "-x"], {
-      encoding: "utf8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return parseNvidiaSmiXml(output);
-  } catch {
-    return undefined;
+  // Try the command as it would appear on PATH, then a few common absolute
+  // paths. nvidia-smi is the only reliable source of NVIDIA VRAM on Linux.
+  const candidates = ["nvidia-smi", "/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi"];
+  for (const bin of candidates) {
+    try {
+      const output = execFileSync(bin, ["-q", "-x"], {
+        encoding: "utf8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const gpus = parseNvidiaSmiXml(output);
+      if (gpus !== undefined && gpus.length > 0) return gpus;
+    } catch {
+      // Try the next candidate.
+    }
   }
+  return undefined;
 }
 
 /** Exported for tests. */
@@ -145,6 +152,24 @@ function extractXmlTag(xml: string, tag: string): string | undefined {
   return match?.[1];
 }
 
+/** Exported for tests. */
+export function parseLspciGpus(output: string): readonly GpuInfo[] | undefined {
+  const names: string[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    // lspci line format: "00:00.0 VGA compatible controller: NVIDIA ... [GeForce ...] (rev a1)"
+    // We want the vendor/device string after the controller-type colon.
+    const match = line.match(
+      /(VGA compatible controller|3D controller|Display controller):\s*(.*?)\s*(?:\(rev [a-f0-9]+\))?$/i,
+    );
+    if (match && match[2]) {
+      const cleaned = match[2].trim();
+      if (cleaned.length > 0) names.push(cleaned);
+    }
+  }
+  const unique = [...new Set(names)];
+  return unique.length > 0 ? unique.map((name) => ({ name })) : undefined;
+}
+
 function detectLspciGpus(): readonly GpuInfo[] | undefined {
   try {
     const output = execFileSync("lspci", [], {
@@ -152,16 +177,7 @@ function detectLspciGpus(): readonly GpuInfo[] | undefined {
       timeout: 5000,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    const names: string[] = [];
-    for (const line of output.split(/\r?\n/)) {
-      const match = line.match(/VGA compatible controller|3D controller|Display controller/);
-      if (match) {
-        const cleaned = line.replace(/^[^:]*:\s*/, "").replace(/\s*\(rev [a-f0-9]+\)\s*$/i, "").trim();
-        if (cleaned.length > 0) names.push(cleaned);
-      }
-    }
-    const unique = [...new Set(names)];
-    return unique.length > 0 ? unique.map((name) => ({ name })) : undefined;
+    return parseLspciGpus(output);
   } catch {
     return undefined;
   }
