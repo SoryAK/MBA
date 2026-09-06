@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearLoaderCaches,
+  loadAdapterYaml,
   loadStructuralConfig,
   loaderCacheSizes,
 } from "./loader.js";
@@ -60,5 +61,24 @@ describe("loader cache", () => {
     expect(loaderCacheSizes().json).toBeLessThanOrEqual(256);
     // The most recently loaded file is still served correctly.
     expect(loadStructuralConfig(join(dir, "s299.json"))).toEqual({ i: 299 });
+  });
+
+  it("loads adapters with the legacy the original project.dev apiVersion for backward compatibility", () => {
+    const path = join(dir, "legacy.yaml");
+    writeFileSync(
+      path,
+      [
+        "apiVersion: mba.ai/v1alpha1",
+        "kind: ModelBehavioralAdapter",
+        "metadata:",
+        "  id: legacy-model",
+        "identity:",
+        "  model:",
+        "    file: ./model.gguf",
+        "bindings: {}",
+      ].join("\n"),
+    );
+    const adapter = loadAdapterYaml(path);
+    expect(adapter.metadata.id).toBe("legacy-model");
   });
 });
