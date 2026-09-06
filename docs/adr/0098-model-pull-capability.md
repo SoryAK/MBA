@@ -1,6 +1,6 @@
 # 0098 — Model pull: one-command model onboarding with verified downloads and auto-generated draft adapters
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-25
 - **Deciders:** user + agent
 - **Tags:** mba, model-management, cli, service, gguf, download

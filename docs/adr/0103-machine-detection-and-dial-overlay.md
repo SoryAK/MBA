@@ -1,6 +1,6 @@
 # ADR 0103: Machine detection, model memory estimation, and dial overlay
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-06
 - **Deciders:** project maintainer + agent
 - **Tags:** mba, daemon, hardware, machine, recipe, server-setup, performance, memory

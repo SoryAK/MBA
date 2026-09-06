@@ -1,6 +1,6 @@
 # ADR 0101: AMPI — Daemon-as-Proxy and the Intervention Subsystem
 
-- **Status:** Proposed
+- **Status:** Accepted (Steps 1–2 shipped). Steps 3–5 remain.
 - **Date:** 2026-09-02
 - **Deciders:** project maintainer + agent
 - **Tags:** architecture, mba, bcb, tcb, ampi, daemon, proxy, uds, mcp
@@ -152,8 +152,8 @@ This gives Shape B's flexibility (the daemon is in the conversation, recipes hav
 
 ## Migration Staging
 
-1. **Step 1 — Daemon-as-proxy.** The MBA daemon gains the ability to accept model requests (TCP + UDS) and forward them to llama-server. The original proxy still works end-to-end; the daemon is a parallel path.
-2. **Step 2 — Migrate TCB/escalation.** Move the TCB detection + escalation application from the original proxy into the MBA daemon. The original proxy delegates model-behavior logic to the daemon (or is bypassed for model requests).
+1. **Step 1 — Daemon-as-proxy. (shipped)** The MBA daemon accepts model requests (TCP + UDS) and forwards them to llama-server.
+2. **Step 2 — Migrate TCB/escalation. (shipped)** TCB detection and escalation run in the MBA daemon on the request path.
 3. **Step 3 — AMPI subsystem.** Build the AMPI engine in the daemon: recipe registry, expression evaluator, worker-thread isolation, termination guarantees. Wire the `ampi` action target into the escalation ladder.
 4. **Step 4 — First recipe.** Implement the context-GC recipe as the anchor example. Prove the multi-turn loop, context rewrite, and termination guarantee end-to-end.
 5. **Step 5 — original proxy cleanup.** Remove the migrated TCB/escalation logic from the original proxy. The proxy either disappears or becomes a thin pass-through for non-model-behavior concerns.

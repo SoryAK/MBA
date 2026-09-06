@@ -1,6 +1,6 @@
 # 0100 — Open-ended `extraArgs` map for llama.cpp server flags
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-29
 - **Deciders:** user + agent
 - **Tags:** mba, server-flags, llama.cpp, config, boot, adapter-merge

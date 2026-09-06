@@ -1,6 +1,6 @@
 # 0096 — `mba` interactive config CLI: service-only front door for per-model dials
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-23
 - **Deciders:** user + agent
 - **Tags:** mba, cli, model-management, config, ux
