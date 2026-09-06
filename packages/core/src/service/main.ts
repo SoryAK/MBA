@@ -74,10 +74,19 @@ if (machineRefresh.fromEnv) {
   }
 }
 if (machineRefresh.info !== undefined) {
+  const info = machineRefresh.info;
+  const cpuParts: string[] = [];
+  if (info.cpuModel) cpuParts.push(info.cpuModel);
+  if (info.cpuPhysicalCores !== undefined) {
+    cpuParts.push(`${info.cpuPhysicalCores}/${info.cpuCores} cores`);
+  } else {
+    cpuParts.push(`${info.cpuCores} cores`);
+  }
+  if (info.cpuArchitecture) cpuParts.push(info.cpuArchitecture);
   console.log(
-    `[mba] machine: ${machineRefresh.info.cpuCores} cores, ${formatBytes(machineRefresh.info.totalRamBytes)} RAM` +
-      (machineRefresh.info.gpus && machineRefresh.info.gpus.length > 0
-        ? `, ${machineRefresh.info.gpus.map((g) => g.name ?? "GPU").join(", ")}`
+    `[mba] machine: ${cpuParts.join(" ")}, ${formatBytes(info.totalRamBytes)} RAM` +
+      (info.gpus && info.gpus.length > 0
+        ? `, ${info.gpus.map((g) => g.name ?? "GPU").join(", ")}`
         : ""),
   );
 }
