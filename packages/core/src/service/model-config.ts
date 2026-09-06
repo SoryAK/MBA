@@ -26,6 +26,12 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync,
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import YAML, { type YAMLMap } from "yaml";
 import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
+import {
+  findMaxFittingCtxSize,
+  findMaxFittingGpuLayers,
+  type GgufRecipeShape,
+} from "./gguf-memory-estimator.js";
+import type { MachineInfo } from "./machine-info.js";
 
 /** The two writable files per model. */
 export type ModelDialFile = "server_setup" | "client";
@@ -48,6 +54,14 @@ export interface ModelDialFieldSpec {
   readonly restartRequired: boolean;
 }
 
+/** Machine-aware constraint hints for a subset of dials. */
+export interface MachineDialHints {
+  ctxSize?: string;
+  gpuLayers?: string;
+  threads?: string;
+  parallel?: string;
+}
+
 /** A dial as presented to a reader (menu, route, tool). */
 export interface ModelDial {
   readonly field: string;
@@ -55,11 +69,17 @@ export interface ModelDial {
   readonly current: unknown;
   readonly restartRequired: boolean;
   /**
-   * A short constraint hint for the reader (e.g. "≤ 262144", "1–65",
+   * A short constraint hint from the adapter profile (e.g. "≤ 262144", "1–65",
    * "on|off", "true|false", "> 0"). Undefined when the field has no
    * meaningful constraint to surface.
    */
   readonly hint?: string;
+  /**
+   * A short constraint hint from the detected machine profile (e.g.
+   * "≤ 8192 RAM", "≤ 24 VRAM", "≤ 16 cores"). Undefined when no machine
+   * info is available or the field has no machine-bound constraint.
+   */
+  readonly machineHint?: string;
 }
 
 /** Result of a successful dial write. */
@@ -205,6 +225,7 @@ export function findModelFiles(adapterDir: string, modelId: string): ModelConfig
 export function readModelDials(
   adapterDir: string,
   modelId: string,
+  machineInfo?: MachineInfo,
 ): { readonly modelId: string; readonly files: ModelConfigFiles; readonly fields: ModelDial[] } | null {
   const files = findModelFiles(adapterDir, modelId);
   if (!files) return null;
@@ -219,12 +240,15 @@ export function readModelDials(
     | null;
   const clientBlock = (yamlRaw?.client as Record<string, unknown> | undefined) ?? {};
 
+  const machineHints = computeMachineHints(files, setupBlock, machineInfo);
+
   const fields: ModelDial[] = ALL_FIELDS.map((spec) => ({
     field: spec.field,
     file: spec.file,
     current: spec.file === "server_setup" ? setupBlock[spec.field] ?? null : clientBlock[spec.field] ?? null,
     restartRequired: spec.restartRequired,
     hint: dialHint(spec, files),
+    machineHint: machineHints[spec.field as keyof MachineDialHints],
   }));
 
   return { modelId, files, fields };
@@ -258,6 +282,89 @@ function dialHint(spec: ModelDialFieldSpec, files: ModelConfigFiles): string | u
     case "string":
       return undefined;
   }
+}
+
+/**
+ * Build the estimator recipe shape from the current server_setup values and
+ * the catalog model file. Returns undefined when the model file is not known.
+ */
+function buildRecipeShape(
+  files: ModelConfigFiles,
+  setupBlock: Record<string, unknown>,
+): GgufRecipeShape | undefined {
+  if (!files.modelFile) return undefined;
+  const gpuLayers = typeof setupBlock.gpuLayers === "number" ? setupBlock.gpuLayers : undefined;
+  const ctxSize = typeof setupBlock.ctxSize === "number" ? setupBlock.ctxSize : undefined;
+  return {
+    modelPath: files.modelFile,
+    ctxSize: ctxSize ?? 4096,
+    gpuLayers: gpuLayers ?? 0,
+    batchSize: 2048,
+    ubatchSize: 512,
+    cacheTypeK: "f16",
+    cacheTypeV: "f16",
+    flashAttention: false,
+  };
+}
+
+const RAM_HEADROOM = 0.85;
+const VRAM_HEADROOM = 0.9;
+
+/**
+ * Compute machine-aware constraint hints for the dials that are bounded by
+ * the detected host: ctxSize (RAM), gpuLayers (VRAM), threads/parallel (CPU
+ * cores). Returns an empty object when no machine info is available or the
+ * model file cannot be read by the estimator.
+ */
+export function computeMachineHints(
+  files: ModelConfigFiles,
+  setupBlock: Record<string, unknown>,
+  machineInfo: MachineInfo | undefined,
+): MachineDialHints {
+  if (!machineInfo || !files.modelFile) return {};
+
+  const shape = buildRecipeShape(files, setupBlock);
+  if (!shape) return {};
+
+  const availableRam = Math.floor(machineInfo.totalRamBytes * RAM_HEADROOM);
+  const gpuWithVram = machineInfo.gpus?.find(
+    (g) => g.vramBytes !== undefined && g.vramBytes > 0,
+  );
+  const availableVram =
+    gpuWithVram?.vramBytes !== undefined
+      ? Math.floor(gpuWithVram.vramBytes * VRAM_HEADROOM)
+      : undefined;
+
+  const hints: MachineDialHints = {};
+
+  if (machineInfo.cpuCores > 0) {
+    hints.threads = `≤ ${machineInfo.cpuCores} cores`;
+    hints.parallel = `≤ ${machineInfo.cpuCores} cores`;
+  }
+
+  const maxCtx = findMaxFittingCtxSize(
+    shape,
+    availableRam,
+    availableVram,
+    files.maxContextLength ?? 1_000_000,
+  );
+  if (maxCtx !== undefined && maxCtx > 0) {
+    hints.ctxSize = `≤ ${maxCtx} (RAM)`;
+  }
+
+  if (availableVram !== undefined && files.blockCount !== undefined) {
+    const maxLayers = findMaxFittingGpuLayers(
+      shape,
+      availableRam,
+      availableVram,
+      files.blockCount,
+    );
+    if (maxLayers !== undefined && maxLayers >= 0) {
+      hints.gpuLayers = `≤ ${maxLayers} (VRAM)`;
+    }
+  }
+
+  return hints;
 }
 
 function readJsonOrNull(path: string): unknown {

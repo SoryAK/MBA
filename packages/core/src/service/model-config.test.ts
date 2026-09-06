@@ -17,6 +17,7 @@ import {
   CLIENT_FIELDS,
   type ModelDialError,
 } from "./model-config.js";
+import type { MachineInfo } from "./machine-info.js";
 
 /** Write a minimal but realistic adapter tree fixture. */
 function writeFixture(root: string): void {
@@ -61,6 +62,97 @@ function writeFixture(root: string): void {
       null,
       2,
     ),
+  );
+}
+
+function writeString(buf: Buffer, offset: number, value: string): number {
+  const bytes = Buffer.from(value, "utf8");
+  buf.writeBigUInt64LE(BigInt(bytes.length), offset);
+  bytes.copy(buf, offset + 8);
+  return 8 + bytes.length;
+}
+
+function writeUint32(buf: Buffer, offset: number, value: number): number {
+  buf.writeUInt32LE(value, offset);
+  return 4;
+}
+
+function writeUint64(buf: Buffer, offset: number, value: bigint): number {
+  buf.writeBigUInt64LE(value, offset);
+  return 8;
+}
+
+function writeKvUint32(buf: Buffer, offset: number, key: string, value: number): number {
+  let written = 0;
+  written += writeString(buf, offset + written, key);
+  buf.writeUInt32LE(4, offset + written); // GGUF value type uint32
+  written += 4;
+  written += writeUint32(buf, offset + written, value);
+  return written;
+}
+
+function createMinimalGgufFile(path: string, opts: { blockCount: number; hiddenSize: number; headCount: number; headCountKv: number; fileSizeBytes?: number }): void {
+  const metadata: { key: string; value: number | string; type: "uint32" | "string" }[] = [
+    { key: "general.architecture", value: "llama", type: "string" },
+    { key: "llama.block_count", value: opts.blockCount, type: "uint32" },
+    { key: "llama.embedding_length", value: opts.hiddenSize, type: "uint32" },
+    { key: "llama.attention.head_count", value: opts.headCount, type: "uint32" },
+    { key: "llama.attention.head_count_kv", value: opts.headCountKv, type: "uint32" },
+  ];
+  const buf = Buffer.alloc(4096);
+  let offset = 0;
+  buf.write("GGUF", offset, 4, "ascii");
+  offset += 4;
+  offset += writeUint32(buf, offset, 3);
+  offset += writeUint64(buf, offset, 0n);
+  offset += writeUint64(buf, offset, BigInt(metadata.length));
+  for (const entry of metadata) {
+    offset += writeString(buf, offset, entry.key);
+    buf.writeUInt32LE(entry.type === "uint32" ? 4 : 8, offset);
+    offset += 4;
+    if (entry.type === "uint32") {
+      offset += writeUint32(buf, offset, entry.value as number);
+    } else {
+      offset += writeString(buf, offset, entry.value as string);
+    }
+  }
+  const fileSize = opts.fileSizeBytes ?? 1 * 1024 * 1024;
+  const final = Buffer.alloc(fileSize);
+  buf.copy(final, 0, 0, offset);
+  writeFileSync(path, final);
+}
+
+function writeMachineHintFixture(root: string): void {
+  const modelDir = join(root, "tiny", "tiny-model");
+  mkdirSync(modelDir, { recursive: true });
+  const modelPath = join(modelDir, "tiny.gguf");
+  createMinimalGgufFile(modelPath, {
+    blockCount: 8,
+    hiddenSize: 512,
+    headCount: 8,
+    headCountKv: 2,
+    fileSizeBytes: 100 * 1024 * 1024,
+  });
+  writeFileSync(
+    join(modelDir, "tiny-model.yaml"),
+    [
+      "apiVersion: mba.ai/v1alpha1",
+      "kind: ModelBehavioralAdapter",
+      "metadata:",
+      "  id: tiny-model",
+      "identity:",
+      "  model:",
+      '    file: "./tiny.gguf"',
+      "    profile:",
+      "      params:",
+      "        blockCount: 8",
+      "        maxContextLength: 100000",
+      "bindings: {}",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(modelDir, "server_setup.json"),
+    JSON.stringify({ "llama.cpp": { ctxSize: 100000, gpuLayers: 8, threads: 8, parallel: 1 } }, null, 2),
   );
 }
 
@@ -160,6 +252,35 @@ describe("readModelDials", () => {
 
   it("returns null for an unknown model id", () => {
     expect(readModelDials(root, "nope")).toBeNull();
+  });
+
+  it("includes machine-aware hints when machine info is provided", () => {
+    writeMachineHintFixture(root);
+    const machine: MachineInfo = {
+      os: "linux",
+      cpuCores: 4,
+      totalRamBytes: 2 * 1024 * 1024 * 1024,
+      gpus: [{ name: "Test GPU", vramBytes: 300 * 1024 * 1024 }],
+    };
+    const dials = readModelDials(root, "tiny-model", machine);
+    expect(dials).not.toBeNull();
+    const byField = new Map(dials!.fields.map((f) => [f.field, f]));
+    expect(byField.get("threads")?.machineHint).toBe("≤ 4 cores");
+    expect(byField.get("parallel")?.machineHint).toBe("≤ 4 cores");
+    // With a 100 MB model and 2 GB RAM, the profile ceiling of 100k still
+    // limits ctxSize more than RAM, so the machine hint is present.
+    expect(byField.get("ctxSize")?.machineHint).toMatch(/^≤ \d+ \(RAM\)$/);
+    // With 300 MB VRAM, the full 8-layer offload does not fit.
+    expect(byField.get("gpuLayers")?.machineHint).toMatch(/^≤ \d+ \(VRAM\)$/);
+  });
+
+  it("omits machine hints when no machine info is provided", () => {
+    writeMachineHintFixture(root);
+    const dials = readModelDials(root, "tiny-model");
+    expect(dials).not.toBeNull();
+    for (const f of dials!.fields) {
+      expect(f.machineHint).toBeUndefined();
+    }
   });
 });
 

@@ -28,6 +28,8 @@ export interface ModelDial {
   readonly current: unknown;
   readonly restartRequired: boolean;
   readonly hint?: string;
+  /** Machine-aware constraint hint (e.g. "≤ 8192 RAM"). */
+  readonly machineHint?: string;
 }
 
 /**
