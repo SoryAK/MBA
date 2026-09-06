@@ -17,7 +17,8 @@
  *   MBA_ENDPOINT_SYNC    — "off" disables VS Code endpoint auto-sync (default on)
  *   MBA_VSCODE_LM_CONFIG — chatLanguageModels.json path (default: the active
  *                          profile's file under ~/.config/Code/User/profiles)
- *   MBA_VSCODE_LM_API_KEY_REF — apiKey reference for the generated block
+ *   MBA_VSCODE_LM_API_KEY_REF — required apiKey reference for the generated
+ *                                block; endpoint sync is skipped if unset
  */
 
 import { homedir } from "node:os";
@@ -47,8 +48,7 @@ const switchEnabled = process.env.MBA_MODEL_SWITCH === "on";
 const endpointSyncEnabled = process.env.MBA_ENDPOINT_SYNC !== "off";
 const vscodeLmConfig =
   process.env.MBA_VSCODE_LM_CONFIG ?? resolveVsCodeLmConfigPath(homedir());
-const vscodeLmApiKeyRef =
-  process.env.MBA_VSCODE_LM_API_KEY_REF ?? "${input:chat.lm.secret.<REDACTED>}";
+const vscodeLmApiKeyRef = process.env.MBA_VSCODE_LM_API_KEY_REF;
 
 // One-time migration from the legacy `~/.mba` base dir. Only when the
 // default location is in use — an explicit MBA_BASE_DIR is the user's choice.
@@ -105,28 +105,36 @@ console.log(`[mba] model plane: adapters=${adapterDir} upstream=${upstreamUrl ??
 // keep the generated block in step with the adapter tree.
 let stopEndpointWatch: (() => void) | null = null;
 if (endpointSyncEnabled) {
-  // Option C: the boot sync and the watcher share the same resolver so the
-  // inherited context size (when a YAML omits `client.contextSize`) matches
-  // the one-shot CLI and the server recipe.
-  const syncOpts = {
-    adapterDir,
-    configPath: vscodeLmConfig,
-    apiKeyRef: vscodeLmApiKeyRef,
-    resolveCtxSize: buildCtxSizeResolver(adapterDir),
-  };
-  try {
-    const boot = syncVsCodeEndpoints(syncOpts);
-    if (boot.created || boot.updated) {
-      console.log(
-        `[mba] endpoint sync: ${boot.created ? "created" : "updated"} ${vscodeLmConfig} ` +
-          `(${boot.models.length} model${boot.models.length === 1 ? "" : "s"})`,
-      );
+  if (!vscodeLmConfig || !vscodeLmApiKeyRef) {
+    const reasons = [
+      !vscodeLmConfig && "no VS Code profile detected",
+      !vscodeLmApiKeyRef && "MBA_VSCODE_LM_API_KEY_REF not set",
+    ].filter(Boolean);
+    console.log(`[mba] endpoint sync skipped: ${reasons.join("; ")}`);
+  } else {
+    // Option C: the boot sync and the watcher share the same resolver so the
+    // inherited context size (when a YAML omits `client.contextSize`) matches
+    // the one-shot CLI and the server recipe.
+    const syncOpts = {
+      adapterDir,
+      configPath: vscodeLmConfig,
+      apiKeyRef: vscodeLmApiKeyRef,
+      resolveCtxSize: buildCtxSizeResolver(adapterDir),
+    };
+    try {
+      const boot = syncVsCodeEndpoints(syncOpts);
+      if (boot.created || boot.updated) {
+        console.log(
+          `[mba] endpoint sync: ${boot.created ? "created" : "updated"} ${vscodeLmConfig} ` +
+            `(${boot.models.length} model${boot.models.length === 1 ? "" : "s"})`,
+        );
+      }
+    } catch (err) {
+      console.warn(`[mba] endpoint sync failed at boot: ${String(err)}`);
     }
-  } catch (err) {
-    console.warn(`[mba] endpoint sync failed at boot: ${String(err)}`);
+    stopEndpointWatch = watchAdapterDir(adapterDir, syncOpts, (msg) => console.log(msg));
+    console.log(`[mba] endpoint sync: watching ${adapterDir} → ${vscodeLmConfig}`);
   }
-  stopEndpointWatch = watchAdapterDir(adapterDir, syncOpts, (msg) => console.log(msg));
-  console.log(`[mba] endpoint sync: watching ${adapterDir} → ${vscodeLmConfig}`);
 } else {
   console.log(`[mba] endpoint sync: off`);
 }
