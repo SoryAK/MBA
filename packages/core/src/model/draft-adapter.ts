@@ -21,6 +21,7 @@
  */
 
 import YAML from "yaml";
+import { MBA_API_VERSION } from "../mba/loader.js";
 import type { MbaModelProfile } from "../mba/types.js";
 
 export interface DraftAdapterInput {
@@ -54,7 +55,7 @@ export function draftAdapterYaml(input: DraftAdapterInput): string {
       : "[ input base models here once determined ]";
 
   const doc = {
-    apiVersion: "mba.ai/v1alpha1",
+    apiVersion: MBA_API_VERSION,
     kind: "ModelBehavioralAdapter",
     metadata: {
       id,
@@ -129,7 +130,7 @@ export function draftFamilyYaml(input: { family: string }): string {
   const { family } = input;
 
   const doc = {
-    apiVersion: "mba.ai/v1alpha1",
+    apiVersion: MBA_API_VERSION,
     kind: "ModelBehavioralAdapter",
     metadata: {
       id: `${family}-family`,

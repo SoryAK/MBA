@@ -21,7 +21,12 @@ import type {
   MbaStructuralConfig,
 } from "./types.js";
 
-const SUPPORTED_API_VERSIONS = new Set(["mba.ai/v1alpha1"]);
+export const MBA_API_VERSION = "mba.ai/v1alpha1";
+export const LEGACY_MBA_API_VERSION = "mba.ai/v1alpha1";
+export const SUPPORTED_API_VERSIONS = new Set([
+  MBA_API_VERSION,
+  LEGACY_MBA_API_VERSION,
+]);
 
 interface CacheEntry<T> {
   mtimeMs: number;
@@ -96,7 +101,7 @@ function lastGood<T>(path: string, cache: Map<string, CacheEntry<T>>, fresh: () 
 export function isMbaAdapter(value: unknown): value is MbaAdapter {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  if (v.apiVersion !== "mba.ai/v1alpha1") return false;
+  if (!SUPPORTED_API_VERSIONS.has(String(v.apiVersion))) return false;
   if (v.kind !== "ModelBehavioralAdapter") return false;
   if (typeof v.metadata !== "object" || v.metadata === null) return false;
   if (typeof (v.metadata as Record<string, unknown>).id !== "string") return false;

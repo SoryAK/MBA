@@ -114,4 +114,24 @@ describe("readModelCatalog", () => {
     const entries = readModelCatalog(root);
     expect(entries[0]?.clientUrl).toBeUndefined();
   });
+
+  it("accepts the legacy the original project.dev apiVersion for backward compatibility", () => {
+    const file = join(root, "qwen/legacy/legacy.yaml");
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(
+      file,
+      [
+        "apiVersion: mba.ai/v1alpha1",
+        "kind: ModelBehavioralAdapter",
+        "metadata:",
+        "  id: legacy-model",
+        "identity:",
+        "  model:",
+        "    file: ./model.gguf",
+        "bindings: {}",
+      ].join("\n"),
+    );
+    const entries = readModelCatalog(root);
+    expect(entries.map((e) => e.id)).toEqual(["legacy-model"]);
+  });
 });
