@@ -58,7 +58,7 @@ a restart is required.
      restart**: stop every server running this model, then `POST
      /servers/boot` on the switch port (`MBA_SWITCH_PORT` env, default 8080).
      The daemon owns the server lifecycle (ADR-0092/0097); the retired
-     the original project boot script is no longer used.
+     legacy external boot script is no longer used.
    - `--yes` (or non-TTY stdin) **never restarts** — it skips the prompt and
      prints the manual hint `mba servers boot <id> <port>` instead.
 7. **`mba open <id> [server_setup|yaml]`** — `GET /models/config?id=<id>` →
