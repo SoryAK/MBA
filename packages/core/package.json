@@ -48,6 +48,7 @@
     "prepublishOnly": "npm run build",
     "dev": "tsx src/service/main.ts",
     "start": "tsx src/service/main.ts",
+    "mba": "tsx src/cli/mba.ts",
     "sync-endpoints": "tsx src/service/sync-endpoints.ts",
     "resolve-server-recipe": "tsx src/service/resolve-server-recipe.ts"
   },
