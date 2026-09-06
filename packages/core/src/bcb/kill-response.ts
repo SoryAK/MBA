@@ -1,11 +1,11 @@
 /**
  * TCB kill-response builder (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/proxy/src/server.ts` (`buildBcbKillResponse`).
+ * Adapted from the original proxy implementation.
  * Builds the proxy response for a kill action, or returns undefined to
  * continue with a (possibly mutated) body.
  *
- * The the original project `wantStream` param was dropped: the kill action alone determines
+ * The original `wantStream` param was dropped: the kill action alone determines
  * the response shape (return-error → 400 JSON, close-stream → 200 SSE), so
  * the flag was vestigial.
  */

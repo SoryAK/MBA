@@ -115,13 +115,13 @@ describe("readModelCatalog", () => {
     expect(entries[0]?.clientUrl).toBeUndefined();
   });
 
-  it("rejects the legacy the original project.dev apiVersion", () => {
+  it("rejects a legacy apiVersion", () => {
     const file = join(root, "qwen/legacy/legacy.yaml");
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(
       file,
       [
-        "apiVersion: mba.ai/v1alpha1",
+        "apiVersion: mba.legacy/v1alpha1",
         "kind: ModelBehavioralAdapter",
         "metadata:",
         "  id: legacy-model",

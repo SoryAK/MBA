@@ -1,9 +1,9 @@
 /**
  * Shared server-recipe resolution chain (R1 extraction).
  *
- * Both the one-shot `resolve-server-recipe` CLI (sourced by the the original project boot
- * script) and the in-daemon `resolveBootRecipe` (server plane) need the SAME
- * effective recipe for a weights file — the 4-rung merge the proxy uses at
+ * Both the one-shot `resolve-server-recipe` CLI (sourced by the legacy
+ * external boot script) and the in-daemon `resolveBootRecipe` (server plane)
+ * need the SAME effective recipe for a weights file — the 4-rung merge the proxy uses at
  * runtime. Before this extraction the two entry points each re-implemented the
  * chain (catalog lookup → declared identity → `resolveMbaConfig` →
  * `sanitizeLlamaCppServerFlags` → `buildLlamaServerFlags`), so a fix to one

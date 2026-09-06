@@ -114,8 +114,8 @@ export interface BootRecipe {
 /**
  * Resolve the effective llama.cpp recipe for `modelFile` from the adapter
  * tree. Thin wrapper over the shared `resolveRecipe` chain (R1) — the same
- * chain the `resolve-server-recipe` CLI runs, so the daemon and the the original project
- * boot script set identical flags.
+ * chain the `resolve-server-recipe` CLI runs, so the daemon and the legacy
+ * external boot script set identical flags.
  *
  * @throws {Error} when no adapter under `adapterDir` declares `modelFile`
  *   (the model is not in the MBA tree — the route maps this to 404).

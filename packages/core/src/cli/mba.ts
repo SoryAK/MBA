@@ -25,7 +25,7 @@
  *   - restartRequired && modelLoaded  → y/N prompt, then an in-daemon restart
  *     (stop the model's current server, then POST /servers/boot on the switch
  *     port — MBA_SWITCH_PORT, default 8080). The daemon owns the server
- *     lifecycle (ADR-0092); the retired the original project boot script is no longer used.
+ *     lifecycle (ADR-0092); the retired legacy external boot script is no longer used.
  *   - restartRequired && !modelLoaded → "saved — takes effect on next boot"
  *   - !restartRequired                → "saved — synced live, no restart needed"
  *
@@ -51,7 +51,6 @@ import {
 } from "./interactive.js";
 import { listHfGgufs, searchHfModels } from "../model/hf-resolve.js";
 import { selectRestartTargets } from "./restart-selection.js";
-import { migrateAdapters } from "./migrate-adapters.js";
 import { cmdEstimateMemory } from "./estimate-memory.js";
 import {
   defaultModelStoreRoot,
@@ -69,7 +68,7 @@ interface ServiceInfo {
 }
 
 function resolveServiceUrl(): string | null {
-  const envUrl = process.env.MBA_SERVICE_URL ?? process.env.MBA_SERVICE_URL;
+  const envUrl = process.env.MBA_SERVICE_URL;
   if (envUrl && envUrl.length > 0) return envUrl;
   const infoPath = join(defaultStateDir(), "mba", "service.json");
   if (!existsSync(infoPath)) return null;
@@ -280,8 +279,8 @@ function parseValue(raw: string): unknown {
 
 /**
  * In-daemon restart: stop the current server for this model (if any), then
- * boot it fresh on the switch port. Replaces the retired the original project boot-script
- * shell-out — the daemon now owns the server lifecycle (ADR-0092).
+ * boot it fresh on the switch port. Replaces the retired legacy external
+ * boot-script shell-out — the daemon now owns the server lifecycle (ADR-0092).
  */
 async function restartServer(
   baseUrl: string,
@@ -333,7 +332,7 @@ function askYesNo(question: string): Promise<boolean> {
 /**
  * Post-write restart flow. `assumeNo` (from --yes or non-TTY) never restarts.
  * A restart now goes through the in-daemon boot (stop + boot), not the retired
- * the original project boot script.
+ * legacy external boot script.
  */
 async function handleRestartPrompt(
   baseUrl: string,
@@ -1017,42 +1016,6 @@ function cmdMigratePaths(): void {
 }
 
 /**
- * `mba migrate adapters [--write]` — rewrite old `apiVersion` values in the
- * adapter tree to the current canonical value. Local filesystem only.
- *
- * Defaults to dry-run; pass `--write` to mutate files.
- */
-function cmdMigrateAdapters(args: readonly string[]): void {
-  const dryRun = !args.includes("--write");
-  const adapterDir = process.env.MBA_ADAPTER_DIR ?? defaultModelStoreRoot();
-  const result = migrateAdapters({ adapterDir, dryRun });
-
-  for (const file of result.changed) {
-    process.stdout.write(`[mba] ${dryRun ? "would rewrite" : "rewrote"} ${file}\n`);
-  }
-  for (const file of result.unchanged) {
-    process.stdout.write(`[mba] unchanged ${file}\n`);
-  }
-  for (const error of result.errors) {
-    process.stderr.write(`[mba] error: ${error}\n`);
-  }
-
-  if (dryRun && result.changed.length > 0) {
-    process.stdout.write(
-      `[mba] dry-run complete. Run again with --write to apply ${result.changed.length} change(s).\n`,
-    );
-  } else {
-    process.stdout.write(
-      `[mba] migrate adapters complete — ${result.changed.length} rewritten, ${result.unchanged.length} unchanged, ${result.errors.length} error(s).\n`,
-    );
-  }
-
-  if (result.errors.length > 0) {
-    process.exit(2);
-  }
-}
-
-/**
  * `mba machine-overlay [enforce|warn|off]` — show or set the enforcement mode.
  *
  * With no argument, prints the current mode. With an argument, POSTs the new
@@ -1132,9 +1095,6 @@ Usage:
   mba migrate-paths                one-time move of state + model store from the
                                    legacy locations to the OS-aware ones (local
                                    only — does not need the service running)
-  mba migrate adapters [--write]   rewrite old adapter YAML apiVersion values to
-                                   the current canonical value (local only; dry
-                                   run by default — pass --write to apply)
   mba estimate-memory <model.gguf> [flags]
                                    local-only memory estimate from GGUF metadata.
                                    flags: --ctx-size, --gpu-layers, --batch-size,
@@ -1165,10 +1125,6 @@ async function main(argv: readonly string[]): Promise<void> {
   // it works while the service is stopped (which is exactly when you migrate).
   if (command === "migrate-paths") {
     cmdMigratePaths();
-    return;
-  }
-  if (command === "migrate" && rest[0] === "adapters") {
-    cmdMigrateAdapters(rest.slice(1));
     return;
   }
   if (command === "estimate-memory") {

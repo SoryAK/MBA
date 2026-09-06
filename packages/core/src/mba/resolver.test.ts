@@ -14,7 +14,7 @@ import type { MbaAdapter, MbaResolutionContext } from "./types.js";
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "mba-"));
+  dir = mkdtempSync(join(tmpdir(), "mba-resolver-"));
 });
 
 afterEach(() => {

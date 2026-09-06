@@ -1,8 +1,8 @@
 /**
  * Tests for buildBcbContext (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/proxy/src/server.ts`. Resolves live line
- * counts from disk for read targets so the eofOverflow / readClamp rules can
+ * Adapted from the original proxy implementation. Resolves live line counts
+ * from disk for read targets so the eofOverflow / readClamp rules can
  * compare a requested range against the file's actual length.
  */
 

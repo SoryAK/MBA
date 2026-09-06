@@ -1,9 +1,9 @@
 /**
  * Tests for buildBcbKillResponse (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/proxy/src/server.ts`. Builds the proxy
- * response for a kill action, or returns undefined to continue with a
- * (possibly mutated) body. The `wantStream` param from the original project was dropped —
+ * Adapted from the original proxy implementation. Builds the proxy response
+ * for a kill action, or returns undefined to continue with a (possibly
+ * mutated) body. The `wantStream` param from the original proxy was dropped —
  * the kill action alone determines the response shape.
  */
 

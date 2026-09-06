@@ -24,26 +24,18 @@
  * First-boot seed: if the global TCB file is missing, seed it from the
  * built-in defaults.
  *
- * Base-dir migration: the store originally lived under `~/.mba` (MBA's
- * the original project origin). `migrateLegacyBaseDir` copies any state found there into
- * the new `~/.mba` location on first boot — copy, never overwrite, and the
- * legacy files are left in place.
- *
  * Pure-ish: all fs I/O is explicit and injected-friendly via the `paths`
  * parameter so tests can point at a temp dir. No globals, no implicit DB.
  */
 
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { defaultToolCircuitBreakerConfig } from "../bcb/default-config.js";
 import { defaultStateDir } from "./paths.js";
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
@@ -105,41 +97,6 @@ export function defaultStorePaths(baseDir: string = defaultStateDir()): MbaStore
     upstreamsPath: join(baseDir, "mba", "upstreams.json"),
     udsPath: join(baseDir, "mba", "mba.sock"),
   };
-}
-
-/**
- * One-time migration from the legacy `~/.mba` base dir to `~/.mba`.
- *
- * Copies every file under the legacy dir into the new one, preserving the
- * relative layout. Copy, never overwrite: files already present in the new
- * dir win. Legacy files are left in place (no delete) so a rollback is
- * trivial. No-op when the legacy dir does not exist.
- *
- * Returns the list of files copied (empty when nothing to migrate).
- */
-export function migrateLegacyBaseDir(
-  legacyBaseDir: string = join(homedir(), ".mba"),
-  newBaseDir: string = defaultStateDir(),
-): string[] {
-  if (!existsSync(legacyBaseDir) || legacyBaseDir === newBaseDir) return [];
-  const copied: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const src = join(dir, entry.name);
-      const rel = relative(legacyBaseDir, src);
-      const dest = join(newBaseDir, rel);
-      if (entry.isDirectory()) {
-        mkdirSync(dest, { recursive: true });
-        walk(src);
-      } else if (entry.isFile() && !existsSync(dest)) {
-        mkdirSync(dirname(dest), { recursive: true });
-        copyFileSync(src, dest);
-        copied.push(rel);
-      }
-    }
-  };
-  walk(legacyBaseDir);
-  return copied;
 }
 
 /** Discovery record the service writes on boot (port + pid). */

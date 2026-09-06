@@ -13,7 +13,7 @@ applies them to grammar injection, circuit breakers, and streaming behavior.
 
 This works, but it has limitations:
 
-- **Proxy-locked:** Adapter logic only runs inside the the original project proxy.
+- **Proxy-locked:** Adapter logic only runs inside the original proxy.
 - **Static identity:** The proxy must discover model identity itself via
   upstream probes (`/legacy/dna`, `/v1/models`, `/props`).
 - **No custom tools:** Adapters can only configure existing proxy behavior; they
@@ -27,7 +27,7 @@ would make adapters portable, verifiable, and extensible.
 
 ## Decision
 
-We will design a standalone `the original project-mba` MCP server that hosts the MBA registry
+We will design a standalone `MBA MCP server` MCP server that hosts the MBA registry
 and exposes adapter-specific capabilities to any MCP consumer.
 
 This is **Phase 1 of the design only**. The current file-based MBA remains the
@@ -37,13 +37,13 @@ production path while we prototype the MCP server.
 
 ```text
 ┌─────────────────┐     MCP      ┌──────────────────┐
-│  VS Code /      │ ◄──────────► │  the original project-mba      │
+│  VS Code /      │ ◄──────────► │  MBA MCP server      │
 │  Copilot /      │              │  MCP server      │
 │  Cline          │              │                  │
 └─────────────────┘              │  - loads .MBA/   │
                                  │  - resolves      │
 ┌─────────────────┐              │    adapters      │
-│  the original project proxy   │ ◄──────────► │  - verifies DNA  │
+│  original proxy   │ ◄──────────► │  - verifies DNA  │
 │                 │              │  - exposes tools │
 └─────────────────┘              └──────────────────┘
                                         │
@@ -117,11 +117,11 @@ can call them.
 ## Phased plan
 
 1. **Phase 0 (now):** Keep file-based MBA as production. Commit adapter files.
-2. **Phase 1:** Design and prototype `the original project-mba` MCP server with read-only
+2. **Phase 1:** Design and prototype `MBA MCP server` MCP server with read-only
    registry tools.
 3. **Phase 2:** Add DNA verification via Ollama/llama.cpp probes.
 4. **Phase 3:** Allow adapters to expose custom tools like `file_metadata`.
-5. **Phase 4:** Migrate the the original project proxy to consult the MCP server while
+5. **Phase 4:** Migrate the original proxy to consult the MCP server while
    retaining a file-based fallback for offline use.
 
 ## Consequences

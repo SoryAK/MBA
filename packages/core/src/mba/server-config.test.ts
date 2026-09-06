@@ -11,7 +11,7 @@ import { loadServerConfig, resolveMbaConfig } from "./index.js";
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "mba-server-"));
+  dir = mkdtempSync(join(tmpdir(), "mba-server-config-"));
 });
 
 afterEach(() => {

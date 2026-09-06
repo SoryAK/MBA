@@ -1,11 +1,11 @@
 /**
  * TCB escalation evaluation (ADR-0101 Step 2).
  *
- * Copied from the original project `packages/proxy/src/server.ts` (`evaluateBcbEscalation`),
- * adapted for the daemon:
+ * Adapted from the original proxy implementation (`evaluateBcbEscalation`),
+ * now running in the daemon:
  *
  * - Session key is `sha256(harness + systemPrompt)` (was
- *   `sha256(systemPrompt)`). the original project's key collided for every no-prompt
+ *   `sha256(systemPrompt)`). The original key collided for every no-prompt
  *   request (all shared `sha256("")`), which was masked in practice because
  *   its only client always sends a system prompt. Keying on the harness too
  *   isolates no-prompt requests per client.
@@ -14,7 +14,7 @@
  *   to key the counter on, so counting would be meaningless.
  *
  * The kill-state store (`kill-state.ts`) and the ladder engine
- * (`escalation.ts`) are the same modules the the original project proxy used.
+ * (`escalation.ts`) are the same modules the original proxy used.
  */
 
 import { createHash } from "node:crypto";
