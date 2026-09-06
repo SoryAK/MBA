@@ -12,10 +12,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { bootServer, type BootServerInput } from "./server-boot.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
+import { delimiter, join } from "node:path";
+import { bootServer, defaultBinaryPath, type BootServerInput } from "./server-boot.js";
 import { writeRegistry, readRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { resolveSeams } from "../mba/index.js";
 
@@ -170,5 +170,121 @@ describe("default portCheckImpl", () => {
     expect(occupied).toBe(false);
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe("defaultBinaryPath", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "mba-binary-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("prefers MBA_LLAMA_SERVER_BIN over everything else", () => {
+    const env = { MBA_LLAMA_SERVER_BIN: "/custom/llama-server" };
+    expect(defaultBinaryPath("upstream", env)).toBe("/custom/llama-server");
+    expect(defaultBinaryPath("llama.cpp", env)).toBe("/custom/llama-server");
+  });
+
+  it("searches PATH before common locations", () => {
+    const pathBin = join(tmp, "path-bin");
+    mkdirSync(pathBin, { recursive: true });
+    writeFileSync(join(pathBin, "llama-server"), "");
+
+    const env = { PATH: `${pathBin}${delimiter}/other` };
+    expect(defaultBinaryPath("upstream", env)).toBe(join(pathBin, "llama-server"));
+  });
+
+  it("falls back to common locations when PATH has no match", () => {
+    const localBin = join(homedir(), ".local", "bin");
+    mkdirSync(localBin, { recursive: true });
+    const marker = join(localBin, "llama-server");
+    writeFileSync(marker, "");
+
+    try {
+      const env = { PATH: "/nonexistent" };
+      expect(defaultBinaryPath("upstream", env)).toBe(marker);
+    } finally {
+      // Clean up the marker so it does not leak to other test processes.
+      rmSync(marker, { force: true });
+    }
+  });
+
+  it("never resolves to the the original project vendor path", () => {
+    // The public package must not default to a personal project layout. Both
+    // forks should resolve via PATH/common locations or return undefined.
+    const env = { PATH: "/nonexistent" };
+    const legacyPath = join(
+      homedir(),
+      "Dev_Projects/the original project/vendor/llama.cpp/build/bin/llama-server",
+    );
+    expect(defaultBinaryPath("upstream", env)).not.toBe(legacyPath);
+    expect(defaultBinaryPath("llama.cpp", env)).not.toBe(legacyPath);
+  });
+});
+
+function writeMinimalAdapter(adapterDir: string, id: string, modelFile: string): void {
+  const dir = join(adapterDir, id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${id}.yaml`),
+    [
+      "apiVersion: mba.ai/v1alpha1",
+      "kind: ModelBehavioralAdapter",
+      "metadata:",
+      `  id: ${id}`,
+      "identity:",
+      "  model:",
+      `    name: ${id}`,
+      `    file: "${modelFile}"`,
+      "bindings: {}",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(dir, "server_setup.json"),
+    JSON.stringify({ "llama.cpp": { ctxSize: 1000 } }),
+  );
+}
+
+describe("bootServer binary existence", () => {
+  let tmp: string;
+  let adapterDir: string;
+  let registryPath: string;
+  let modelFile: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "mba-boot-binary-test-"));
+    adapterDir = join(tmp, "adapters");
+    registryPath = join(tmp, "upstreams.json");
+    modelFile = join(tmp, "test.gguf");
+    writeFileSync(modelFile, "");
+    writeMinimalAdapter(adapterDir, "test", modelFile);
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("fails fast with a helpful message when the llama-server binary is missing", async () => {
+    const result = await bootServer({
+      serverType: "llama.cpp",
+      modelFile,
+      port: 8080,
+      adapterDir,
+      registryPath,
+      binaryPath: "/definitely/not/llama-server",
+      seams: { portCheckImpl: async () => true },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("boot-failed");
+      expect(result.error).toContain("llama-server binary not found");
+      expect(result.error).toContain("MBA_LLAMA_SERVER_BIN");
+    }
   });
 });
