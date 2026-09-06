@@ -34,9 +34,13 @@ describe("resolveVsCodeLmConfigPath", () => {
     writeFileSync(join(userDir(), "settings.json"), content, "utf8");
   }
 
+  it("returns undefined when VS Code is not installed", () => {
+    expect(resolveVsCodeLmConfigPath(home)).toBeUndefined();
+  });
+
   it("uses the active profile from workbench.profile.default", () => {
     writeSettings(JSON.stringify({ "workbench.profile.default": "abc123" }));
-    expect(segments(resolveVsCodeLmConfigPath(home))).toEqual([
+    expect(segments(resolveVsCodeLmConfigPath(home) as string)).toEqual([
       ...segments(home),
       ".config",
       "Code",
@@ -48,7 +52,8 @@ describe("resolveVsCodeLmConfigPath", () => {
   });
 
   it("falls back to the no-profile location when settings.json is missing", () => {
-    expect(segments(resolveVsCodeLmConfigPath(home))).toEqual([
+    mkdirSync(userDir(), { recursive: true });
+    expect(segments(resolveVsCodeLmConfigPath(home) as string)).toEqual([
       ...segments(home),
       ".config",
       "Code",
@@ -59,7 +64,7 @@ describe("resolveVsCodeLmConfigPath", () => {
 
   it("falls back when settings.json has no workbench.profile.default key", () => {
     writeSettings(JSON.stringify({ "editor.fontSize": 14 }));
-    expect(segments(resolveVsCodeLmConfigPath(home))).toEqual([
+    expect(segments(resolveVsCodeLmConfigPath(home) as string)).toEqual([
       ...segments(home),
       ".config",
       "Code",
@@ -70,7 +75,7 @@ describe("resolveVsCodeLmConfigPath", () => {
 
   it("falls back when the profile value is not a non-empty string", () => {
     writeSettings(JSON.stringify({ "workbench.profile.default": 42 }));
-    expect(segments(resolveVsCodeLmConfigPath(home))).toEqual([
+    expect(segments(resolveVsCodeLmConfigPath(home) as string)).toEqual([
       ...segments(home),
       ".config",
       "Code",
@@ -81,7 +86,7 @@ describe("resolveVsCodeLmConfigPath", () => {
 
   it("falls back when settings.json is malformed JSON", () => {
     writeSettings("{ not valid json");
-    expect(segments(resolveVsCodeLmConfigPath(home))).toEqual([
+    expect(segments(resolveVsCodeLmConfigPath(home) as string)).toEqual([
       ...segments(home),
       ".config",
       "Code",
