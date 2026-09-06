@@ -51,6 +51,7 @@ import {
 } from "./interactive.js";
 import { listHfGgufs, searchHfModels } from "../model/hf-resolve.js";
 import { selectRestartTargets } from "./restart-selection.js";
+import { migrateAdapters } from "./migrate-adapters.js";
 import {
   defaultModelStoreRoot,
   defaultStateDir,
@@ -1012,6 +1013,42 @@ function cmdMigratePaths(): void {
   );
 }
 
+/**
+ * `mba migrate adapters [--write]` — rewrite old `apiVersion` values in the
+ * adapter tree to the current canonical value. Local filesystem only.
+ *
+ * Defaults to dry-run; pass `--write` to mutate files.
+ */
+function cmdMigrateAdapters(args: readonly string[]): void {
+  const dryRun = !args.includes("--write");
+  const adapterDir = process.env.MBA_ADAPTER_DIR ?? defaultModelStoreRoot();
+  const result = migrateAdapters({ adapterDir, dryRun });
+
+  for (const file of result.changed) {
+    process.stdout.write(`[mba] ${dryRun ? "would rewrite" : "rewrote"} ${file}\n`);
+  }
+  for (const file of result.unchanged) {
+    process.stdout.write(`[mba] unchanged ${file}\n`);
+  }
+  for (const error of result.errors) {
+    process.stderr.write(`[mba] error: ${error}\n`);
+  }
+
+  if (dryRun && result.changed.length > 0) {
+    process.stdout.write(
+      `[mba] dry-run complete. Run again with --write to apply ${result.changed.length} change(s).\n`,
+    );
+  } else {
+    process.stdout.write(
+      `[mba] migrate adapters complete — ${result.changed.length} rewritten, ${result.unchanged.length} unchanged, ${result.errors.length} error(s).\n`,
+    );
+  }
+
+  if (result.errors.length > 0) {
+    process.exit(2);
+  }
+}
+
 // --- Entry point ---------------------------------------------------------------
 
 const USAGE = `mba — model config CLI (talks to the MBA service)
@@ -1049,6 +1086,9 @@ Usage:
   mba migrate-paths                one-time move of state + model store from the
                                    legacy locations to the OS-aware ones (local
                                    only — does not need the service running)
+  mba migrate adapters [--write]   rewrite old adapter YAML apiVersion values to
+                                   the current canonical value (local only; dry
+                                   run by default — pass --write to apply)
   mba ... --yes                    skip the restart prompt (never restarts)
 
 Environment:
@@ -1072,6 +1112,10 @@ async function main(argv: readonly string[]): Promise<void> {
   // it works while the service is stopped (which is exactly when you migrate).
   if (command === "migrate-paths") {
     cmdMigratePaths();
+    return;
+  }
+  if (command === "migrate" && rest[0] === "adapters") {
+    cmdMigrateAdapters(rest.slice(1));
     return;
   }
 
