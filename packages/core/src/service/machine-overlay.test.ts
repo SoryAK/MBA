@@ -171,6 +171,27 @@ describe("applyMachineOverlay", () => {
     expect(result.annotations).not.toContain("gpuLayers clamped to 0 (no GPU detected)");
   });
 
+  it("uses a later GPU with VRAM even if the first GPU lacks VRAM", () => {
+    const model = createMinimalGgufFile(dir, {
+      blockCount: 8,
+      hiddenSize: 512,
+      headCount: 8,
+      headCountKv: 2,
+      fileSizeBytes: 10 * 1024 * 1024,
+    });
+    const m = machine({
+      cpuCores: 8,
+      totalRamBytes: 16 * 1024 * 1024 * 1024,
+      gpus: [
+        { name: "AMD Integrated" }, // no vramBytes
+        { name: "Example GPU", vramBytes: 12 * 1024 * 1024 * 1024 },
+      ],
+    });
+    const result = applyMachineOverlay(baseFlags({ gpuLayers: 10 }), model, m);
+    expect(result.flags.gpuLayers).toBe(10);
+    expect(result.annotations).not.toContain("gpuLayers clamped to 0 (no GPU detected)");
+  });
+
   it("clamps ctxSize to fit RAM", () => {
     // Small model whose base fits in 300 MB but a 64k context would overflow.
     const model = createMinimalGgufFile(dir, {
