@@ -1,0 +1,17 @@
+---
+description: Changelog and version bump required before any npm publish
+alwaysApply: true
+---
+
+# npm publish
+
+Before publishing any `@mba-ai/*` package:
+
+1. Bump that package’s `package.json` version (and the root `package-lock.json`).
+2. Add a **new top section** to that package’s `CHANGELOG.md` (`packages/<name>/CHANGELOG.md`) for **this version only**. Do not backfill older releases.
+3. Put `CHANGELOG.md` in that package’s `"files"` array so npm ships it.
+4. Do not publish if the changelog section is missing or still says Unreleased with no notes.
+
+Keep entries short: Added / Fixed / Changed. User-facing behavior, not every commit.
+
+Each published package has its own changelog. `@mba-ai/mcp-server` gets one the first time it is published under this rule (start at that version; no backfill).
