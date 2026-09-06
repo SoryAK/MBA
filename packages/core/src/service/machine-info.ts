@@ -112,8 +112,21 @@ function detectLinuxGpus(): readonly GpuInfo[] | undefined {
 function detectNvidiaSmi(): readonly GpuInfo[] | undefined {
   // Try the command as it would appear on PATH, then a few common absolute
   // paths. nvidia-smi is the only reliable source of NVIDIA VRAM on Linux.
+  // We use the CSV output first because it is simpler and more stable than
+  // parsing XML; the XML parser is kept as a fallback.
   const candidates = ["nvidia-smi", "/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi"];
   for (const bin of candidates) {
+    try {
+      const output = execFileSync(bin, ["--query-gpu=name,memory.total", "--format=csv,noheader"], {
+        encoding: "utf8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const gpus = parseNvidiaSmiCsv(output);
+      if (gpus !== undefined && gpus.length > 0) return gpus;
+    } catch {
+      // Try the XML fallback for this candidate.
+    }
     try {
       const output = execFileSync(bin, ["-q", "-x"], {
         encoding: "utf8",
@@ -127,6 +140,26 @@ function detectNvidiaSmi(): readonly GpuInfo[] | undefined {
     }
   }
   return undefined;
+}
+
+/** Exported for tests. */
+export function parseNvidiaSmiCsv(csv: string): readonly GpuInfo[] | undefined {
+  const gpus: GpuInfo[] = [];
+  for (const line of csv.trim().split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    // Name may contain commas, so split on the last comma. Memory is the last
+    // field, e.g. "8192 MiB".
+    const lastComma = line.lastIndexOf(",");
+    if (lastComma < 0) continue;
+    const name = line.slice(0, lastComma).trim();
+    const memory = line.slice(lastComma + 1).trim();
+    const vramBytes = parseVramString(memory);
+    gpus.push({
+      ...(name.length > 0 ? { name } : {}),
+      ...(vramBytes !== undefined ? { vramBytes } : {}),
+    });
+  }
+  return gpus.length > 0 ? gpus : undefined;
 }
 
 /** Exported for tests. */
