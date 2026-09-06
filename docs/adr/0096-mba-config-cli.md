@@ -53,7 +53,7 @@ changed on a model that is currently loaded, the CLI must offer to reboot the
   - `restartRequired: true`, model not loaded → "takes effect on next boot."
   - `restartRequired: true`, model loaded → y/N prompt to run the boot script
     for the **same** model (`MBA_BOOT_SCRIPT` env override, default
-    `~/Dev_Projects/the original project/scripts/llama-server-up.sh -Model <id>`).
+    `~/scripts/llama-server-up.sh -Model <id>`).
     `--yes` flag skips the prompt (scriptable reboot).
 - **Global install:** `npm link` in `packages/core` → `mba` on PATH.
 
