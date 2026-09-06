@@ -24,6 +24,7 @@ import { fingerprint } from "../bcb/fingerprint.js";
 import { buildBcbKillResponse } from "../bcb/kill-response.js";
 import { applyToolCircuitBreakers } from "../bcb/tool-circuit-breaker.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
+import { runRecipe } from "../ampi/engine.js";
 
 /**
  * Outcome of an intervention.
@@ -92,13 +93,23 @@ export function intervene(
         // call it again this turn.
         maskTool(parsed, lastTrip.tool);
         outBody = JSON.stringify(parsed);
-      } else if (escalation.tier === "kill" && escalation.kill) {
+      } else if (escalation.tier === "kill" && escalation.action !== "ampi" && escalation.kill) {
         const response = buildBcbKillResponse(escalation.kill, parsed);
         if (response) {
           return { action: "kill", response };
         }
         // drop-tools / block-tool mutate `parsed` in place; re-serialize and
         // continue forwarding.
+        outBody = JSON.stringify(parsed);
+      }
+
+      if (escalation.action === "ampi" && escalation.recipe) {
+        // Recipe is an AMPI runner name (e.g. sweep-duplicates). CM does the splice.
+        const rewritten = runRecipe(escalation.recipe, {
+          messages: (parsed.messages as ChatMessage[]) ?? chatMessages,
+          trip: lastTrip,
+        });
+        parsed.messages = rewritten.messages;
         outBody = JSON.stringify(parsed);
       }
     }

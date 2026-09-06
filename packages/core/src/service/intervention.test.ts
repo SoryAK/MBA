@@ -152,6 +152,111 @@ describe("intervene (ADR-0101 Step 2)", () => {
     expect(cont.action).toBe("forward");
   });
 
+  it("runs sweep-duplicates when ampi is on the nudge rung", () => {
+    const ampiConfig: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          directDuplication: {
+            enabled: true,
+            threshold: 2,
+            escalation: {
+              tiers: [
+                { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "sweep-duplicates" },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const args = JSON.stringify({ path: "notes.md" });
+    const pair = (id: string) => [
+      {
+        role: "assistant",
+        tool_calls: [
+          { id, type: "function", function: { name: "read_file", arguments: args } },
+        ],
+      },
+      { role: "tool", tool_call_id: id, content: `body-${id}` },
+    ];
+    const body = JSON.stringify({
+      model: "m",
+      messages: [
+        { role: "system", content: "you are cline-ampi-nudge" },
+        { role: "user", content: "read notes" },
+        ...pair("c1"),
+        ...pair("c2"),
+        ...pair("c3"),
+      ],
+    });
+    const res = intervene(body, "copilot", ampiConfig, db);
+    expect(res.action).toBe("forward");
+    if (res.action === "forward") {
+      const parsed = JSON.parse(res.body) as {
+        messages: Array<{ role?: string; tool_call_id?: string; content?: unknown }>;
+      };
+      const toolIds = parsed.messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id);
+      expect(toolIds).toEqual(["c1"]);
+      const last = parsed.messages[parsed.messages.length - 1]!;
+      expect(last.role).toBe("user");
+      expect(String(last.content)).toContain("[[mba:");
+    }
+  });
+
+  it("runs sweep-duplicates on ampi kill and forwards the CM-cleaned body", () => {
+    const ampiConfig: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          directDuplication: {
+            enabled: true,
+            threshold: 2,
+            escalation: {
+              tiers: [
+                { tier: "nudge", afterIgnoredTrips: 0 },
+                { tier: "kill", afterIgnoredTrips: 1, action: "ampi", recipe: "sweep-duplicates" },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const args = JSON.stringify({ path: "notes.md" });
+    const pair = (id: string) => [
+      {
+        role: "assistant",
+        tool_calls: [
+          { id, type: "function", function: { name: "read_file", arguments: args } },
+        ],
+      },
+      { role: "tool", tool_call_id: id, content: `body-${id}` },
+    ];
+    const body = () =>
+      JSON.stringify({
+        model: "m",
+        messages: [
+          { role: "system", content: "you are cline-ampi-gc" },
+          { role: "user", content: "read notes" },
+          ...pair("c1"),
+          ...pair("c2"),
+          ...pair("c3"),
+        ],
+      });
+    intervene(body(), "copilot", ampiConfig, db);
+    const res = intervene(body(), "copilot", ampiConfig, db);
+    expect(res.action).toBe("forward");
+    if (res.action === "forward") {
+      const parsed = JSON.parse(res.body) as {
+        messages: Array<{ role?: string; tool_call_id?: string; content?: unknown }>;
+      };
+      const toolIds = parsed.messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id);
+      expect(toolIds).toEqual(["c1"]);
+      const last = parsed.messages[parsed.messages.length - 1]!;
+      expect(last.role).toBe("user");
+      expect(String(last.content)).toContain("[[mba:");
+    }
+  });
+
   it("degrades to forward when harness is unknown and there is no system prompt", () => {
     const body = JSON.stringify({
       model: "m",

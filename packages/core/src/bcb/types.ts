@@ -96,6 +96,9 @@ export type KillAction =
   | "drop-tools"
   | "block-tool";
 
+/** Ladder action: a hard kill, or an AMPI recipe (ADR-0101). */
+export type EscalationAction = KillAction | "ampi";
+
 export interface KillRule {
   readonly enabled: boolean;
   /** Ignored trips before the kill action fires. */
@@ -114,8 +117,10 @@ export interface EscalationTier {
    * `nudge` is typically 0 (fires on the first trip).
    */
   readonly afterIgnoredTrips: number;
-  /** kill tier only: the hard action to take. */
-  readonly action?: KillAction;
+  /** Hard kill action, or `ampi` to run a named recipe. */
+  readonly action?: EscalationAction;
+  /** Required when `action` is `ampi`. */
+  readonly recipe?: string;
   /** mask tier only: tool calls (of any kind) before the masked tool is revived. */
   readonly revivalCalls?: number;
 }
@@ -137,8 +142,9 @@ export interface EscalationDecision {
   readonly tier: EscalationTierName;
   /** Index of the tier in the ladder. */
   readonly tierIndex: number;
-  /** kill tier only. */
-  readonly action?: KillAction;
+  readonly action?: EscalationAction;
+  /** Present when `action` is `ampi`. */
+  readonly recipe?: string;
   /** mask tier only. */
   readonly revivalCalls?: number;
   /** reset-per-tier only: true when this decision advanced a tier and the counter should reset. */

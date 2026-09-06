@@ -1,6 +1,6 @@
 # ADR 0101: AMPI — Daemon-as-Proxy and the Intervention Subsystem
 
-- **Status:** Accepted (Steps 1–2 shipped). Steps 3–5 remain.
+- **Status:** Accepted (Steps 1–2 shipped). Step 3 partial and Step 4 in progress. Step 5 remains.
 - **Date:** 2026-09-02
 - **Deciders:** project maintainer + agent
 - **Tags:** architecture, mba, bcb, tcb, ampi, daemon, proxy, uds, mcp
@@ -22,14 +22,14 @@ This ADR re-grounds AMPI on the correct ownership model and defines the daemon-a
 
 A loop detector trips because the model keeps calling the same tool with the same arguments. The escalation ladder breaks the model out of the loop (nudge, then mask, then kill). But the **repeated tool calls remain in the context** — and that polluted context is what makes the model loop *again*. The guardrail treats the symptom; the intervention treats the cause.
 
-An AMPI recipe for this case — **context GC** — rewrites the conversation the model sees: prune the duplicated tool calls back to the first attempt, and leave a marker message telling the model to try a different approach. This is not "inject a message"; it is **mutating the context**. That power is what makes AMPI "the system's version of auto-scripting."
+An AMPI recipe for this case — `sweep-duplicates` — asks **Context Management** to apply the CGC cut `prune-duplicates`: keep the first attempt, drop the later identical pairs, leave a marker. AMPI owns *when* that runs and that it terminates. CM owns the splice. See ADR-0105. That split is what keeps AMPI from becoming the context store.
 
 ## Decision
 
 ### 1. Ownership model — MBA is the security company, the original project is the client
 
 - **MBA owns the infrastructure:** the detection engine (BCB/TCB), the escalation machinery, and the intervention subsystem (AMPI). This is the "how" — how to detect loops, how to escalate, how to rewrite context, how to feed files in chunks.
-- **the original project (and any other adopting project) provides the rules:** "watch `read_file`, trip at 3, escalate nudge→mask→kill, fire AMPI recipe `context-gc` on kill." This is the "what/when/where" — which tools, which thresholds, which recipes.
+- **the original project (and any other adopting project) provides the rules:** "watch `read_file`, trip at 3, escalate nudge→mask→kill, fire AMPI recipe `sweep-duplicates` on kill." This is the "what/when/where" — which tools, which thresholds, which recipes. The recipe name is an AMPI runner, not a CM cut (ADR-0105).
 - The "watching" loop (session state, escalation application, request mutation, AMPI execution) moves **out of the original proxy and into the MBA daemon**. The original proxy no longer owns model-behavior logic.
 
 ### 2. Architecture — the MBA daemon is the proxy (Shape B)
@@ -70,8 +70,9 @@ TCB rule trips ──► escalation ladder ──► [ nudge | mask | kill | ─
                           (recipe registry: user-authored recipes)
                           reads:  trip context, message history, file metadata,
                                   recent tool_calls
-                          does:   context rewrite, multi-turn loop, message
-                                  injection, state
+                          does:   run recipe, ask CM to edit context, multi-turn
+                                  loop, inject, hold state
+                                  (AMPI does not splice messages[] — ADR-0105)
 ```
 
 - The escalation ladder gains an `ampi` action target with a `recipe` name. AMPI can be fired from **any** tier — a `nudge` can summon it, not only `kill`.
@@ -154,8 +155,8 @@ This gives Shape B's flexibility (the daemon is in the conversation, recipes hav
 
 1. **Step 1 — Daemon-as-proxy. (shipped)** The MBA daemon accepts model requests (TCP + UDS) and forwards them to llama-server.
 2. **Step 2 — Migrate TCB/escalation. (shipped)** TCB detection and escalation run in the MBA daemon on the request path.
-3. **Step 3 — AMPI subsystem.** Build the AMPI engine in the daemon: recipe registry, expression evaluator, worker-thread isolation, termination guarantees. Wire the `ampi` action target into the escalation ladder.
-4. **Step 4 — First recipe.** Implement the context-GC recipe as the anchor example. Prove the multi-turn loop, context rewrite, and termination guarantee end-to-end.
+3. **Step 3 — AMPI subsystem. (partial)** Ladder `action: ampi` + in-process engine + built-in registry. Expression language and worker-thread isolation are deferred.
+4. **Step 4 — First recipe. (in progress)** Built-in `sweep-duplicates` ships as a one-shot AMPI recipe that calls CM `prune-duplicates` (ADR-0105). Multi-turn recipes are deferred.
 5. **Step 5 — original proxy cleanup.** Remove the migrated TCB/escalation logic from the original proxy. The proxy either disappears or becomes a thin pass-through for non-model-behavior concerns.
 
 ## Relationship to prior ADRs
@@ -163,3 +164,5 @@ This gives Shape B's flexibility (the daemon is in the conversation, recipes hav
 - **ADR-0088 (AMPI):** This ADR supersedes ADR-0088's subsystem-boundary assumption (the proxy-centric orchestrator). ADR-0088's Notch-1 decision, structural-termination requirements, and recipe-power model are **retained** and re-grounded on the daemon-as-proxy architecture. ADR-0088 should be marked `Superseded by ADR 0101` for its boundary section; its Notch/termination sections remain authoritative.
 - **ADR-0092 (MBA as a standalone framework):** This ADR is the natural continuation of ADR-0092's "the dealership" positioning. ADR-0092 established that MBA owns the BCB/TCB/AMPI engine; this ADR establishes that MBA also owns the *execution* of that engine (the daemon-as-proxy).
 - **ADR-0093/0094 (Model plane ownership / DNA gate):** Unaffected. The model plane (adapters, server lifecycle) is unchanged. This ADR is about the *behavior plane* (TCB/escalation/AMPI) and the *request path*.
+- **ADR-0105 (CM / CGC):** Context mutation is a Context Management plane. AMPI remains the runner; CGC is a family of CM cuts, not a second orchestrator. Escalation YAML names `sweep-duplicates`; that recipe calls `prune-duplicates`. Never `recipe: context-gc`.
+- **ADR-0104 (uncertainty BCB):** Proposed detector family beside TCB. Implementation waits until AMPI and CM in ADR-0105 are nailed down.
