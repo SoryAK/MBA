@@ -42,6 +42,11 @@ function isValidMachineInfo(value: unknown): value is MachineInfo {
   if (!isPlainObject(value)) return false;
   if (typeof value.os !== "string") return false;
   if (typeof value.cpuCores !== "number" || !Number.isFinite(value.cpuCores)) return false;
+  if (value.cpuPhysicalCores !== undefined && (typeof value.cpuPhysicalCores !== "number" || !Number.isFinite(value.cpuPhysicalCores))) return false;
+  if (value.cpuModel !== undefined && typeof value.cpuModel !== "string") return false;
+  if (value.cpuSpeedMHz !== undefined && (typeof value.cpuSpeedMHz !== "number" || !Number.isFinite(value.cpuSpeedMHz))) return false;
+  if (value.cpuArchitecture !== undefined && typeof value.cpuArchitecture !== "string") return false;
+  if (value.cpuFlags !== undefined && (!Array.isArray(value.cpuFlags) || value.cpuFlags.some((f) => typeof f !== "string"))) return false;
   if (typeof value.totalRamBytes !== "number" || !Number.isFinite(value.totalRamBytes)) return false;
   if (value.gpus !== undefined) {
     if (!Array.isArray(value.gpus)) return false;
