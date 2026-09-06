@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "build": "npm run build --workspaces --if-present",
-    "start:service": "npm run start --workspace @mba-ai/core"
+    "start:service": "npm run start --workspace @mba-ai/core",
+    "mba": "npx tsx packages/core/src/cli/mba.ts"
   },
   "license": "MIT",
   "devDependencies": {
