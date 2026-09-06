@@ -20,8 +20,9 @@ We already have the pieces of a "don't write everything from scratch" system:
   `binaryBlock`) in `packages/core/src/bcb/rules/`.
 - Named **rule classes** (`readSafety`, `readLoop`, `loopBreaker`) in
   `packages/core/src/bcb/rule-classes.ts` so one JSONL line can attach a group.
-- AMPI recipes (e.g. `context-gc`) specified as a later *do*, not a detector
-  (ADR-0088 / ADR-0101).
+- AMPI recipes (e.g. `sweep-duplicates`) specified as a later *do*, not a
+  detector (ADR-0088 / ADR-0101). Policy names recipes only, never CM cuts
+  (ADR-0105).
 
 What we do **not** have is a clean authoring model:
 
@@ -77,7 +78,7 @@ rewritten per project:
 | --- | --- | --- |
 | Atomic rules | `repeatRun`, `directDuplication`, … | Code |
 | Rule classes | `readSafety`, `readLoop`, `loopBreaker` | Code + optional user `rule-classes.json` |
-| AMPI recipes | `context-gc`, … | Global recipe registry (not shipped) |
+| AMPI recipes | `sweep-duplicates`, … | Built-in registry (`packages/core/src/ampi/`) |
 
 A class or recipe does not say *where* it runs. It is a playbook.
 
@@ -111,8 +112,8 @@ watch:
   "*": [loopBreaker]
 
 on:
-  loopBreaker: { at: kill, recipe: context-gc }
-  readLoop:    { at: kill, recipe: context-gc }
+  loopBreaker: { at: kill, recipe: sweep-duplicates }
+  readLoop:    { at: kill, recipe: sweep-duplicates }
 
 overrides:
   readLoop.repeatRun.threshold: 2
@@ -128,7 +129,7 @@ First-boot global policy should **attach classes**, not expand members into
 
 - `read_file` → `readSafety` + `readLoop`
 - other tools → `loopBreaker`
-- `on kill → context-gc` when recipes exist (stub until AMPI ships)
+- `on kill → sweep-duplicates` when recipes exist (AMPI recipe name, not a CGC cut)
 
 The expanded `ToolCircuitBreakerConfig` is a **resolve-time view** (debug /
 engine input), not the source of truth. `POST /set_rules` should eventually
@@ -146,7 +147,7 @@ A **new kind of detector** (not just a new bundle) still belongs in MBA core
 or a shared catalog, not copied into five policy files.
 
 AMPI recipe **bodies** stay in the catalog (ADR-0088: closed `act` set,
-termination). Policy only **names** `context-gc`. A project may add
+termination). Policy only **names** `sweep-duplicates`. A project may add
 `./ampi/my-prune.yaml` and reference `my-prune`; that is still a catalog
 entry, not inlined into `watch`.
 
@@ -197,7 +198,8 @@ as CLI + MCP: declare or push policy to the daemon, do not embed the engine.
   `default-config.ts` are the old expanded form. First-boot seed and
   `set_rules` must change or stay as a compatibility dump of the resolve view.
 - Empty per-model jsonl stays valid (no model quirks).
-- Until AMPI ships, `on.recipe` is a stub (store the name, ignore at runtime).
+- Project `on.recipe` assembly is still a stub at resolve time; the built-in
+  recipe `sweep-duplicates` already runs when a ladder tier sets `action: ampi`.
 - Two JSONL files (`bcb.jsonl` vs `tcb.jsonl`) still fold into one
   `ToolCircuitBreakerConfig` today; TCB remains the tool-shaped chapter of
   BCB, not a second engine.

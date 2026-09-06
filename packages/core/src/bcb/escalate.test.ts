@@ -121,6 +121,48 @@ describe("evaluateBcbEscalation", () => {
     });
   });
 
+  it("returns action ampi on nudge, mask, and kill", () => {
+    const ampiConfig: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          eofOverflow: {
+            enabled: true,
+            escalation: {
+              tiers: [
+                { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "sweep-duplicates" },
+                { tier: "mask", afterIgnoredTrips: 1, action: "ampi", recipe: "sweep-duplicates" },
+                { tier: "kill", afterIgnoredTrips: 2, action: "ampi", recipe: "sweep-duplicates" },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const t = trip("ampi.txt:1-10");
+    const prompt = "ampi-any-tier-prompt";
+    expect(evaluateBcbEscalation(t, ampiConfig, prompt, "cline", db)).toEqual({
+      tier: "nudge",
+      ignoredTrips: 0,
+      action: "ampi",
+      recipe: "sweep-duplicates",
+    });
+    expect(evaluateBcbEscalation(t, ampiConfig, prompt, "cline", db)).toEqual({
+      tier: "mask",
+      ignoredTrips: 1,
+      action: "ampi",
+      recipe: "sweep-duplicates",
+    });
+    const third = evaluateBcbEscalation(t, ampiConfig, prompt, "cline", db);
+    expect(third).toEqual({
+      tier: "kill",
+      ignoredTrips: 2,
+      action: "ampi",
+      recipe: "sweep-duplicates",
+    });
+    expect(third?.kill).toBeUndefined();
+  });
+
   it("isolates counters per system prompt (same harness, different prompt)", () => {
     const t = trip("iso2.txt:1-10");
     expect(evaluateBcbEscalation(t, config, "prompt-A", "cline", db)).toEqual({
