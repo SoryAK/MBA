@@ -16,6 +16,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import YAML from "yaml";
+import { SUPPORTED_API_VERSIONS } from "../mba/loader.js";
 
 export interface CatalogEntry {
   /** Adapter `metadata.id` — the canonical switch id. */
@@ -43,7 +44,7 @@ function isAdapter(value: unknown): value is {
 } {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  if (v.apiVersion !== "mba.ai/v1alpha1") return false;
+  if (!SUPPORTED_API_VERSIONS.has(String(v.apiVersion))) return false;
   if (v.kind !== "ModelBehavioralAdapter") return false;
   if (typeof v.metadata !== "object" || v.metadata === null) return false;
   if (typeof (v.metadata as Record<string, unknown>).id !== "string") return false;
