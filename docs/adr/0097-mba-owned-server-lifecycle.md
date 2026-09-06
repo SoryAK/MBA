@@ -1,6 +1,6 @@
 # 0097 — MBA-owned model server lifecycle: the daemon boots, tracks, and kills its own servers
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-23
 - **Deciders:** user + agent
 - **Tags:** mba, server-lifecycle, process-management, daemon, cli
@@ -8,7 +8,7 @@
 ## Context and Problem Statement
 
 Before this change, **starting and stopping a model server was owned by a
-the original project shell script** (`scripts/llama-server-up.sh`). The MBA daemon could
+legacy external boot script** (`scripts/llama-server-up.sh`). The MBA daemon could
 *switch* the loaded model (via the boot script, invoked through an
 `MBA_BOOT_SCRIPT` env var) but could not *own* the server process. Consequences:
 

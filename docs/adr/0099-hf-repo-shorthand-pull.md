@@ -1,6 +1,6 @@
 # 0099 — HuggingFace repo shorthand for `mba pull`: auto-resolved URLs and digests
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-28
 - **Deciders:** user + agent
 - **Tags:** mba, model-management, cli, service, gguf, download, huggingface
