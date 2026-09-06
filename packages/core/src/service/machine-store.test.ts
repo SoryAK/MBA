@@ -36,7 +36,7 @@ const INFO2: MachineInfo = {
   os: "linux",
   cpuCores: 16,
   totalRamBytes: 32 * 1024 * 1024 * 1024,
-  gpus: [{ name: "RTX 4090", vramBytes: 24 * 1024 * 1024 * 1024 }],
+  gpus: [{ name: "Example GPU 2", vramBytes: 24 * 1024 * 1024 * 1024 }],
 };
 
 describe("machine-store", () => {
@@ -100,7 +100,7 @@ describe("machine-store", () => {
     expect(result.info).toEqual(INFO2);
     expect(result.changed).toBe(true);
     expect(result.diff.length).toBeGreaterThan(0);
-    expect(result.diff.some((line) => line.includes("RTX 4090"))).toBe(true);
+    expect(result.diff.some((line) => line.includes("Example GPU 2"))).toBe(true);
   });
 
   it("refresh is a no-op when the profile is unchanged", () => {
