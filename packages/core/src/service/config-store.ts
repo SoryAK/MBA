@@ -56,6 +56,8 @@ export interface MbaStorePaths {
   readonly tcbPath: string;
   readonly ruleClassesPath: string;
   readonly versionPath: string;
+  /** Machine-overlay enforcement mode (ADR-0103). */
+  readonly machineOverlayPath: string;
   /** Discovery file the service writes on boot so consumers can find it. */
   readonly serviceInfoPath: string;
   /** Upstream model-server registry (ADR-0097 Phase 1). */
@@ -64,11 +66,20 @@ export interface MbaStorePaths {
   readonly udsPath: string;
 }
 
+export const MACHINE_OVERLAY_MODES = ["enforce", "warn", "off"] as const;
+export type MachineOverlayMode = (typeof MACHINE_OVERLAY_MODES)[number];
+
+export function isMachineOverlayMode(value: unknown): value is MachineOverlayMode {
+  return typeof value === "string" && (MACHINE_OVERLAY_MODES as readonly string[]).includes(value);
+}
+
 /** Result of a store read. */
 export interface MbaGlobalConfig {
   readonly tcb: ToolCircuitBreakerConfig;
   readonly ruleClasses: RuleClassRegistry;
   readonly version: number;
+  /** How aggressively MBA clamps recipes to detected machine specs. */
+  readonly machineOverlay: MachineOverlayMode;
 }
 
 /** Result of a `set_rules` mutation. */
@@ -77,12 +88,19 @@ export interface MbaSetRulesResult {
   readonly tcb: ToolCircuitBreakerConfig;
 }
 
+/** Result of a `set_machine_overlay` mutation. */
+export interface MbaSetMachineOverlayResult {
+  readonly version: number;
+  readonly machineOverlay: MachineOverlayMode;
+}
+
 export function defaultStorePaths(baseDir: string = defaultStateDir()): MbaStorePaths {
   return {
     baseDir,
     tcbPath: join(baseDir, "bcb", "tool-circuit-breakers.json"),
     ruleClassesPath: join(baseDir, "mba", "rule-classes.json"),
     versionPath: join(baseDir, "mba", "version.json"),
+    machineOverlayPath: join(baseDir, "mba", "machine-overlay.json"),
     serviceInfoPath: join(baseDir, "mba", "service.json"),
     upstreamsPath: join(baseDir, "mba", "upstreams.json"),
     udsPath: join(baseDir, "mba", "mba.sock"),
@@ -201,7 +219,25 @@ export function readGlobalConfig(paths: MbaStorePaths): MbaGlobalConfig {
   const version =
     vRaw && typeof vRaw.version === "number" && Number.isFinite(vRaw.version) ? vRaw.version : 0;
 
-  return { tcb, ruleClasses, version };
+  // Machine-overlay enforcement mode (ADR-0103). Default to enforce so a fresh
+  // install is protected from OOM boot recipes; power users can set "warn" or "off".
+  const moRaw = readJsonOrNull(paths.machineOverlayPath) as
+    | { mode?: unknown }
+    | null;
+  const machineOverlay: MachineOverlayMode =
+    moRaw && isMachineOverlayMode(moRaw.mode) ? moRaw.mode : "enforce";
+
+  return { tcb, ruleClasses, version, machineOverlay };
+}
+
+function bumpVersion(paths: MbaStorePaths): number {
+  const current = readJsonOrNull(paths.versionPath) as { version?: unknown } | null;
+  const next =
+    current && typeof current.version === "number" && Number.isFinite(current.version)
+      ? current.version + 1
+      : 1;
+  atomicWriteJson(paths.versionPath, { version: next });
+  return next;
 }
 
 /**
@@ -224,12 +260,19 @@ export function setRules(
     atomicWriteJson(paths.ruleClassesPath, input.ruleClasses);
   }
 
-  const current = readJsonOrNull(paths.versionPath) as { version?: unknown } | null;
-  const next =
-    current && typeof current.version === "number" && Number.isFinite(current.version)
-      ? current.version + 1
-      : 1;
-  atomicWriteJson(paths.versionPath, { version: next });
+  return { version: bumpVersion(paths), tcb: input.tcb };
+}
 
-  return { version: next, tcb: input.tcb };
+/**
+ * Persist the machine-overlay enforcement mode, bumping the version.
+ */
+export function setMachineOverlay(
+  paths: MbaStorePaths,
+  mode: MachineOverlayMode,
+): MbaSetMachineOverlayResult {
+  if (!isMachineOverlayMode(mode)) {
+    throw new Error(`set_machine_overlay: invalid mode ${mode}`);
+  }
+  atomicWriteJson(paths.machineOverlayPath, { mode });
+  return { version: bumpVersion(paths), machineOverlay: mode };
 }

@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { daemonLog, resolveSeams, type LifecycleSeams } from "../mba/index.js";
 import type { MachineInfo } from "./machine-info.js";
+import type { MachineOverlayMode } from "./config-store.js";
 import { resolveRecipe } from "./recipe-resolution.js";
 import { listUpstreams, readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
@@ -123,6 +124,7 @@ export function resolveBootRecipe(
   modelFile: string,
   adapterDir: string,
   machineInfo?: MachineInfo,
+  machineOverlay: MachineOverlayMode = "enforce",
 ): BootRecipe {
   const recipe = resolveRecipe(
     modelFile,
@@ -132,7 +134,7 @@ export function resolveBootRecipe(
       ide: "vscode",
       serverRuntime: "llamacpp",
     },
-    machineInfo,
+    { machineInfo, machineOverlay },
   );
   return {
     modelId: recipe.modelId,
@@ -166,6 +168,8 @@ export interface BootServerInput {
   readonly host?: string;
   /** Detected/persisted machine profile for recipe clamping. */
   readonly machineInfo?: MachineInfo;
+  /** How to apply the machine overlay (default `enforce`). */
+  readonly machineOverlay?: MachineOverlayMode;
   /** Lifecycle seams (spawn/fetch/kill) — injectable for tests. */
   readonly seams?: LifecycleSeams;
 }
@@ -274,18 +278,33 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   // Resolve the llama.cpp recipe (404 when the model is not in the adapter
   // tree). Ollama has no recipe — the tag is the whole identity.
   let recipe: BootRecipe | undefined;
+  const machineOverlay = input.machineOverlay ?? "enforce";
+
   if (serverType !== "ollama") {
     try {
-      recipe = resolveBootRecipe(modelKey, input.adapterDir, input.machineInfo);
+      recipe = resolveBootRecipe(
+        modelKey,
+        input.adapterDir,
+        input.machineInfo,
+        machineOverlay,
+      );
       daemonLog(
         `[boot] recipe resolved: modelId=${recipe.modelId} warmup=${recipe.warmupTokens} args=[${recipe.cliArgs.join(" ")}]`,
       );
       if (recipe.annotations.length > 0) {
         for (const annotation of recipe.annotations) {
-          daemonLog(`[boot] overlay: ${annotation}`);
+          const prefix = machineOverlay === "warn" ? "[boot] overlay (warn)" : "[boot] overlay";
+          daemonLog(`${prefix}: ${annotation}`);
         }
       }
       if (!recipe.fitsMachine) {
+        if (machineOverlay === "enforce") {
+          return {
+            ok: false,
+            code: "boot-failed",
+            error: "recipe does not fit the detected machine (set machine-overlay to warn or off to override)",
+          };
+        }
         daemonLog(`[boot] WARNING: recipe does not fit detected machine; boot may fail`);
       }
     } catch (err) {

@@ -23,11 +23,13 @@ describe("mba service app", () => {
       model: string | null;
       tcb: unknown;
       ruleClasses: unknown;
+      machineOverlay: string;
     };
     expect(body.version).toBe(0);
     expect(body.model).toBe("llama-3.1-8b");
     expect(body.tcb).toEqual(defaultToolCircuitBreakerConfig());
     expect(body.ruleClasses).toEqual({});
+    expect(body.machineOverlay).toBe("enforce");
   });
 
   it("POST /set_rules persists, bumps the version, and is visible to resolve_config", async () => {
@@ -103,6 +105,43 @@ describe("mba service app", () => {
     expect(body.uptimeMs).toBeGreaterThanOrEqual(0);
     expect(body.paths.baseDir).toBe(paths.baseDir);
     expect(body.paths.tcbPath).toBe(paths.tcbPath);
+  });
+
+  it("GET /config/machine-overlay returns the default enforce mode", async () => {
+    const app = createMbaServiceApp({ paths });
+    const res = await app.request("/config/machine-overlay");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mode: string };
+    expect(body.mode).toBe("enforce");
+  });
+
+  it("POST /config/machine-overlay persists a new mode and bumps the version", async () => {
+    const app = createMbaServiceApp({ paths });
+    const res = await app.request("/config/machine-overlay", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "warn" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mode: string; version: number };
+    expect(body.mode).toBe("warn");
+    expect(body.version).toBe(1);
+
+    const after = await app.request("/config/machine-overlay");
+    const afterBody = (await after.json()) as { mode: string };
+    expect(afterBody.mode).toBe("warn");
+  });
+
+  it("POST /config/machine-overlay rejects an invalid mode with 400", async () => {
+    const app = createMbaServiceApp({ paths });
+    const res = await app.request("/config/machine-overlay", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "nope" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/mode must be one of/);
   });
 
   it("shares state across app instances on the same paths (files are truth)", async () => {

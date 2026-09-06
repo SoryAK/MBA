@@ -19,6 +19,7 @@ function fakePaths(): MbaStorePaths {
     tcbPath: join(baseDir, "bcb", "tool-circuit-breakers.json"),
     ruleClassesPath: join(baseDir, "mba", "rule-classes.json"),
     versionPath: join(baseDir, "mba", "version.json"),
+    machineOverlayPath: join(baseDir, "mba", "machine-overlay.json"),
     upstreamsPath: join(baseDir, "mba", "upstreams.json"),
     udsPath: join(baseDir, "mba", "mba.sock"),
   };
