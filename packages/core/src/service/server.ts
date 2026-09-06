@@ -37,7 +37,7 @@
  *        sha256 mismatch, download failure) arrives as an `error` event —
  *        the HTTP status is 200 for the whole stream; the CLI renders the
  *        message and exits non-zero.
- *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired }] }
+ *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired, hint?, machineHint? }] }
  *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
  *        Body: { id, file: 'server_setup'|'client', field, value }. The
  *        per-model dial write door (ADR-0096): validates and writes ONE
@@ -70,6 +70,7 @@ import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
+import { readMachineInfo } from "./machine-store.js";
 import {
   ensureModel,
   isLoadedPath,
@@ -367,7 +368,8 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (!id || id.length === 0) {
       return c.json({ error: "query param id is required" }, 400);
     }
-    const dials = readModelDials(opts.adapterDir ?? "", id);
+    const machineInfo = readMachineInfo(paths);
+    const dials = readModelDials(opts.adapterDir ?? "", id, machineInfo ?? undefined);
     if (!dials) {
       return c.json({ error: `unknown model: ${id}` }, 404);
     }

@@ -367,3 +367,38 @@ export function findMaxFittingCtxSize(
 
   return best;
 }
+
+/**
+ * Find the largest number of GPU layers that fits the available VRAM, keeping
+ * all other recipe fields fixed (including ctxSize). Layers are bounded by the
+ * model's block count. Returns undefined if the estimator cannot read the
+ * model's metadata.
+ */
+export function findMaxFittingGpuLayers(
+  recipe: GgufRecipeShape,
+  availableRamBytes: number,
+  availableVramBytes: number,
+  blockCount: number,
+): number | undefined {
+  let low = 0;
+  let high = blockCount;
+  let best: number | undefined;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const estimate = estimateRecipeMemory({ ...recipe, gpuLayers: mid });
+    if (estimate === undefined) return undefined;
+
+    const fitsRam = estimate.ramBytes <= availableRamBytes;
+    const fitsVram = estimate.vramBytes <= availableVramBytes;
+
+    if (fitsRam && fitsVram) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return best;
+}
