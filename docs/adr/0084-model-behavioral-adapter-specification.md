@@ -130,7 +130,7 @@ Both BCB and TCB bindings use the same line-oriented schema. Each line is a cons
 ```jsonl
 {"tool": "read_file", "rule": "readClamp", "enabled": true, "params": {}}
 {"tool": "read_file", "rule": "repeatRun", "enabled": true, "params": {"threshold": 2, "kill": {"enabled": true, "ignoredTrips": 1, "action": "return-error"}}}
-{"tool": "read_file", "rule": "eofOverflow", "enabled": true, "params": {"kill": {"enabled": true, "ignoredTrips": 1, "action": "return-error"}, "hint": {"enabled": true, "message": "[[mba: {filePath} has {actualLines} line(s). Do not call read_file beyond line {actualLines}; use the range you already have or ask a follow-up question.]]"}}}
+ {"tool": "read_file", "rule": "eofOverflow", "enabled": true, "params": {"kill": {"enabled": true, "ignoredTrips": 1, "action": "return-error"}, "hint": {"enabled": true, "message": "[[mba: {filePath} has {actualLines} line(s). Do not call read_file beyond line {actualLines}; use the range you already have or ask a follow-up question.]]"}}}
 ```
 
 - `rule` is a well-known identifier (e.g. `readClamp`, `repeatRun`, `eofOverflow`). The consumer maps rule IDs to its implementations.

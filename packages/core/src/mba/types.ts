@@ -2,7 +2,7 @@
  * Model Behavioral Adapter (MBA) types.
  *
  * These shapes implement ADR-0084. They are intentionally consumer-agnostic:
- * the original project maps rule IDs and sink names to its own implementations.
+ * any host maps rule IDs and sink names to its own implementations.
  */
 
 export interface MbaModelDna {
