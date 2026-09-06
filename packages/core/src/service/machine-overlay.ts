@@ -68,10 +68,13 @@ export function applyMachineOverlay(
   }
 
   const availableRam = Math.floor(machine.totalRamBytes * RAM_HEADROOM);
-  const firstGpu = machine.gpus && machine.gpus.length > 0 ? machine.gpus[0] : undefined;
+  const gpuWithVram =
+    machine.gpus && machine.gpus.length > 0
+      ? machine.gpus.find((g) => g.vramBytes !== undefined && g.vramBytes > 0)
+      : undefined;
   const availableVram =
-    firstGpu !== undefined && firstGpu.vramBytes !== undefined
-      ? Math.floor(firstGpu.vramBytes * VRAM_HEADROOM)
+    gpuWithVram !== undefined && gpuWithVram.vramBytes !== undefined
+      ? Math.floor(gpuWithVram.vramBytes * VRAM_HEADROOM)
       : undefined;
 
   // --- gpuLayers ---
