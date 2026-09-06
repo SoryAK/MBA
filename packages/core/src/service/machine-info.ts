@@ -27,7 +27,7 @@ export interface CpuInfo {
   readonly cpuCores: number;
   /** Number of physical CPU cores, if detectable. */
   readonly cpuPhysicalCores?: number;
-  /** CPU model name, e.g. "AMD Ryzen 9 7940HS". */
+  /** CPU model name, e.g. "Example CPU Model". */
   readonly cpuModel?: string;
   /** CPU base/reported speed in MHz. */
   readonly cpuSpeedMHz?: number;
@@ -268,7 +268,7 @@ function extractXmlTag(xml: string, tag: string): string | undefined {
 export function parseLspciGpus(output: string): readonly GpuInfo[] | undefined {
   const names: string[] = [];
   for (const line of output.split(/\r?\n/)) {
-    // lspci line format: "00:00.0 VGA compatible controller: NVIDIA ... [GeForce ...] (rev a1)"
+    // lspci line format: "00:00.0 VGA compatible controller: NVIDIA ... [GPU ...] (rev a1)"
     // We want the vendor/device string after the controller-type colon.
     const match = line.match(
       /(VGA compatible controller|3D controller|Display controller):\s*(.*?)\s*(?:\(rev [a-f0-9]+\))?$/i,

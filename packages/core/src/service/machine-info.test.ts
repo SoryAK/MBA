@@ -103,7 +103,7 @@ describe("parseNvidiaSmiXml", () => {
       '<?xml version="1.0" ?>',
       "<nvidia_smi_log>",
       "  <gpu>",
-      "    <product_name>NVIDIA GeForce RTX 4090</product_name>",
+      "    <product_name>Example NVIDIA GPU</product_name>",
       "    <fb_memory_usage>",
       "      <total>24564 MiB</total>",
       "    </fb_memory_usage>",
@@ -113,7 +113,7 @@ describe("parseNvidiaSmiXml", () => {
     const gpus = parseNvidiaSmiXml(xml);
     expect(gpus).toHaveLength(1);
     expect(gpus![0]).toEqual({
-      name: "NVIDIA GeForce RTX 4090",
+      name: "Example NVIDIA GPU",
       vramBytes: 24564 * 1024 * 1024,
     });
   });
@@ -130,13 +130,13 @@ describe("parseNvidiaSmiCsv", () => {
   });
 
   it("extracts multiple GPUs", () => {
-    const csv = ["Example NVIDIA GPU, 8192 MiB", "NVIDIA GeForce RTX 4090, 24576 MiB"].join(
+    const csv = ["Example NVIDIA GPU, 8192 MiB", "Example High-End GPU, 24576 MiB"].join(
       "\n",
     );
     const gpus = parseNvidiaSmiCsv(csv);
     expect(gpus).toHaveLength(2);
     expect(gpus![1]).toEqual({
-      name: "NVIDIA GeForce RTX 4090",
+      name: "Example High-End GPU",
       vramBytes: 24576 * 1024 * 1024,
     });
   });
@@ -165,7 +165,7 @@ describe("parseSystemProfiler", () => {
       {
         _items: [
           {
-            sppci_model: "Apple M3 Pro",
+            sppci_model: "Apple GPU Example",
             sppci_vram: "18 GB",
           },
         ],
@@ -174,7 +174,7 @@ describe("parseSystemProfiler", () => {
     const gpus = parseSystemProfiler(json);
     expect(gpus).toHaveLength(1);
     expect(gpus![0]).toEqual({
-      name: "Apple M3 Pro",
+      name: "Apple GPU Example",
       vramBytes: 18 * 1024 * 1024 * 1024,
     });
   });
@@ -186,19 +186,19 @@ describe("parseSystemProfiler", () => {
 
 describe("parseWindowsVideoControllers", () => {
   it("extracts name and AdapterRAM from PowerShell JSON", () => {
-    const json = JSON.stringify({ Name: "NVIDIA GeForce Example GPU", AdapterRAM: 12884901888 });
+    const json = JSON.stringify({ Name: "Example NVIDIA GPU", AdapterRAM: 12884901888 });
     const gpus = parseWindowsVideoControllers(json);
     expect(gpus).toHaveLength(1);
     expect(gpus![0]).toEqual({
-      name: "NVIDIA GeForce Example GPU",
+      name: "Example NVIDIA GPU",
       vramBytes: 12884901888,
     });
   });
 
   it("handles an array of controllers", () => {
     const json = JSON.stringify([
-      { Name: "NVIDIA GeForce Example GPU", AdapterRAM: 12884901888 },
-      { Name: "Intel UHD Graphics", AdapterRAM: 1073741824 },
+      { Name: "Example NVIDIA GPU", AdapterRAM: 12884901888 },
+      { Name: "Intel iGPU Example", AdapterRAM: 1073741824 },
     ]);
     const gpus = parseWindowsVideoControllers(json);
     expect(gpus).toHaveLength(2);
@@ -208,15 +208,15 @@ describe("parseWindowsVideoControllers", () => {
 describe("parseLspciGpus", () => {
   it("extracts clean device names from lspci output", () => {
     const output = [
-      "00:00.0 VGA compatible controller: NVIDIA Corporation GA104 [Example NVIDIA GPU GDDR6X] (rev a1)",
-      "00:00.1 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Raphael (rev c1)",
-      "01:00.0 3D controller: NVIDIA Corporation GA102 [GeForce RTX 3090]",
+      "00:00.0 VGA compatible controller: NVIDIA Corporation GPU Chip [Example GPU] (rev a1)",
+      "00:00.1 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Example iGPU (rev c1)",
+      "01:00.0 3D controller: NVIDIA Corporation GPU Chip 2 [Example GPU 2]",
     ].join("\n");
     const gpus = parseLspciGpus(output);
     expect(gpus).toEqual([
-      { name: "NVIDIA Corporation GA104 [Example NVIDIA GPU GDDR6X]" },
-      { name: "Advanced Micro Devices, Inc. [AMD/ATI] Raphael" },
-      { name: "NVIDIA Corporation GA102 [GeForce RTX 3090]" },
+      { name: "NVIDIA Corporation GPU Chip [Example GPU]" },
+      { name: "Advanced Micro Devices, Inc. [AMD/ATI] Example iGPU" },
+      { name: "NVIDIA Corporation GPU Chip 2 [Example GPU 2]" },
     ]);
   });
 

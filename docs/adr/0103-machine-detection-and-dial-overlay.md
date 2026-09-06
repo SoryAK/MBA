@@ -60,7 +60,7 @@ Example profile:
   "totalRamBytes": 34359738368,
   "gpus": [
     {
-      "name": "NVIDIA GeForce RTX 4090",
+      "name": "Example NVIDIA GPU",
       "vramBytes": 25769803776
     }
   ],
