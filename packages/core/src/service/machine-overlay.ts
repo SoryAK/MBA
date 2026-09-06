@@ -46,6 +46,9 @@ function recipeFits(
 ): boolean {
   if (estimate === undefined) return false;
   const fitsRam = estimate.ramBytes <= availableRam;
+  // If the recipe needs any VRAM but the machine has no usable GPU, it does
+  // not fit, even when the RAM-only check passes.
+  if (estimate.vramBytes > 0 && availableVram === undefined) return false;
   const fitsVram = availableVram === undefined || estimate.vramBytes <= availableVram;
   return fitsRam && fitsVram;
 }
@@ -96,19 +99,23 @@ export function applyMachineOverlay(
   }
 
   // --- ctxSize via memory estimator ---
+  // Apply non-ctxSize clamps first, then re-estimate. The original estimate
+  // may "fit" only because gpuLayers=100 shifts most memory to VRAM, but if
+  // we clamped gpuLayers to 0 because no GPU is present the memory moves back
+  // to RAM and may no longer fit.
   const originalRecipeShape = flagsToRecipeShape(modelFile, flags);
   const originalEstimate = estimateRecipeMemory(originalRecipeShape);
   const originalFits = recipeFits(originalEstimate, availableRam, availableVram);
 
-  if (originalEstimate === undefined) {
+  const clampedBeforeCtx: ResolvedLlamaFlags = { ...flags, ...clamped };
+  const clampedRecipeShape = flagsToRecipeShape(modelFile, clampedBeforeCtx);
+  const clampedEstimateBeforeCtx = estimateRecipeMemory(clampedRecipeShape);
+  const clampedFitsBeforeCtx = recipeFits(clampedEstimateBeforeCtx, availableRam, availableVram);
+
+  if (originalEstimate === undefined || clampedEstimateBeforeCtx === undefined) {
     annotations.push("could not estimate memory from GGUF metadata; ctxSize not clamped");
-  } else if (!originalFits) {
-    const maxCtx = findMaxFittingCtxSize(
-      { ...originalRecipeShape, gpuLayers: clamped.gpuLayers ?? flags.gpuLayers ?? 0 },
-      availableRam,
-      availableVram,
-      flags.ctxSize,
-    );
+  } else if (!clampedFitsBeforeCtx) {
+    const maxCtx = findMaxFittingCtxSize(clampedRecipeShape, availableRam, availableVram, flags.ctxSize);
     if (maxCtx === undefined || maxCtx < 1) {
       annotations.push("model does not fit in available RAM/VRAM even with ctxSize=1");
     } else if (flags.ctxSize === undefined || maxCtx < flags.ctxSize) {
