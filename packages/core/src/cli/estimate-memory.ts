@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { brand, dim, heading, kv, paint, BOLD, GRN, RED } from "./style.js";
 import {
   estimateRecipeMemory,
   findMaxFittingCtxSize,
@@ -171,40 +172,48 @@ export function parseEstimateMemoryArgs(args: readonly string[]): EstimateMemory
 
 export function printEstimateMemory(result: EstimateMemoryResult): void {
   const { estimate, recipe, machineFits } = result;
+  const w = 9;
 
-  process.stdout.write(`[mba] estimate for ${recipe.modelPath}\n`);
-  process.stdout.write(`[mba] recipe: ctxSize=${recipe.ctxSize}, gpuLayers=${recipe.gpuLayers}, batchSize=${recipe.batchSize}, ubatchSize=${recipe.ubatchSize}, cacheTypeK=${recipe.cacheTypeK}, cacheTypeV=${recipe.cacheTypeV}, flashAttention=${recipe.flashAttention}\n\n`);
+  process.stdout.write(`${brand("estimate")}\n`);
+  process.stdout.write(`${kv("model", recipe.modelPath, w)}\n`);
+  process.stdout.write(`${kv("ctx", String(recipe.ctxSize), w)}\n`);
+  process.stdout.write(`${kv("gpu", String(recipe.gpuLayers), w)}\n`);
+  process.stdout.write(`${kv("batch", String(recipe.batchSize), w)}\n`);
+  process.stdout.write(`${kv("ubatch", String(recipe.ubatchSize), w)}\n`);
+  process.stdout.write(`${kv("cache", `${recipe.cacheTypeK} / ${recipe.cacheTypeV}`, w)}\n`);
+  process.stdout.write(`${kv("flash", recipe.flashAttention ? "on" : "off", w)}\n`);
 
-  process.stdout.write(`Total:  ${formatBytes(estimate.totalBytes)}\n`);
-  process.stdout.write(`RAM:    ${formatBytes(estimate.ramBytes)}\n`);
-  process.stdout.write(`VRAM:   ${formatBytes(estimate.vramBytes)}\n\n`);
+  process.stdout.write(`\n  ${heading("memory")}\n`);
+  process.stdout.write(`${kv("total", formatBytes(estimate.totalBytes), w)}\n`);
+  process.stdout.write(`${kv("ram", formatBytes(estimate.ramBytes), w)}\n`);
+  process.stdout.write(`${kv("vram", formatBytes(estimate.vramBytes), w)}\n`);
 
-  process.stdout.write(`Breakdown:\n`);
-  process.stdout.write(`  weights:       ${formatBytes(estimate.breakdown.weightsBytes)}\n`);
-  process.stdout.write(`  KV cache:      ${formatBytes(estimate.breakdown.kvCacheBytes)}\n`);
-  process.stdout.write(`  compute:       ${formatBytes(estimate.breakdown.computeBufferBytes)}\n`);
-  process.stdout.write(`  overhead:      ${formatBytes(estimate.breakdown.overheadBytes)}\n\n`);
+  process.stdout.write(`\n  ${heading("breakdown")}\n`);
+  process.stdout.write(`${kv("weights", formatBytes(estimate.breakdown.weightsBytes), w)}\n`);
+  process.stdout.write(`${kv("kv cache", formatBytes(estimate.breakdown.kvCacheBytes), w)}\n`);
+  process.stdout.write(`${kv("compute", formatBytes(estimate.breakdown.computeBufferBytes), w)}\n`);
+  process.stdout.write(`${kv("overhead", formatBytes(estimate.breakdown.overheadBytes), w)}\n`);
 
-  process.stdout.write(`RAM/VRAM split:\n`);
-  process.stdout.write(`  RAM weights:   ${formatBytes(estimate.split.ramWeightsBytes)}\n`);
-  process.stdout.write(`  RAM KV:        ${formatBytes(estimate.split.ramKvCacheBytes)}\n`);
-  process.stdout.write(`  RAM compute:   ${formatBytes(estimate.split.ramComputeBufferBytes)}\n`);
-  process.stdout.write(`  RAM overhead:  ${formatBytes(estimate.split.ramOverheadBytes)}\n`);
-  process.stdout.write(`  VRAM weights:  ${formatBytes(estimate.split.vramWeightsBytes)}\n`);
-  process.stdout.write(`  VRAM KV:       ${formatBytes(estimate.split.vramKvCacheBytes)}\n`);
-  process.stdout.write(`  VRAM compute:  ${formatBytes(estimate.split.vramComputeBufferBytes)}\n\n`);
+  process.stdout.write(`\n  ${heading("split")}\n`);
+  process.stdout.write(`${kv("ram w", formatBytes(estimate.split.ramWeightsBytes), w)}\n`);
+  process.stdout.write(`${kv("ram kv", formatBytes(estimate.split.ramKvCacheBytes), w)}\n`);
+  process.stdout.write(`${kv("ram cmp", formatBytes(estimate.split.ramComputeBufferBytes), w)}\n`);
+  process.stdout.write(`${kv("ram ovr", formatBytes(estimate.split.ramOverheadBytes), w)}\n`);
+  process.stdout.write(`${kv("vram w", formatBytes(estimate.split.vramWeightsBytes), w)}\n`);
+  process.stdout.write(`${kv("vram kv", formatBytes(estimate.split.vramKvCacheBytes), w)}\n`);
+  process.stdout.write(`${kv("vram cmp", formatBytes(estimate.split.vramComputeBufferBytes), w)}\n`);
 
   if (machineFits !== undefined) {
-    process.stdout.write(`Against persisted machine profile:\n`);
-    process.stdout.write(`  available RAM: ${formatBytes(machineFits.availableRamBytes)}\n`);
-    if (machineFits.availableVramBytes !== undefined) {
-      process.stdout.write(`  available VRAM: ${formatBytes(machineFits.availableVramBytes)}\n`);
-    } else {
-      process.stdout.write(`  available VRAM: none detected\n`);
-    }
-    process.stdout.write(`  fits: ${machineFits.fits ? "yes" : "no"}\n`);
+    process.stdout.write(`\n  ${heading("machine")}\n`);
+    process.stdout.write(`${kv("ram", formatBytes(machineFits.availableRamBytes), w)}\n`);
+    process.stdout.write(
+      `${kv("vram", machineFits.availableVramBytes !== undefined ? formatBytes(machineFits.availableVramBytes) : dim("none"), w)}\n`,
+    );
+    process.stdout.write(
+      `${kv("fits", machineFits.fits ? paint("yes", BOLD, GRN) : paint("no", BOLD, RED), w)}\n`,
+    );
     if (machineFits.maxCtxSize !== undefined) {
-      process.stdout.write(`  largest ctxSize that fits: ${machineFits.maxCtxSize}\n`);
+      process.stdout.write(`${kv("max ctx", String(machineFits.maxCtxSize), w)}\n`);
     }
   }
 }

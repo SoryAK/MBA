@@ -11,16 +11,16 @@ configuration dials without hunting for files or hand-editing JSON/YAML. It
 walks the user through:
 
 1. **Pick a model** — interactive fuzzy menu (arrow keys + type-to-filter) or
-   plain `mba models` list.
-2. **See its dials** — `mba config <model>` prints every known dial with its
+   plain `mba models list`.
+2. **See its dials** — `mba models show <model>` prints every known dial with its
    current value, grouped by file (`server_setup` vs `client`), with a
    `[restart]` marker on dials that require a server reboot to take effect.
-3. **Edit a dial** — `mba set <model> <field> <value>` writes the value with
+3. **Edit a dial** — `mba models set <model> <field> <value>` writes the value with
    per-field validation (integers, booleans, enums, `gpuLayers ≤ blockCount`).
 4. **Restart when needed** — if the edited dial requires a reboot and the
    model is currently loaded, `mba` asks whether to reboot the **same** model
    in-daemon (stop the model's current server, then `POST /servers/boot`).
-5. **Escape hatch** — `mba open <model> [server_setup|yaml]` prints the file
+5. **Escape hatch** — `mba models open <model> [server_setup|yaml]` prints the file
    path for raw editing.
 
 The CLI is a **thin client** over the MBA service — it never touches adapter
@@ -35,11 +35,11 @@ a restart is required.
 2. **`mba models`** — `GET /models` → interactive menu (TTY) or plain list
    (non-TTY / piped). Menu: up/down arrows, type-to-filter on id+name, Enter
    selects, Backspace edits filter, Ctrl-C cancels.
-3. **`mba config <id>`** — `GET /models/config?id=<id>` → prints the YAML and
+3. **`mba models show <id>`** — `GET /models/config?id=<id>` → prints the YAML and
    `server_setup.json` paths, the profile `blockCount`, and every dial grouped
    by file with current value and `[restart]` marker. Absent dials show as
    `null` (not set — inherited from defaults at boot).
-4. **`mba set <id> <field> <value>`** — GET-first: fetches the dials, finds
+4. **`mba models set <id> <field> <value>`** — GET-first: fetches the dials, finds
    the field's spec to resolve which file it belongs to (`server_setup` or
    `client`), then `POST /models/config` with `{ id, file, field, value }`.
    Unknown field → error listing the known fields for that model.
@@ -60,7 +60,7 @@ a restart is required.
      legacy external boot script is no longer used.
    - `--yes` (or non-TTY stdin) **never restarts** — it skips the prompt and
      prints the manual hint `mba servers boot <id> <port>` instead.
-7. **`mba open <id> [server_setup|yaml]`** — `GET /models/config?id=<id>` →
+7. **`mba models open <id> [server_setup|yaml]`** — `GET /models/config?id=<id>` →
    prints the `server_setup.json` path (default) or the adapter YAML path.
 
 ## Configuration/Params
@@ -82,13 +82,16 @@ a restart is required.
 **Commands:**
 
 ```text
-mba models                          # pick a model (menu) / list
-mba config <model>                  # show all dials + current values
-mba set <model> <field> <value>     # edit one dial (validated)
-mba set <model> <field> <value> --yes   # + auto-reboot if required
-mba open <model> [server_setup|yaml]    # print file path (escape hatch)
+mba models                          # pick a model (menu) / list when piped
+mba models list                     # print every model id
+mba models show <model>             # show all dials + current values
+mba models set <model> <field> <value>
+mba models set <model> <field> <value> --yes
+mba models open <model> [server_setup|yaml]
 mba help
 ```
+
+Aliases still work: `mba config`, `mba set`, `mba open`.
 
 ## Known Constraints
 
@@ -97,7 +100,7 @@ mba help
 - **The live service must be running and current.** The CLI is a pure client:
   if the service is down, every command fails with a discovery hint. A service
   process started before the `GET /models/config` route was added returns 404
-  for `mba config` / `mba set` until it is restarted.
+  for `mba models show` / `mba models set` until it is restarted.
 - **`npm link` staleness.** The global `mba` points at `dist/cli/mba.js`.
   After changing CLI code: `npm run build && npm link` (in `packages/core`).
 - **The CLI never restarts a model silently.** Reboot only happens on an
