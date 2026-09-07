@@ -45,10 +45,23 @@ Upgrading from a pre-0.1.1 install? Run `mba migrate-paths` once — it moves
 your legacy `~/.mba` state and `~/models/adapters` store to the OS-aware
 locations (local-only, works with the service stopped, never overwrites).
 
+## CLI
+
+```sh
+mba                  # home menu (TTY)
+mba --help           # groups
+mba models --help    # details
+mba status           # service, loaded model, machine mode
+mba s boot qwen      # port optional (MBA_SWITCH_PORT, default 8080)
+eval "$(mba completion)"   # bash; or: mba completion zsh
+```
+
+`mba server` works the same as `mba servers`. `--json` on list/show/status.
+
 ## Model onboarding
 
 ```sh
-mba pull <url|owner/repo[:file-or-quant]> --id <id> [--sha256 <digest>] [--family <family>]
+mba models pull <url|owner/repo[:file-or-quant]> --id <id> [--sha256 <digest>] [--family <family>]
 ```
 
 One-command onboarding (ADR-0098): downloads a GGUF (resume + sha256
@@ -59,7 +72,7 @@ For HuggingFace repos the digest is auto-resolved from the repo's published
 LFS metadata (ADR-0099) — no hash hunting:
 
 ```sh
-mba pull rico03/Qwen3.8-27B-...-GGUF:Q4_K_M --id qwen3.8-27b-opus-distill
+mba models pull rico03/Qwen3.8-27B-...-GGUF:Q4_K_M --id qwen3.8-27b-opus-distill
 ```
 
 `--sha256` stays available as an override (and is still required for

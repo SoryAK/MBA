@@ -3,14 +3,74 @@
  *
  * Three small, self-contained keypress handlers — no fzf, no readline
  * prompts, just stdin raw mode + ANSI redraw:
- *   - pickModelInteractive — arrow-key menu over models, type-to-filter
+ *   - pickModelInteractive — arrow-key menu over models, type-to-filter,
+ *     Esc cancels (null)
  *   - pickFieldInteractive — arrow-key menu over dials, type-to-filter,
  *     a trailing "quit" row
  *   - askValueInteractive  — single-line value prompt with a constraint hint
  *
  * These own the "how" of interactive input; `mba.ts` owns the flow (which
  * prompt comes next, what to do with the answer).
+ *
+ * Paint matches Prismor's wizard: cyan ▸, green ● / dim ○, bold selection.
  */
+
+import {
+  HIDE_CURSOR,
+  SHOW_CURSOR,
+  brand,
+  clipLine,
+  dim,
+  option,
+  paint,
+  BOLD,
+  CYAN,
+  RED,
+} from "./style.js";
+
+/** Leave raw mode and pause stdin so Node can exit (resume() keeps the loop alive). */
+function endInteractive(
+  stdin: NodeJS.ReadStream,
+  onData: (buf: Buffer) => void,
+): void {
+  stdin.removeListener("data", onData);
+  if (stdin.isTTY) {
+    try {
+      stdin.setRawMode(false);
+    } catch {
+      // already cooked
+    }
+  }
+  stdin.pause();
+  process.stdout.write(SHOW_CURSOR);
+}
+
+/** Redraw a block without eating the lines above it. */
+function createMenuFrame(): {
+  draw(lines: readonly string[]): void;
+  close(opts?: { erase?: boolean }): void;
+} {
+  let prev = 0;
+  return {
+    draw(lines) {
+      if (prev > 0) process.stdout.write(`\x1b[${prev}A\x1b[J`);
+      const clipped = lines.map((line) => clipLine(line));
+      process.stdout.write(`${HIDE_CURSOR}${clipped.join("\n")}\n`);
+      prev = clipped.length;
+    },
+    close(opts) {
+      if (opts?.erase && prev > 0) {
+        process.stdout.write(`\x1b[${prev}A\x1b[J`);
+        prev = 0;
+      }
+      process.stdout.write(SHOW_CURSOR);
+    },
+  };
+}
+
+function clearLine(): void {
+  process.stdout.write("\r\x1b[K");
+}
 
 // --- Shared types (mirror the service's model-config surface) ---------------
 
@@ -65,9 +125,10 @@ function tokenizeKeys(chunk: string): string[] {
 
 // --- Interactive model picker (no fzf — readline keypress) -------------------
 
-export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry> {
-  return new Promise<ModelEntry>((resolve, reject) => {
+export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry | null> {
+  return new Promise<ModelEntry | null>((resolve, reject) => {
     const stdin = process.stdin;
+    const frame = createMenuFrame();
     let query = "";
     let cursor = 0;
 
@@ -80,70 +141,62 @@ export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry> 
 
     const render = () => {
       const list = filtered();
-      // Move the cursor back over the previous frame and redraw.
-      process.stdout.write(`\x1b[${list.length + 1}A\x1b[J`);
-      process.stdout.write(`  mba models — ${query ? `filter: ${query}` : "type to filter"}\n`);
+      const lines = [
+        `${brand("models")}  ${dim(query ? `filter: ${query}` : `${models.length} models · type to filter · esc cancel`)}`,
+      ];
       if (list.length === 0) {
-        process.stdout.write("  (no matches)\n");
-        return;
+        lines.push(dim("  (no matches)"));
+      } else {
+        for (const [i, m] of list.entries()) {
+          const extra = `${m.family ? `(${m.family})` : ""}${m.loaded ? "  loaded" : ""}`.trim();
+          lines.push(option(i === cursor, m.id, extra));
+        }
       }
-      list.forEach((m, i) => {
-        const marker = i === cursor ? ">" : " ";
-        const loaded = m.loaded ? "  [loaded]" : "";
-        process.stdout.write(
-          ` ${marker} ${m.id}${m.family ? `  (${m.family})` : ""}${loaded}\n`,
-        );
-      });
+      frame.draw(lines);
     };
 
-    const firstRender = () => {
-      process.stdout.write(`  mba models — ${models.length} models, type to filter\n`);
-      const list = filtered();
-      list.forEach((m, i) => {
-        const marker = i === cursor ? ">" : " ";
-        const loaded = m.loaded ? "  [loaded]" : "";
-        process.stdout.write(
-          ` ${marker} ${m.id}${m.family ? `  (${m.family})` : ""}${loaded}\n`,
-        );
-      });
+    const finish = (ok: () => void) => {
+      endInteractive(stdin, onData);
+      frame.close({ erase: true });
+      ok();
     };
 
-    const done = (m: ModelEntry) => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
-      process.stdout.write("\n");
-      resolve(m);
+    const done = (m: ModelEntry | null) => {
+      finish(() => resolve(m));
     };
 
     const handleKey = (key: string): boolean => {
-      // Returns true when the prompt is done (resolve/reject already called).
       const list = filtered();
       if (key === "\x1b[A") {
-        // up
+        if (list.length === 0) return false;
         cursor = (cursor - 1 + list.length) % list.length;
         render();
         return false;
       } else if (key === "\x1b[B") {
-        // down
+        if (list.length === 0) return false;
         cursor = (cursor + 1) % list.length;
         render();
         return false;
       } else if (key === "\r" || key === "\n") {
         const pick = list[cursor];
         if (pick) done(pick);
+        return Boolean(pick);
+      } else if (key === "\x1b") {
+        if (query.length > 0) {
+          query = "";
+          cursor = 0;
+          render();
+          return false;
+        }
+        done(null);
         return true;
       } else if (key === "\x7f" || key === "\b") {
-        // backspace
         query = query.slice(0, -1);
         cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
         render();
         return false;
       } else if (key === "\x03") {
-        // ctrl-c
-        stdin.setRawMode(false);
-        stdin.removeListener("data", onData);
-        process.stdout.write("\n");
-        reject(new Error("cancelled"));
+        finish(() => reject(new Error("cancelled")));
         return true;
       } else if (key.length === 1 && !key.startsWith("\x1b")) {
         query += key;
@@ -165,7 +218,7 @@ export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry> 
     stdin.setRawMode(true);
     stdin.resume();
     stdin.on("data", onData);
-    firstRender();
+    render();
   });
 }
 
@@ -180,43 +233,37 @@ export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry> 
 export function pickFieldInteractive(fields: ModelDial[]): Promise<ModelDial | null> {
   return new Promise<ModelDial | null>((resolve, reject) => {
     const stdin = process.stdin;
+    const frame = createMenuFrame();
     let query = "";
     let cursor = 0;
-    const rows = [...fields, null]; // null = quit row
 
-    const filtered = () =>
-      rows.filter((f) => f !== null && f.field.toLowerCase().includes(query.toLowerCase()));
+    const filtered = (): Array<ModelDial | null> => {
+      const matches = fields.filter((f) => f.field.toLowerCase().includes(query.toLowerCase()));
+      return query.length > 0 ? matches : [...matches, null];
+    };
 
-    const drawRow = (f: ModelDial | null, i: number, cursorIdx: number): void => {
-      const marker = i === cursorIdx ? ">" : " ";
-      if (f === null) {
-        process.stdout.write(` ${marker} quit\n`);
-        return;
-      }
+    const rowText = (f: ModelDial | null, selected: boolean): string => {
+      if (f === null) return option(selected, "quit");
       const current = f.current === null ? "(unset)" : String(f.current);
-      const restart = f.restartRequired ? "  [restart]" : "";
-      const hint = f.hint ? `  (${f.hint})` : "";
-      process.stdout.write(` ${marker} ${f.field.padEnd(16)} ${current}${restart}${hint}\n`);
+      const restart = f.restartRequired ? "  restart" : "";
+      const hint = f.hint ? `  ${f.hint}` : "";
+      return option(selected, f.field.padEnd(16), `${current}${restart}${hint}`);
     };
 
     const render = () => {
       const list = filtered();
-      process.stdout.write(`\x1b[${rows.length + 1}A\x1b[J`);
-      process.stdout.write(
-        `  pick a field to edit — ${query ? `filter: ${query}` : "type to filter"} (q/Esc quits):\n`,
-      );
-      if (list.length === 0) {
-        process.stdout.write("  (no matches)\n");
-        return;
-      }
-      list.forEach((f, i) => drawRow(f, i, cursor));
+      const lines = [
+        `${brand("edit")}  ${dim(query ? `filter: ${query}` : "type to filter · q/esc quit")}`,
+      ];
+      if (list.length === 0) lines.push(dim("  (no matches)"));
+      else list.forEach((f, i) => lines.push(rowText(f, i === cursor)));
+      frame.draw(lines);
     };
 
-    const done = (f: ModelDial | null) => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
-      process.stdout.write("\n");
-      resolve(f);
+    const finish = (ok: () => void) => {
+      endInteractive(stdin, onData);
+      frame.close({ erase: true });
+      ok();
     };
 
     const onData = (buf: Buffer) => {
@@ -231,27 +278,23 @@ export function pickFieldInteractive(fields: ModelDial[]): Promise<ModelDial | n
         cursor = (cursor + 1) % list.length;
         render();
       } else if (key === "\r" || key === "\n") {
-        done(list[cursor] ?? null);
+        finish(() => resolve(list[cursor] ?? null));
       } else if (key === "q") {
-        done(null);
+        finish(() => resolve(null));
       } else if (key === "\x1b") {
-        // Esc clears the filter first; a second press quits.
         if (query.length > 0) {
           query = "";
           cursor = 0;
           render();
         } else {
-          done(null);
+          finish(() => resolve(null));
         }
       } else if (key === "\x7f" || key === "\b") {
         query = query.slice(0, -1);
         cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
         render();
       } else if (key === "\x03") {
-        stdin.setRawMode(false);
-        stdin.removeListener("data", onData);
-        process.stdout.write("\n");
-        reject(new Error("cancelled"));
+        finish(() => reject(new Error("cancelled")));
       } else if (key.length === 1 && !key.startsWith("\x1b")) {
         query += key;
         cursor = 0;
@@ -262,10 +305,7 @@ export function pickFieldInteractive(fields: ModelDial[]): Promise<ModelDial | n
     stdin.setRawMode(true);
     stdin.resume();
     stdin.on("data", onData);
-    // First frame: print the header line, then the body (render() assumes a
-    // previous frame to move back over, so the first draw is done inline).
-    process.stdout.write("  pick a field to edit — type to filter (q/Esc quits):\n");
-    rows.forEach((f, i) => drawRow(f, i, cursor));
+    render();
   });
 }
 
@@ -285,13 +325,12 @@ export function askValueInteractive(
 
     const render = () => {
       process.stdout.write(
-        `\r\x1b[K  ${field} [${current}]${hintText} > ${input}\x1b[7 >\x1b[0m`,
+        `\r\x1b[K  ${paint(field, BOLD, CYAN)} ${dim(`[${current}]${hintText}`)} ${paint("▸", CYAN)} ${input}\x1b[7m \x1b[0m`,
       );
     };
 
     const done = (value: string | null) => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
+      endInteractive(stdin, onData);
       process.stdout.write("\n");
       resolve(value);
     };
@@ -306,8 +345,7 @@ export function askValueInteractive(
         input = input.slice(0, -1);
         render();
       } else if (key === "\x03") {
-        stdin.setRawMode(false);
-        stdin.removeListener("data", onData);
+        endInteractive(stdin, onData);
         process.stdout.write("\n");
         reject(new Error("cancelled"));
       } else if (key.length === 1 && !key.startsWith("\x1b")) {
@@ -339,14 +377,13 @@ export function askPortInteractive(
     const render = () => {
       const errText = error ? `  ${error}` : "";
       process.stdout.write(
-        `\r\x1b[K  port [${defaultPort}]${errText} > ${input}\x1b[7 >\x1b[0m`,
+        `\r\x1b[K  ${paint("port", BOLD, CYAN)} ${dim(`[${defaultPort}]`)}${errText ? paint(errText, RED) : ""} ${paint("▸", CYAN)} ${input}\x1b[7m \x1b[0m`,
       );
     };
 
     const done = (value: number | null) => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
-      process.stdout.write("\n");
+      endInteractive(stdin, onData);
+      clearLine();
       resolve(value);
     };
 
@@ -375,9 +412,8 @@ export function askPortInteractive(
         render();
         return false;
       } else if (key === "\x03") {
-        stdin.setRawMode(false);
-        stdin.removeListener("data", onData);
-        process.stdout.write("\n");
+        endInteractive(stdin, onData);
+        clearLine();
         reject(new Error("cancelled"));
         return true;
       } else if (key.length === 1 && !key.startsWith("\x1b")) {
@@ -394,6 +430,63 @@ export function askPortInteractive(
       // value or a fast terminal flush); process each one in order.
       for (const key of buf.toString("utf8")) {
         if (handleKey(key)) return;
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    render();
+  });
+}
+
+/**
+ * One-line y/N. Enter or `n` is no; `y` is yes; Esc is cancel (`null`).
+ * The prompt line is erased so a preview card above it stays the last screen.
+ */
+export function askYesNoInteractive(prompt: string): Promise<boolean | null> {
+  return new Promise<boolean | null>((resolve, reject) => {
+    const stdin = process.stdin;
+    let input = "";
+
+    const render = () => {
+      process.stdout.write(
+        `\r\x1b[K  ${paint(prompt, BOLD, CYAN)}  ${dim("[y/N]")} ${paint("▸", CYAN)} ${input}\x1b[7m \x1b[0m`,
+      );
+    };
+
+    const done = (value: boolean | null) => {
+      endInteractive(stdin, onData);
+      clearLine();
+      resolve(value);
+    };
+
+    const onData = (buf: Buffer) => {
+      for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        if (key === "\r" || key === "\n") {
+          const ans = input.trim().toLowerCase();
+          done(ans === "y" || ans === "yes");
+          return;
+        }
+        if (key === "\x1b") {
+          done(null);
+          return;
+        }
+        if (key === "\x7f" || key === "\b") {
+          input = input.slice(0, -1);
+          render();
+          continue;
+        }
+        if (key === "\x03") {
+          endInteractive(stdin, onData);
+          clearLine();
+          reject(new Error("cancelled"));
+          return;
+        }
+        if (key.length === 1 && !key.startsWith("\x1b")) {
+          input += key;
+          render();
+        }
       }
     };
 
@@ -423,76 +516,70 @@ export function searchHfInteractive(
 ): Promise<string | null> {
   return new Promise<string | null>((resolve, reject) => {
     const stdin = process.stdin;
+    const resultsFrame = createMenuFrame();
     let phase: "input" | "searching" | "results" = "input";
     let query = "";
     let results: Array<{ id: string; downloads?: number; likes?: number }> = [];
     let cursor = 0;
 
     const cleanup = () => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
+      endInteractive(stdin, onData);
+      resultsFrame.close({ erase: true });
+      clearLine();
     };
 
     const done = (value: string | null) => {
       cleanup();
-      process.stdout.write("\n");
       resolve(value);
     };
 
     const cancel = () => {
       cleanup();
-      process.stdout.write("\n");
       reject(new Error("cancelled"));
     };
 
     const renderInput = () => {
-      process.stdout.write(`\r\x1b[K  search HuggingFace > ${query}\x1b[7 >\x1b[0m`);
-    };
-
-    const drawResults = () => {
       process.stdout.write(
-        `  ${results.length} result(s) for '${query}' — arrows to pick, Enter to select, Esc to cancel:\n`,
+        `\r\x1b[K  ${paint("search", BOLD, CYAN)} ${dim("HuggingFace")} ${paint("▸", CYAN)} ${query}\x1b[7m \x1b[0m`,
       );
-      if (results.length === 0) {
-        process.stdout.write("  (no matches)\n");
-        return;
-      }
-      results.forEach((r, i) => {
-        const marker = i === cursor ? ">" : " ";
-        const dl = r.downloads !== undefined ? `  ↓${r.downloads}` : "";
-        const lk = r.likes !== undefined ? `  ♥${r.likes}` : "";
-        process.stdout.write(` ${marker} ${r.id}${dl}${lk}\n`);
-      });
     };
 
-    // First results frame: the only prior line is the "searching…" status, so
-    // there is no results frame to move back over — do not emit a cursor-up.
-    const firstResultsRender = () => {
-      drawResults();
-    };
-
-    // Redraw over a previous results frame: 1 header line + N rows = N+1 lines.
     const renderResults = () => {
-      process.stdout.write(`\x1b[${results.length + 1}A\x1b[J`);
-      drawResults();
+      const lines = [
+        `${brand("search")}  ${dim(`${results.length} for '${query}' · ↑↓ pick · enter · esc`)}`,
+      ];
+      if (results.length === 0) {
+        lines.push(dim("  (no matches)"));
+      } else {
+        for (const [i, r] of results.entries()) {
+          const extra = [
+            r.downloads !== undefined ? `↓${r.downloads}` : "",
+            r.likes !== undefined ? `♥${r.likes}` : "",
+          ]
+            .filter(Boolean)
+            .join("  ");
+          lines.push(option(i === cursor, r.id, extra));
+        }
+      }
+      resultsFrame.draw(lines);
     };
 
     const startSearch = async () => {
       phase = "searching";
-      process.stdout.write(`\r\x1b[K  searching HuggingFace for '${query}'…\n`);
+      process.stdout.write(`\r\x1b[K  ${dim(`searching HuggingFace for '${query}'…`)}\n`);
       try {
         results = await searchFn(query);
       } catch (err) {
         phase = "input";
         process.stdout.write(
-          `\r\x1b[K  search failed: ${err instanceof Error ? err.message : String(err)}\n`,
+          `\r\x1b[K  ${paint("search failed", RED)} ${dim(err instanceof Error ? err.message : String(err))}\n`,
         );
         renderInput();
         return;
       }
       phase = "results";
       cursor = 0;
-      firstResultsRender();
+      renderResults();
     };
 
     const onData = (buf: Buffer) => {
@@ -559,28 +646,20 @@ export function pickLabeledInteractive(
 ): Promise<string | null> {
   return new Promise<string | null>((resolve, reject) => {
     const stdin = process.stdin;
+    const frame = createMenuFrame();
     let cursor = 0;
 
     const render = () => {
-      process.stdout.write(`\x1b[${items.length + 1}A\x1b[J`);
-      process.stdout.write(
-        `  ${title} — arrows to pick, Enter to select, Esc to cancel:\n`,
-      );
-      if (items.length === 0) {
-        process.stdout.write("  (none)\n");
-        return;
-      }
-      items.forEach((it, i) => {
-        const marker = i === cursor ? ">" : " ";
-        process.stdout.write(` ${marker} ${it.label}\n`);
-      });
+      const lines = [`${brand(title)}  ${dim("↑↓ pick · enter · esc")}`];
+      if (items.length === 0) lines.push(dim("  (none)"));
+      else items.forEach((it, i) => lines.push(option(i === cursor, it.label)));
+      frame.draw(lines);
     };
 
-    const done = (value: string | null) => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
-      process.stdout.write("\n");
-      resolve(value);
+    const finish = (ok: () => void) => {
+      endInteractive(stdin, onData);
+      frame.close({ erase: true });
+      ok();
     };
 
     const onData = (buf: Buffer) => {
@@ -595,16 +674,13 @@ export function pickLabeledInteractive(
           render();
         } else if (key === "\r" || key === "\n") {
           const pick = items[cursor];
-          if (pick) done(pick.value);
+          if (pick) finish(() => resolve(pick.value));
           return;
         } else if (key === "\x1b") {
-          done(null);
+          finish(() => resolve(null));
           return;
         } else if (key === "\x03") {
-          stdin.setRawMode(false);
-          stdin.removeListener("data", onData);
-          process.stdout.write("\n");
-          reject(new Error("cancelled"));
+          finish(() => reject(new Error("cancelled")));
           return;
         }
       }
@@ -613,12 +689,7 @@ export function pickLabeledInteractive(
     stdin.setRawMode(true);
     stdin.resume();
     stdin.on("data", onData);
-    // First frame (render() assumes a previous frame to move back over).
-    process.stdout.write(`  ${title} — arrows to pick, Enter to select, Esc to cancel:\n`);
-    items.forEach((it, i) => {
-      const marker = i === cursor ? ">" : " ";
-      process.stdout.write(` ${marker} ${it.label}\n`);
-    });
+    render();
   });
 }
 
@@ -636,13 +707,12 @@ export function askTextInteractive(
 
     const render = () => {
       process.stdout.write(
-        `\r\x1b[K  ${field} [${defaultValue}] > ${input}\x1b[7 >\x1b[0m`,
+        `\r\x1b[K  ${paint(field, BOLD, CYAN)} ${dim(`[${defaultValue}]`)} ${paint("▸", CYAN)} ${input}\x1b[7m \x1b[0m`,
       );
     };
 
     const done = (value: string | null) => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
+      endInteractive(stdin, onData);
       process.stdout.write("\n");
       resolve(value);
     };
@@ -659,8 +729,7 @@ export function askTextInteractive(
           input = input.slice(0, -1);
           render();
         } else if (key === "\x03") {
-          stdin.setRawMode(false);
-          stdin.removeListener("data", onData);
+          endInteractive(stdin, onData);
           process.stdout.write("\n");
           reject(new Error("cancelled"));
           return;
@@ -707,12 +776,12 @@ export function pickServerInteractive(
 ): Promise<ServerSelection | null> {
   return new Promise<ServerSelection | null>((resolve, reject) => {
     const stdin = process.stdin;
+    const frame = createMenuFrame();
     let stage: "list" | "actions" = "list";
     let query = "";
     let cursor = 0;
-    let listCursor = 0; // list position to restore when leaving the action menu
+    let listCursor = 0;
     let selected: ServerRow | null = null;
-    let prevLines = 0;
 
     const filtered = () =>
       servers.filter(
@@ -724,62 +793,49 @@ export function pickServerInteractive(
 
     const actionRows = (): readonly ["stop", "logs", "back"] => ["stop", "logs", "back"];
 
-    const drawServerRow = (s: ServerRow, i: number, cursorIdx: number): void => {
-      const marker = i === cursorIdx ? ">" : " ";
+    const serverRow = (s: ServerRow, selectedRow: boolean): string => {
       const pid = s.pid !== undefined ? String(s.pid) : "-";
-      const health = s.healthy ? "ok" : "DOWN";
-      process.stdout.write(
-        ` ${marker} ${s.id.padEnd(18)} ${String(s.port).padEnd(7)} ${pid.padEnd(8)} ${health.padEnd(5)} ${s.modelFile}\n`,
-      );
+      const health = s.healthy ? "ok" : "down";
+      return option(selectedRow, s.id.padEnd(18), `${s.port}  ${pid}  ${health}  ${s.modelFile}`);
     };
 
     const render = () => {
-      if (prevLines > 0) {
-        process.stdout.write(`\x1b[${prevLines}A\x1b[J`);
-      }
       if (stage === "list") {
         const list = filtered();
-        process.stdout.write(
-          `  mba servers — ${servers.length} running — ${query ? `filter: ${query}` : "type to filter"} (Esc quits):\n`,
-        );
-        if (list.length === 0) {
-          process.stdout.write("  (no matches)\n");
-          prevLines = 2;
-          return;
-        }
-        list.forEach((s, i) => drawServerRow(s, i, cursor));
-        prevLines = list.length + 1;
+        const lines = [
+          `${brand("servers")}  ${dim(`${servers.length} running · ${query ? `filter: ${query}` : "type to filter"} · esc quit`)}`,
+        ];
+        if (list.length === 0) lines.push(dim("  (no matches)"));
+        else list.forEach((s, i) => lines.push(serverRow(s, i === cursor)));
+        frame.draw(lines);
       } else {
         const rows = actionRows();
-        process.stdout.write(
-          `  actions for ${selected?.id} (port ${selected?.port}):\n`,
-        );
-        rows.forEach((a, i) => {
-          const marker = i === cursor ? ">" : " ";
+        const lines = [`${brand("actions")}  ${dim(`${selected?.id} · port ${selected?.port}`)}`];
+        for (const [i, a] of rows.entries()) {
           const label =
             a === "stop"
               ? `stop ${selected?.id}`
               : a === "logs"
                 ? `logs ${selected?.id}`
                 : "back";
-          process.stdout.write(` ${marker} ${label}\n`);
-        });
-        prevLines = rows.length + 1;
+          lines.push(option(i === cursor, label));
+        }
+        frame.draw(lines);
       }
     };
 
+    const finish = (ok: () => void) => {
+      endInteractive(stdin, onData);
+      frame.close({ erase: true });
+      ok();
+    };
+
     const done = (sel: ServerSelection | null) => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
-      process.stdout.write("\n");
-      resolve(sel);
+      finish(() => resolve(sel));
     };
 
     const cancel = () => {
-      stdin.setRawMode(false);
-      stdin.removeListener("data", onData);
-      process.stdout.write("\n");
-      reject(new Error("cancelled"));
+      finish(() => reject(new Error("cancelled")));
     };
 
     const handleKey = (key: string): boolean => {

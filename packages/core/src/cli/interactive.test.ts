@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   askPortInteractive,
   askTextInteractive,
+  askYesNoInteractive,
   pickLabeledInteractive,
+  pickModelInteractive,
   pickServerInteractive,
   searchHfInteractive,
+  type ModelEntry,
   type ServerRow,
 } from "./interactive.js";
 
@@ -19,6 +22,7 @@ function fakeStdin() {
   const stdin = {
     setRawMode: vi.fn(),
     resume: vi.fn(),
+    pause: vi.fn(),
     on: (event: string, handler: (buf: Buffer) => void) => {
       emitter.on(event, handler);
       return stdin;
@@ -403,5 +407,80 @@ describe("askTextInteractive", () => {
     stdin.emit("\x7f");
     stdin.emit("\r");
     await expect(p).resolves.toBe("a");
+  });
+});
+
+describe("pickModelInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  const models: ModelEntry[] = [
+    { id: "qwen3-coder-30b", name: "Qwen3 Coder", family: "qwen3-coder", loaded: true },
+    { id: "smollm2", name: "SmolLM2", family: "smollm2", loaded: false },
+  ];
+
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("picks the first model on Enter", async () => {
+    const p = pickModelInteractive(models);
+    await tick();
+    stdin.emit("\r");
+    await expect(p).resolves.toEqual(models[0]);
+  });
+
+  it("resolves null on Esc", async () => {
+    const p = pickModelInteractive(models);
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("clears the filter on first Esc, then cancels on the second", async () => {
+    const p = pickModelInteractive(models);
+    await tick();
+    stdin.emit("s");
+    stdin.emit("\x1b"); // clear filter
+    await tick();
+    stdin.emit("\x1b"); // cancel
+    await expect(p).resolves.toBeNull();
+  });
+});
+
+describe("askYesNoInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("defaults to no on Enter", async () => {
+    const p = askYesNoInteractive("boot with these flags?");
+    await tick();
+    stdin.emit("\r");
+    await expect(p).resolves.toBe(false);
+  });
+
+  it("returns true on y", async () => {
+    const p = askYesNoInteractive("boot with these flags?");
+    await tick();
+    stdin.emit("y");
+    stdin.emit("\r");
+    await expect(p).resolves.toBe(true);
+  });
+
+  it("returns null on Esc", async () => {
+    const p = askYesNoInteractive("boot with these flags?");
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
   });
 });
