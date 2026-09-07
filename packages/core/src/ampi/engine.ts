@@ -1,22 +1,25 @@
 /**
- * In-process AMPI engine (ADR-0101 Step 3, Notch 0).
+ * AMPI engine (ADR-0101 Step 3, Notch 0 / ADR-0105).
  *
- * Looks up a named recipe, runs it, and enforces structural termination:
- * a hard `maxTurns` cap and a strictly decreasing progress measure.
- * Unknown recipes are a no-op (log + original messages).
+ * Looks up a named recipe, runs it, asks the CM engine to apply each cut,
+ * and enforces structural termination: a hard `maxTurns` cap and a strictly
+ * decreasing progress measure. Unknown recipes are a no-op.
+ *
+ * Recipes name a CM intent. They do not splice `messages[]`.
  *
  * Worker-thread isolation and the Notch-1 expression language are deferred.
  */
 
+import { applyCm } from "../cm/engine.js";
 import { lookupRecipe } from "./registry.js";
-import type { AmpiRecipe, AmpiRecipeContext, AmpiRecipeResult } from "./types.js";
+import type { AmpiEngineResult, AmpiRecipe, AmpiRecipeContext } from "./types.js";
 
-export interface RunRecipeOptions {
+export interface RunAmpiOptions {
   /** Override the built-in registry (tests). */
   readonly recipes?: ReadonlyMap<string, AmpiRecipe>;
 }
 
-function noop(ctx: AmpiRecipeContext): AmpiRecipeResult {
+function noop(ctx: AmpiRecipeContext): AmpiEngineResult {
   return {
     messages: ctx.messages,
     act: "rewrite-context",
@@ -25,11 +28,11 @@ function noop(ctx: AmpiRecipeContext): AmpiRecipeResult {
   };
 }
 
-export function runRecipe(
+export function runAmpi(
   name: string,
   ctx: AmpiRecipeContext,
-  opts: RunRecipeOptions = {},
-): AmpiRecipeResult {
+  opts: RunAmpiOptions = {},
+): AmpiEngineResult {
   const recipe = lookupRecipe(name, opts.recipes);
   if (!recipe) {
     console.log(`[ampi] unknown recipe: ${name}`);
@@ -39,17 +42,18 @@ export function runRecipe(
   let messages = ctx.messages;
   let progress = Number.POSITIVE_INFINITY;
   let turnsUsed = 0;
-  let act: AmpiRecipeResult["act"] = "rewrite-context";
+  let act: AmpiEngineResult["act"] = "rewrite-context";
 
   while (turnsUsed < recipe.maxTurns) {
-    const result = recipe.run({ ...ctx, messages });
+    const step = recipe.run({ ...ctx, messages });
     turnsUsed += 1;
-    act = result.act;
-    if (result.progress >= progress) {
+    act = step.act;
+    const edited = applyCm(messages, step.cm);
+    if (step.progress >= progress) {
       break;
     }
-    progress = result.progress;
-    messages = result.messages;
+    progress = step.progress;
+    messages = edited.messages;
     if (progress <= 0) break;
   }
 
@@ -60,3 +64,7 @@ export function runRecipe(
     progress: Number.isFinite(progress) ? progress : 0,
   };
 }
+
+/** Alias for {@link runAmpi}. */
+export const runRecipe = runAmpi;
+export type RunRecipeOptions = RunAmpiOptions;

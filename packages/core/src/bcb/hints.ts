@@ -1,10 +1,11 @@
 /**
  * Proactive BCB hints — inject guidance into the conversation before the
- * model repeats a known bad pattern. Operates on messages[] without mutating
- * real tool results; hints are added as ephemeral system messages.
+ * model repeats a known bad pattern. Hints are system messages inserted by
+ * CM (`insert-system`); tool results are not rewritten here.
  */
 
 import type { ChatMessage } from "../chat-message.js";
+import { applyCm } from "../cm/index.js";
 import type { EofOverflowHintRule, ToolCall, ToolCircuitBreakerContext } from "./types.js";
 
 const DEFAULT_EOF_HINT =
@@ -74,13 +75,14 @@ export function insertEofOverflowHints(
     ),
   );
   const insertAt = lastCallIndex >= 0 ? lastCallIndex : messages.length;
-  const hintMessages: ChatMessage[] = Array.from(hints.values()).map((content) => ({
-    role: "system",
-    content,
-  }));
+  const edited = applyCm(messages, {
+    cut: "insert-system",
+    at: insertAt,
+    contents: Array.from(hints.values()),
+  });
 
   return {
-    messages: [...messages.slice(0, insertAt), ...hintMessages, ...messages.slice(insertAt)],
+    messages: edited.messages,
     hints: hintMeta,
   };
 }

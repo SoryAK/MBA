@@ -16,8 +16,9 @@
  *   - eofOverflow: requested range exceeds the file's actual line count and
  *     was not handled by readClamp; rewrite to a stop message
  *
- * Pure (ADR 0008 Mode A). The proxy owns the messages[] mutation edge, the
- * live config, and the line-count lookup; this module owns the policy.
+ * Pure (ADR 0008 Mode A). This module owns detection and the stop text.
+ * CM owns the messages[] splice (ADR-0105). The daemon owns live config
+ * and the line-count lookup.
  */
 
 import type { ChatMessage } from "../chat-message.js";
