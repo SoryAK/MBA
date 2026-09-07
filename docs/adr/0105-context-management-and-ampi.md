@@ -33,7 +33,7 @@ If CGC were a sibling subsystem to AMPI, we would have two orchestrators. The pa
 
 - **One runner.** AMPI owns when a recipe fires and that it terminates. It does not become the context store.
 - **One context plane.** CM owns what the model is about to see. Other subsystems ask CM to edit; they do not splice `messages[]` ad hoc.
-- **CGC is a menu, not a recipe name.** Duplicate prune, drop-marked-scratch, and compact-reasoning are cuts under CGC.
+- **CGC is Sweep + Compact, not a recipe name.** Cleanup is how CM edits, not an AMPI job name.
 - **The ladder names AMPI recipes only.** Escalation YAML never lists a CM cut.
 - **CM can run without AMPI.** Window-full compaction is a CM job even if no breaker fired.
 - **AMPI can run without CGC.** Sequential file-feed is an AMPI recipe that is not garbage collection.
@@ -54,7 +54,7 @@ If CGC were a sibling subsystem to AMPI, we would have two orchestrators. The pa
 | Escalation YAML | When to fire, which **AMPI recipe** | CM cut names, `messages[]` |
 | AMPI | Recipe registry, `maxTurns`, decreasing progress, asking CM | Splicing `messages[]` |
 | CM | Closed edits to `messages[]` | When a trip fires |
-| CGC | Cleanup **cuts** under CM (`prune-duplicates`, later others) | Being listed on the ladder |
+| Sweep / Compact | Cleanup **how** under CM | Being listed on the ladder |
 
 **Wrong** (AMPI doing CM work):
 
@@ -75,11 +75,63 @@ escalation:
 ```
 
 ```text
-sweep-duplicates          # AMPI recipe — the only name on the ladder
-  └── cm.cgc.pruneDuplicates   # CGC cut — never listed on the ladder
+recipe: sanitize          # AMPI function — the only kind of name on the ladder
+  what: duplicates        # mode
+  └── cm.sweep            # CM cut — never listed on the ladder
 ```
 
-`context-gc` is retired as a recipe name. It collapsed runner and cut into one string.
+Today’s alias `sweep-duplicates` is `sanitize` + `duplicates`. `context-gc` is retired: it collapsed runner and cut into one string.
+
+### Catalog — four and four
+
+Same shape on both planes. Different words so a CM cut is never an AMPI function.
+
+**AMPI — why we run** (ladder names one of these, plus a mode):
+
+| Function | Job |
+| --- | --- |
+| **Sanitize** | Mop dirt, stay on this thread. No new truth. |
+| **Assist** | Help forward: give what is missing, or steer. Not a penalty. |
+| **Sanction** | Punish or prevent after bad behavior. Consequence, not a handoff. |
+| **Recover** | Undo the bad stretch (rollback to a pin) or reset the chapter. |
+
+**CM — how the chat changes** (closed cuts):
+
+| Category | Cuts | AMPI usually asks it for |
+| --- | --- | --- |
+| **Write** | `replace`, `insert` | Assist, Sanction |
+| **Mark** | `set-mark` (`scratch` \| `pin` \| `clear`) | Recover; Sanitize with `pin` |
+| **Sweep** | `sweep` (`duplicates` \| `scratch` \| `budget`; later `rollback`) | Sanitize, Recover |
+| **Compact** | `compact` (`reasoning`) | Sanitize spent / phase |
+
+```text
+AMPI (why)              CM (how)
+Assist     ---------->  Write
+Sanction   ---------->  Write (hard residue, no handoff)
+Sanitize   ---------->  Sweep, Compact
+Recover    ---------->  Mark + Sweep (rollback to pin)
+```
+
+A new AMPI card is a **mode** of one of the four functions, or we are adding a fifth function on purpose. A new *kind* of CM target is an MBA change; a new use of an existing selector is just a mode.
+
+#### AMPI modes
+
+- **`sanitize`** — `{ what: duplicates | scratch | spent | phase, pin?: true }`
+- **`assist`** — `{ how: feed | clamp | redirect | lost }` (`lost` waits on ADR-0104)
+- **`sanction`** — `{ how: revoke }` — later; after Assist is real. Ladder mask/kill can stay the cheap form.
+- **`recover`** — `{ how: rollback | reset }` — needs `pin` first. v1 is context-only. Session/KV reset is the same function, later mode (model plane).
+
+Shipped `sweep-duplicates` is `sanitize` + `duplicates`. Keep the alias.
+
+#### CM cuts (five knives, four boxes)
+
+- **`replace`** — overwrite one message. Targets: `tool-result`, `system`, `residue`. Today’s `replace-tool-result` is `replace` + `tool-result`. Out of bounds: the user’s original ask, assistant `tool_calls`.
+- **`insert`** — add a message. Roles: `system`, `user`. Today’s `insert-system` is `insert` + `system`. Out of bounds: forging a tool call.
+- **`set-mark`** — tag only; does not delete.
+- **`sweep`** — drop by policy; always leave residue. Today’s `prune-duplicates` is `sweep` + `duplicates`.
+- **`compact`** — rewrite a span to a short residue (not a drop).
+
+Do not merge Sweep into Compact. Do not merge Mark into Sweep. Write stays two cuts (replace vs insert).
 
 ### Ownership
 
@@ -87,21 +139,17 @@ sweep-duplicates          # AMPI recipe — the only name on the ladder
 TCB / uncertainty BCB (detect)
         │
         ▼
-AMPI (when / which recipe / terminate)
+AMPI (sanitize | assist | sanction | recover)
         │
         ▼
-CM (the conversation the model sees)
-   └── CGC (cleanup cuts)
-         ├── prune-duplicates     (called by recipe `sweep-duplicates`)
-         ├── drop-marked-scratch  (later)
-         └── compact-reasoning    (later)
+CM (write | mark | sweep | compact)
 ```
 
-- **AMPI** — intervention runner. Recipes, `maxTurns`, decreasing progress measure, `action: ampi` on the escalation ladder. Notch-1 expressions and worker isolation remain as in ADR-0088 / ADR-0101.
-- **CM** — context plane. Applies closed edits to `messages[]` (and later, marks / pins / budget). The daemon request path asks CM; callers do not hand-edit the array.
-- **CGC** — the cleanup family *under* CM. Not a second runner. Not a recipe name.
+- **AMPI engine (`runAmpi`)** — looks up a function/mode, asks CM to apply each intent, enforces `maxTurns` and a decreasing progress measure. Notch-1 expressions and worker isolation remain as in ADR-0088 / ADR-0101.
+- **CM engine (`applyCm` / `runCm`)** — the only door that splices `messages[]`. Closed `CmIntent` menu. `runCm` applies a sequence with a hard cut cap.
+- **Sweep + Compact** — cleanup *under* CM. Not a second runner. Not recipe names.
 
-The shipped built-in recipe is `sweep-duplicates`: a thin AMPI wrapper around `cm.cgc.pruneDuplicates(...)`. The recipe does not implement the splice.
+The shipped built-in path is `sanitize` / `duplicates` (alias `sweep-duplicates`) → `sweep` / `duplicates`. Recipes name a CM intent. They do not return a spliced `messages[]`.
 
 ### Triggers
 
@@ -127,12 +175,7 @@ System marks are the reliable default (failed reads, duplicate hashes, tool resu
 
 ### Closed edit surface
 
-CM’s cut menu stays closed, same spirit as AMPI’s `act` enum. v1 cuts:
-
-- `prune-duplicates` (exists)
-- later: `drop-marked-scratch`, `compact-reasoning`, `pin` / `keep`
-
-No free-form rewrite of arbitrary messages. No silent deletion without residue.
+CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cuts above are the v1 menu. TCB still decides *what* the stop text or hint says; it calls `applyCm` (`replace` / `tool-result` or `insert` / `system`). No free-form rewrite. No silent deletion without residue.
 
 ### What this ADR does *not* change
 
@@ -146,14 +189,14 @@ No free-form rewrite of arbitrary messages. No silent deletion without residue.
 
 - AMPI stays small: run and terminate.
 - Escalation YAML cannot pretend a CGC cut is a recipe.
-- CGC can grow without inventing a third orchestrator.
-- Mark-and-sweep and reasoning compact have a home (CM), not a pile of one-off recipes.
+- Sweep and Compact can grow as modes without inventing a third orchestrator.
+- Four AMPI functions cover help, mop, punish, and undo without a long card list.
 - Budget compaction can happen without pretending a breaker fired.
 
 ### Cons / Trade-offs
 
 - Another named plane (CM) to keep distinct from AMPI in code and docs.
-- Two names for the first slice (`sweep-duplicates` + `prune-duplicates`) instead of one catch-all.
+- Two names for the first slice (`sweep-duplicates` alias vs `sanitize` + `sweep` / `duplicates`).
 - Phase-boundary detection is unspecified and easy to get wrong.
 - Model-nominated marks can delete the useful file; system marks must win on conflict until we have evidence otherwise.
 
@@ -166,14 +209,17 @@ No free-form rewrite of arbitrary messages. No silent deletion without residue.
 
 ## Implementation order (this before ADR-0104)
 
-1. **Done for this slice.** CM is the only `messages[]` mutator for AMPI context edits; `prune-duplicates` lives under CGC; the ladder recipe is `sweep-duplicates`.
-2. Keep the AMPI engine as the runner (registry, `maxTurns`, progress).
-3. Add the next CGC cut only after more of this plane is nailed (likely `drop-marked-scratch` or budget compact — decide when implementing).
-4. **Then** implement ADR-0104 collect → describe → trip, with AMPI recipes that call CM.
+1. **Done.** First slice: `sanitize` / `duplicates` (alias `sweep-duplicates`) → `sweep` / `duplicates`. Engines exist (`runAmpi`, `applyCm` / `runCm`). TCB stop-text and hints go through CM Write.
+2. Specify mark representation, then `set-mark` and `sweep` modes `scratch` / `budget`.
+3. `compact` / `reasoning`; `sanitize` modes `spent` / `phase` / `pin`.
+4. `assist` / `clamp` then `feed`.
+5. `recover` / `rollback` (needs `pin` first).
+6. `sanction` after Assist is real.
+7. `assist` / `lost` with ADR-0104, not before.
 
 ## Relationship to other ADRs
 
 - **ADR-0088 / 0101:** AMPI’s Notch-1, termination, and daemon-as-proxy runner are unchanged. This ADR splits *context editing* out of “AMPI is the whole intervention product.”
-- **ADR-0101 Step 4:** The first shipped recipe is `sweep-duplicates`. The first CGC cut is `prune-duplicates`. Neither name is `context-gc`.
-- **ADR-0102:** Policy / assembly files name AMPI recipes (`sweep-duplicates`), never CGC cuts.
+- **ADR-0101 Step 4:** The first shipped path is `sanitize` / `duplicates` (alias `sweep-duplicates` → `sweep` / `duplicates`). Neither name is `context-gc`.
+- **ADR-0102:** Policy names an AMPI function (or the `sweep-duplicates` alias), never a CM cut.
 - **ADR-0104:** Uncertainty BCB is a detector family. It must not be built until this plane exists far enough to receive a sweep.
