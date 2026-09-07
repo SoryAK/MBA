@@ -10,6 +10,7 @@
  */
 
 import type { ChatMessage } from "../../chat-message.js";
+import { applyCm } from "../../cm/index.js";
 import type {
   ToolCall,
   ToolCircuitBreakerContext,
@@ -71,11 +72,12 @@ export function runReadClamp(
     if (actualLines === undefined) continue;
 
     const header = formatReadResultHeader(call.read.filePath, call.read.start, call.read.end, actualLines);
-    current = current.map((m): ChatMessage =>
-      m.role === "tool" && m.tool_call_id === call.toolCallId
-        ? { ...m, content: `${header}${String(m.content ?? "")}` }
-        : m,
-    );
+    const tool = current.find((m) => m.role === "tool" && m.tool_call_id === call.toolCallId);
+    current = applyCm(current, {
+      cut: "replace-tool-result",
+      toolCallId: call.toolCallId,
+      content: `${header}${String(tool?.content ?? "")}`,
+    }).messages;
 
     if (call.read.end > actualLines) {
       clampRecords.push({

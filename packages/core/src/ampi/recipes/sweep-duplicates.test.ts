@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { pruneDuplicates } from "../../cm/cgc/prune-duplicates.js";
+import { applyCm } from "../../cm/engine.js";
+import { runAmpi } from "../engine.js";
 import { SWEEP_DUPLICATES_RECIPE, runSweepDuplicates } from "./sweep-duplicates.js";
 import type { ChatMessage } from "../../chat-message.js";
 import type { ToolCircuitBreakerTrip } from "../../bcb/types.js";
@@ -20,7 +21,7 @@ describe("AMPI recipe sweep-duplicates", () => {
     expect(SWEEP_DUPLICATES_RECIPE).not.toBe("context-gc");
   });
 
-  it("delegates the splice to CM and does not invent its own messages", () => {
+  it("names a CM cut and does not return spliced messages", () => {
     const messages: ChatMessage[] = [
       { role: "user", content: "hi" },
       {
@@ -46,10 +47,13 @@ describe("AMPI recipe sweep-duplicates", () => {
       },
       { role: "tool", tool_call_id: "b", content: "2" },
     ];
-    const viaRecipe = runSweepDuplicates({ messages, trip });
-    const viaCm = pruneDuplicates({ messages, trip });
-    expect(viaRecipe.act).toBe("rewrite-context");
-    expect(viaRecipe.messages).toEqual(viaCm.messages);
-    expect(viaRecipe.progress).toBe(viaCm.progress);
+    const step = runSweepDuplicates({ messages, trip });
+    expect(step.act).toBe("rewrite-context");
+    expect(step.cm).toEqual({ cut: "prune-duplicates", trip });
+    expect(step).not.toHaveProperty("messages");
+
+    const viaEngine = runAmpi(SWEEP_DUPLICATES_RECIPE, { messages, trip });
+    const viaCm = applyCm(messages, { cut: "prune-duplicates", trip });
+    expect(viaEngine.messages).toEqual(viaCm.messages);
   });
 });

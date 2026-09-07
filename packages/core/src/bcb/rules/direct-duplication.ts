@@ -10,6 +10,7 @@
  */
 
 import type { ChatMessage } from "../../chat-message.js";
+import { applyCm } from "../../cm/index.js";
 import type { ToolCall, ToolCircuitBreakerResult, ToolRuleSet } from "../types.js";
 
 export function formatDirectDuplicationMessage(tool: string, runLength: number): string {
@@ -45,14 +46,14 @@ export function runDirectDuplication(
   if (runLength < threshold) return { messages, tripped: false, trips: [], clamps: [], hints: [] };
 
   const message = formatDirectDuplicationMessage(last.tool, runLength);
-  const out = messages.map((m): ChatMessage =>
-    m.role === "tool" && m.tool_call_id === last.toolCallId
-      ? { ...m, content: message }
-      : m,
-  );
+  const edited = applyCm(messages, {
+    cut: "replace-tool-result",
+    toolCallId: last.toolCallId,
+    content: message,
+  });
 
   return {
-    messages: out,
+    messages: edited.messages,
     tripped: true,
     trips: [
       {

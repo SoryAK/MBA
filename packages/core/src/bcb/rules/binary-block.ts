@@ -8,6 +8,7 @@
  */
 
 import type { ChatMessage } from "../../chat-message.js";
+import { applyCm } from "../../cm/index.js";
 import type { ToolCall, ToolCircuitBreakerResult, ToolRuleSet } from "../types.js";
 
 export function formatBinaryBlockMessage(filePath: string): string {
@@ -37,14 +38,14 @@ export function runBinaryBlock(
   if (!matched) return { messages, tripped: false, trips: [], clamps: [], hints: [] };
 
   const message = (rule.message ?? formatBinaryBlockMessage(raw)).replaceAll("{filePath}", raw);
-  const out = messages.map((m): ChatMessage =>
-    m.role === "tool" && m.tool_call_id === last.toolCallId
-      ? { ...m, content: message }
-      : m,
-  );
+  const edited = applyCm(messages, {
+    cut: "replace-tool-result",
+    toolCallId: last.toolCallId,
+    content: message,
+  });
 
   return {
-    messages: out,
+    messages: edited.messages,
     tripped: true,
     trips: [
       {

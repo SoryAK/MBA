@@ -17,6 +17,7 @@
  */
 
 import type { ChatMessage } from "../../chat-message.js";
+import { applyCm } from "../../cm/index.js";
 import { orderedToolCalls } from "../parse-calls.js";
 import type {
   ReadTarget,
@@ -79,14 +80,14 @@ export function runRepeatRun(
     end: last.read.end,
   };
   const message = formatRepeatRunMessage(target, runLength);
-  const out = messages.map((m): ChatMessage =>
-    m.role === "tool" && m.tool_call_id === last.toolCallId
-      ? { ...m, content: message }
-      : m,
-  );
+  const edited = applyCm(messages, {
+    cut: "replace-tool-result",
+    toolCallId: last.toolCallId,
+    content: message,
+  });
 
   return {
-    messages: out,
+    messages: edited.messages,
     tripped: true,
     trips: [
       {

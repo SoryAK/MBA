@@ -24,7 +24,7 @@ import { fingerprint } from "../bcb/fingerprint.js";
 import { buildBcbKillResponse } from "../bcb/kill-response.js";
 import { applyToolCircuitBreakers } from "../bcb/tool-circuit-breaker.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
-import { runRecipe } from "../ampi/engine.js";
+import { runAmpi } from "../ampi/index.js";
 
 /**
  * Outcome of an intervention.
@@ -105,7 +105,7 @@ export function intervene(
 
       if (escalation.action === "ampi" && escalation.recipe) {
         // Recipe is an AMPI runner name (e.g. sweep-duplicates). CM does the splice.
-        const rewritten = runRecipe(escalation.recipe, {
+        const rewritten = runAmpi(escalation.recipe, {
           messages: (parsed.messages as ChatMessage[]) ?? chatMessages,
           trip: lastTrip,
         });
