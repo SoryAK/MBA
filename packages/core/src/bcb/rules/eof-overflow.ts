@@ -47,7 +47,8 @@ export function runEofOverflow(
 
   const message = formatEofOverflowMessage(last.read.filePath, last.read.end, actualLines);
   const edited = applyCm(messages, {
-    cut: "replace-tool-result",
+    cut: "replace",
+    target: "tool-result",
     toolCallId: last.toolCallId,
     content: message,
   });

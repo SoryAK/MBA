@@ -39,7 +39,8 @@ export function runBinaryBlock(
 
   const message = (rule.message ?? formatBinaryBlockMessage(raw)).replaceAll("{filePath}", raw);
   const edited = applyCm(messages, {
-    cut: "replace-tool-result",
+    cut: "replace",
+    target: "tool-result",
     toolCallId: last.toolCallId,
     content: message,
   });
