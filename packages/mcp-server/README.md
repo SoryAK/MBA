@@ -1,57 +1,66 @@
 # @mba-ai/mcp-server
 
-The MCP (Model Context Protocol) control plane for the Model Behavioral
-Adapter (MBA) system. It lets any MCP host (VS Code Copilot, Cline, Claude
-Desktop) read and tune the global MBA config.
+The MCP control plane for MBA. Any MCP host (VS Code Copilot, Cline, Claude Desktop) can read and tune the daemon through this server.
 
-## What it does
+**MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. This package is not that daemon. It is a thin stdio client over [`@mba-ai/core`](../core): zero framework dependency, no file writes of its own.
 
-The server is a **thin client** over the global MBA service — it has zero
-dependency on the framework. It loads the adapter registry from a
-`.MBA/adapters/` directory and, for the service-backed tools, talks to the
-running global service (discovered via `<state dir>/mba/service.json`).
+The service must already be running for the service-backed tools. Discovery is `<state dir>/mba/service.json`, or `MBA_SERVICE_URL`.
 
-Tools:
+The operator story lives in the [repo README](../../README.md).
 
-- `mba_file_metadata` — probe a workspace file and return metadata including
-  total line count, so models can choose valid `read_file` ranges instead of
-  guessing.
-- `mba_model_registry` — list the models in the adapter registry (light
-  metadata: id, name, family, model file, bindings).
-- `mba_resolve_config` — return the resolved config for a model (or the
-  default) from the global service.
-- `mba_set_rules` — set the TCB rule state (enabled/disabled + rule classes)
-  on the global service.
-- `mba_server_status` — report whether the global service is reachable and
-  its version.
+## Tools
 
-The service-backed tools **fail soft**: if the service is not running, they
-return a structured error rather than crashing the host.
+Offline (no service):
 
-## Installation
+- `mba_file_metadata` — probe a workspace file (exists, line count, size). Does not return content.
+- `mba_model_registry` — light list of adapters from `MBA_DIR/adapters` (default `./.MBA/adapters`).
 
-```bash
+Service-backed (fail soft if the daemon is down):
+
+- `mba_server_status` — reachable or not, plus version
+- `mba_resolve_config` — resolved config for a model
+- `mba_set_rules` — enable/disable BCB rules and rule classes
+- `mba_list_models` — adapter tree plus live loaded state
+- `mba_set_model_config` — one dial on `server_setup` or `client` (never restarts)
+- `mba_ensure_model` — ask the service to load a model. Off until the service is started with `MBA_MODEL_SWITCH=on`
+
+## Install
+
+```sh
 npm install @mba-ai/mcp-server
 ```
 
-## Running
+## Run
 
-Stdio transport (for VS Code / Copilot):
-
-```bash
+```sh
 npx -y @mba-ai/mcp-server
 ```
 
-## Environment variables
+## Environment
 
-|Variable|Description|Default|
-|---|---|---|
-|`MBA_DIR`|Directory containing `.MBA/adapters/`|`./.MBA`|
-|`MBA_WORKSPACE_ROOT`|Workspace root for file path scoping|`process.cwd()`|
-|`MBA_SERVICE_URL`|Explicit service base URL (skips discovery)|—|
-|`MBA_BASE_DIR`|Base dir for service discovery file|OS-aware (see `@mba-ai/core` `src/service/paths.ts`)|
+| Variable | Role | Default |
+| --- | --- | --- |
+| `MBA_SERVICE_URL` | Service URL if discovery is not used | — |
+| `MBA_BASE_DIR` | State dir for `mba/service.json` | OS-aware (see `@mba-ai/core`) |
+| `MBA_DIR` | Root for the offline adapter list (`<MBA_DIR>/adapters`) | `./.MBA` |
+| `MBA_WORKSPACE_ROOT` | Workspace root for `mba_file_metadata` | `process.cwd()` |
 
-## Example tool call
+## Host config
+
+```json
+{
+  "mcpServers": {
+    "mba": {
+      "command": "npx",
+      "args": ["-y", "@mba-ai/mcp-server"]
+    }
+  }
+}
+```
+
+VS Code `settings.json` uses `mcp.servers` with the same command. Set `MBA_WORKSPACE_ROOT` to the workspace if the host cwd is not the project. Set `MBA_DIR` only if the offline registry is not `./.MBA`.
+
+## Example
 
 ```json
 {
@@ -62,32 +71,12 @@ npx -y @mba-ai/mcp-server
 }
 ```
 
-## VS Code configuration
-
-Add to your VS Code `settings.json`:
-
-```json
-{
-  "mcp.servers": {
-    "mba": {
-      "command": "npx",
-      "args": ["-y", "@mba-ai/mcp-server"],
-      "env": {
-        "MBA_DIR": "/absolute/path/to/.MBA",
-        "MBA_WORKSPACE_ROOT": "/absolute/path/to/workspace"
-      }
-    }
-  }
-}
-```
-
 ## Security
 
-`mba_file_metadata` is workspace-scoped. Paths outside `MBA_WORKSPACE_ROOT` are
-rejected. The service-backed tools only reach `127.0.0.1`. The server runs with
-the permissions of the process that launches it.
+`mba_file_metadata` rejects paths outside `MBA_WORKSPACE_ROOT`. Service-backed tools only reach `127.0.0.1`. The server runs with the permissions of the process that launches it.
 
-## Related
+## Docs
 
-See [ADR-0085](../../docs/adr/0085-mba-as-mcp-server.md) and
-[ADR-0092](../../docs/adr/0092-mba-standalone-framework.md) for the design.
+- [Repo README](../../README.md)
+- [`@mba-ai/core`](../core)
+- [`docs/adr/`](../../docs/adr/)
