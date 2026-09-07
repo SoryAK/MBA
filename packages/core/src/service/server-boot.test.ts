@@ -276,4 +276,42 @@ describe("bootServer binary existence", () => {
       expect(result.error).toContain("MBA_LLAMA_SERVER_BIN");
     }
   });
+
+  it("skips the on-disk binary check when spawnImpl is injected", async () => {
+    const result = await bootServer({
+      serverType: "llama.cpp",
+      modelFile,
+      port: 8080,
+      adapterDir,
+      registryPath,
+      binaryPath: "/definitely/not/llama-server",
+      seams: {
+        portCheckImpl: async () => true,
+        spawnImpl: () =>
+          ({
+            pid: 424242,
+            kill: () => true,
+            on: () => undefined,
+            once: () => undefined,
+            unref: () => undefined,
+            stdout: { on: () => undefined },
+            stderr: { on: () => undefined },
+          }) as never,
+        fetchImpl: (async () =>
+          new Response(JSON.stringify({ status: "ok" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })) as unknown as typeof fetch,
+        killImpl: () => true,
+        now: () => 1_000_000,
+        healthDeadlineMs: 1000,
+        mkdirImpl: () => undefined,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.entry.pid).toBe(424242);
+    }
+  });
 });

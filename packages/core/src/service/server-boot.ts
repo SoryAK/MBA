@@ -319,11 +319,20 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
 
   // Resolve the binary path for llama.cpp and fail fast if it is missing.
   // ollama has no binary to spawn; the daemon talks to the ollama host over HTTP.
+  //
+  // When the caller injects `spawnImpl` they own process creation (tests /
+  // CI). Skip the on-disk check so Jenkins does not need llama.cpp installed
+  // just to exercise the boot route.
+  const usingInjectedSpawn = input.seams?.spawnImpl !== undefined;
   const binaryPath =
     serverType !== "ollama"
-      ? (input.binaryPath ?? defaultBinaryPath(fork))
+      ? (input.binaryPath ?? defaultBinaryPath(fork) ?? (usingInjectedSpawn ? "llama-server" : undefined))
       : undefined;
-  if (serverType !== "ollama" && (binaryPath === undefined || !existsSync(binaryPath))) {
+  if (
+    serverType !== "ollama" &&
+    !usingInjectedSpawn &&
+    (binaryPath === undefined || !existsSync(binaryPath))
+  ) {
     const message = binaryNotFoundError(binaryPath);
     daemonLog(`[boot] FAILED: ${message}`);
     return {
