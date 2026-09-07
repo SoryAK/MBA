@@ -3,3 +3,6 @@ dist/
 coverage/
 *.log
 .DS_Store
+
+# Session notes — local only, never publish
+docs/handoffs/
