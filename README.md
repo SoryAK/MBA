@@ -1,6 +1,8 @@
 # MBA
 
-**MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. It is not a model host (Ollama) and not a client (Cline). It is the per-model behavior layer on this machine.
+![WIP](https://img.shields.io/badge/status-work%20in%20progress-orange?style=for-the-badge)
+
+**MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. It is not a model host (Ollama) and not a client (Cline). It is the per-model behavior layer and control plan on your machine.
 
 Work in progress. APIs and file formats may still move.
 
