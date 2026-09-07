@@ -156,7 +156,7 @@ This gives Shape B's flexibility (the daemon is in the conversation, recipes hav
 1. **Step 1 — Daemon-as-proxy. (shipped)** The MBA daemon accepts model requests (TCP + UDS) and forwards them to llama-server.
 2. **Step 2 — Migrate TCB/escalation. (shipped)** TCB detection and escalation run in the MBA daemon on the request path.
 3. **Step 3 — AMPI subsystem. (partial)** Ladder `action: ampi` + in-process AMPI engine (`runAmpi`) + CM engine (`applyCm`). Expression language and worker-thread isolation are deferred.
-4. **Step 4 — First recipe. (in progress)** Built-in `sweep-duplicates` ships as a one-shot AMPI recipe that calls CM `prune-duplicates` (ADR-0105). Multi-turn recipes are deferred.
+4. **Step 4 — First recipe. (in progress)** Built-in `sanitize` / `duplicates` (alias `sweep-duplicates`) asks CM `sweep` / `duplicates`. Multi-turn recipes are deferred.
 5. **Step 5 — original proxy cleanup.** Remove the migrated TCB/escalation logic from the original proxy. The proxy either disappears or becomes a thin pass-through for non-model-behavior concerns.
 
 ## Relationship to prior ADRs

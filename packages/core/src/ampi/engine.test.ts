@@ -32,7 +32,7 @@ describe("runAmpi", () => {
       maxTurns: 3,
       run: (input) => ({
         act: "rewrite-context",
-        cm: { cut: "insert-system", at: input.messages.length, contents: ["again"] },
+        cm: { cut: "insert", role: "system", at: input.messages.length, contents: ["again"] },
         turnsUsed: 1,
         progress: remaining--,
       }),
@@ -49,7 +49,7 @@ describe("runAmpi", () => {
       maxTurns: 8,
       run: () => ({
         act: "rewrite-context",
-        cm: { cut: "insert-system", at: 0, contents: [] },
+        cm: { cut: "insert", role: "system", at: 0, contents: [] },
         turnsUsed: 1,
         progress: 4,
       }),

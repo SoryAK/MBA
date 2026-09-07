@@ -5,10 +5,12 @@
  * User-authored recipe files are deferred.
  */
 
+import { sanitizeRecipe } from "./recipes/sanitize.js";
 import { sweepDuplicatesRecipe } from "./recipes/sweep-duplicates.js";
 import type { AmpiRecipe } from "./types.js";
 
 const BUILTIN: ReadonlyMap<string, AmpiRecipe> = new Map([
+  [sanitizeRecipe.name, sanitizeRecipe],
   [sweepDuplicatesRecipe.name, sweepDuplicatesRecipe],
 ]);
 

@@ -74,7 +74,8 @@ export function runReadClamp(
     const header = formatReadResultHeader(call.read.filePath, call.read.start, call.read.end, actualLines);
     const tool = current.find((m) => m.role === "tool" && m.tool_call_id === call.toolCallId);
     current = applyCm(current, {
-      cut: "replace-tool-result",
+      cut: "replace",
+      target: "tool-result",
       toolCallId: call.toolCallId,
       content: `${header}${String(tool?.content ?? "")}`,
     }).messages;
