@@ -1,86 +1,107 @@
-# MBA — Model Behavioral Adapter
+# MBA
 
-![WIP](https://img.shields.io/badge/status-work%20in%20progress-orange?style=for-the-badge)
+**MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. It is not a model host (Ollama) and not a client (Cline). It is the per-model behavior layer on this machine.
 
-> **Work in progress** — the concept is still actively developing. APIs, package layout, and config formats may change without notice.
+Work in progress. APIs and file formats may still move.
 
-MBA is a framework for giving local LLMs **per-model behavioral profiles**: each model gets its own adapter (context budget, tool-circuit-breaker rules, server setup) resolved from a lineage tree of YAML files, and a real-time engine enforces the behavioral rules on tool calls.
-
-It ships as two npm packages under the `@mba-ai` scope:
-
-| Package | What it is |
-| --- | --- |
-| [`@mba-ai/core`](packages/core) | The framework: adapter resolution (B1–B4), the BCB/TCB tool-circuit-breaker engine, and the global MBA config service |
-| [`@mba-ai/mcp-server`](packages/mcp-server) | The MCP control plane: read and tune the global config from any MCP host (VS Code Copilot, Cline, Claude Desktop) |
-
-## How it works
-
-- **Adapters** are YAML files in a lineage folder tree (e.g. `vendor/family/model.yaml`). The resolver scores and merges them least-specific-first into a single resolved config per model.
-- **TCB (Tool Circuit Breaker)** is a real-time watchdog over the model's tool calls. Rules are notice-only detectors with an escalation ladder (nudge → mask → kill). Rule classes bundle detectors; state persists in SQLite.
-- **The global service** owns the resolved config and rule state on one machine. It binds `127.0.0.1` on an OS-assigned port and writes a discovery file (`~/.mba/mba/service.json`) so consumers can find it.
-- **The MCP server** is a thin client over that service — it has zero dependency on the framework, so it can run in any MCP host.
-
-## Install
-
-```sh
-npm install @mba-ai/core
+```text
+configure adapter → BCB (system watch) → AMPI (system live response)
 ```
 
-## Run the global service
+## Why per model
+
+A model’s behavior can derive from several factors:
+
+- **Training** — what it saw, and what it was taught to do (chat, code, tools, long reasoning)
+- **Scale and architecture** — how much it can hold, and whether it is dense or routed
+- **Packing** — quantization and format; how much of that training still appears at runtime
+- **Environment and hardware** — client, IDE, and inference server, on this machine’s RAM, VRAM, and CPU. The same weights do not behave the same under Copilot on a 24 GB box and a raw endpoint on an 8 GB box
+- **Task and objective** — what this run is trying to get done, and what the model was optimized for. A coder pass and a short chat are not the same run
+- **Runtime config** — context, GPU layers, cache, samplers, grammar, tool limits. These are chosen for this model, not inherited from the last one that booted
+
+Training, scale, and packing live in the weights. Environment, hardware, task, objective, and runtime config sit around them. The behavior you get is the whole set.
+
+Most stacks attach the last of those to the fleet — one endpoint, one context number, one tool policy. MBA attaches the whole set to **this** model.
+
+MBA consolidates those factors into a **model behavioral adapter** — the configuration that belongs to this model. It is managed in one place, loaded before boot, and applied at runtime.
+
+## BCB and AMPI
+
+**BCB** (behavioral circuit breakers) is the monitoring system. You name the known failure modes to watch on this model, then configure an escalation ladder and a programmatic automated response. The ladder notices when a known bad behavior appears, and can clamp or hint *ahead of time*.
+
+**AMPI** (automated multi-process intervention) is that response when a breaker fires. It is not another model deciding what to do. It is a programmatic, configurable, deterministic named recipe: it runs, owns the next turn or turns, and finishes.
+
+Its main focus is four functions:
+
+- **Sanitize** — mop the context window. Dirt from a trip or a closed chapter. Stay on this thread. No new truth.
+- **Assist** — help when the model is struggling. Give what is missing, or steer onto a better next step. Not a penalty. Not a rewind.
+- **Sanction** — punish or prevent. Consequence after bad behavior (privilege gone, hard residue, no handoff). Ladder mask/kill can stay the cheap form; AMPI Sanction is the consequence.
+- **Recover** — undo or reset. The stretch itself is bad: roll back to a pin, or reset the chapter. Not mopping while you continue (Sanitize). Not helping forward (Assist). Not punishing (Sanction).
+
+## Run
+
+Node ≥ 20. llama.cpp on `PATH` if you boot with `mba servers boot`.
 
 ```sh
-npx @mba-ai/core
-# or, from a checkout:
+npm install
 npm run start:service
 ```
 
-The service binds `127.0.0.1:<port>` and writes a discovery file
-(`<state dir>/mba/service.json`) so consumers can find it.
-Env: `MBA_BASE_DIR` (state dir override) and `MBA_ADAPTER_DIR` (model store
-override). Both default to OS-aware locations (XDG dirs on Linux,
-`%APPDATA%`/`%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on
-macOS — see `packages/core/src/service/paths.ts`).
+The service binds `127.0.0.1` on an OS-assigned port and writes `<state dir>/mba/service.json`. The CLI finds it there, or via `MBA_SERVICE_URL`.
 
-Upgrading from a pre-0.1.1 install? Run `mba migrate-paths` once — it moves
-your legacy `~/.mba` state and `~/models/adapters` store to the OS-aware
-locations (local-only, works with the service stopped, never overwrites).
+```sh
+npm run mba -- status
+mba                  # home menu on a TTY (after the CLI is on your PATH)
+```
+
+## Onboarding
+
+```sh
+mba models pull owner/repo:Q4_K_M --id qwen
+# download + sha256 verify → GGUF metadata / profile → family + adapter scaffold
+
+mba s boot qwen              # port optional (MBA_SWITCH_PORT, default 8080)
+# resolve adapter + server_setup (+ machine clamp) → flag preview → boot
+
+mba status
+```
+
+`mba models pull` downloads the GGUF (resume + sha256). HuggingFace repos take the digest from LFS metadata; other sources need `--sha256`. After verify it parses the header locally, writes a TODO-marked adapter (and a family tier if that family is new), and creates empty BCB/TCB/`server_setup` bindings. A failed verify deletes the partial and leaves no scaffold.
+
+`mba s boot` resolves that adapter tree into llama.cpp flags — the same chain as the preview — then boots. `mba models search` is the interactive HuggingFace path into the same pull.
 
 ## CLI
 
-```sh
-mba                  # home menu (TTY)
-mba --help           # groups
-mba models --help    # details
-mba status           # service, loaded model, machine mode
-mba s boot qwen      # port optional (MBA_SWITCH_PORT, default 8080)
-eval "$(mba completion)"   # bash; or: mba completion zsh
-```
-
-`mba server` works the same as `mba servers`. `--json` on list/show/status.
-
-## Model onboarding
+`mba --help` and `mba <group> --help` are the command list.
 
 ```sh
-mba models pull <url|owner/repo[:file-or-quant]> --id <id> [--sha256 <digest>] [--family <family>]
+mba models               # pick and edit dials
+mba models show qwen
+mba servers              # list / boot / stop (TTY)
+mba s logs <id>
+mba machine              # enforce | warn | off
+mba estimate-memory <gguf>
+eval "$(mba completion)" # bash; or: mba completion zsh
 ```
 
-One-command onboarding (ADR-0098): downloads a GGUF (resume + sha256
-verify), parses its header into a profile, and scaffolds the two-tier
-adapter binding (family + adapter) with a TODO-marked draft adapter.
+`mba server` = `mba servers`. `m` / `s` are shortcuts. `--yes` skips confirm (never auto-restarts). `--json` on list / show / status.
 
-For HuggingFace repos the digest is auto-resolved from the repo's published
-LFS metadata (ADR-0099) — no hash hunting:
+## Env
 
-```sh
-mba models pull rico03/Qwen3.8-27B-...-GGUF:Q4_K_M --id qwen3.8-27b-opus-distill
-```
+| Variable | Role |
+| --- | --- |
+| `MBA_SERVICE_URL` | Service URL if discovery is not used |
+| `MBA_BASE_DIR` | Store / state base override |
+| `MBA_ADAPTER_DIR` | Adapter tree (model store) |
+| `MBA_SWITCH_PORT` | Default boot port (8080) |
 
-`--sha256` stays available as an override (and is still required for
-non-HuggingFace sources).
+Defaults are OS-aware: XDG on Linux, `%APPDATA%` / `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS.
 
-## MCP control plane
+Upgrading from a pre-0.1.1 install: `mba migrate-paths` once (local, never overwrites).
 
-Point any MCP host at the server:
+## MCP
+
+The service must already be running.
 
 ```json
 {
@@ -93,23 +114,32 @@ Point any MCP host at the server:
 }
 ```
 
-Tools exposed: `mba_file_metadata`, `mba_model_registry`, `mba_resolve_config`, `mba_set_rules`, `mba_server_status`.
+## Packages
 
-## Development
+| Package | Role |
+| --- | --- |
+| [`@mba-ai/core`](packages/core) | Framework, BCB engine, service, `mba` CLI |
+| [`@mba-ai/mcp-server`](packages/mcp-server) | MCP client over that service |
+
+```sh
+npm install @mba-ai/core    # embed the library; not how you run the operator CLI
+```
+
+## Develop
 
 ```sh
 npm install
-npm run typecheck   # tsc --noEmit
-npm test            # vitest run (all packages)
-npm run build       # emit dist/ for both packages
+npm run typecheck
+npm test
+npm run build
 ```
 
-Requires Node ≥ 20.
+After CLI changes, rebuild `@mba-ai/core` so a linked `mba` picks them up (`npm run build -w @mba-ai/core`, then `npm link` in `packages/core`).
 
-## Documentation
+## Docs
 
-- [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — the full system manual
-- [`docs/adr/`](docs/adr/) — architecture decision records (0084–0102)
+- [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — system manual
+- [`docs/adr/`](docs/adr/) — architecture decision records
 
 ## License
 
