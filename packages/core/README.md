@@ -1,71 +1,77 @@
 # @mba-ai/core
 
-The Model Behavioral Adapter (MBA) framework. It gives local LLMs
-**per-model behavioral profiles** — each model gets its own adapter
-(context budget, tool-circuit-breaker rules, server setup) resolved from a
-lineage tree of YAML files — and a real-time engine that enforces those
-behavioral rules on the model's tool calls.
+The MBA framework, local daemon, and `mba` CLI.
 
-## What it does
+**MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. This package is that system: adapter resolution, the BCB engine, the service that owns state on this machine, and the CLI that talks to it.
 
-- **Adapter resolution (B1–B4).** Adapters are YAML files in a lineage
-  folder tree (e.g. `vendor/family/model.yaml`). The resolver scores and
-  merges them least-specific-first into a single resolved config per model.
-- **TCB (Tool Circuit Breaker).** A real-time watchdog over the model's tool
-  calls. Rules are notice-only detectors with an escalation ladder
-  (nudge → mask → kill). Rule classes bundle detectors; state persists in
-  SQLite.
-- **The global service.** Owns the resolved config and rule state on one
-  machine. It binds `127.0.0.1` on an OS-assigned port and writes a
-  discovery file (`<state dir>/mba/service.json`) so consumers can find it.
+It is not a model host and not a client. The companion [`@mba-ai/mcp-server`](../mcp-server) is a thin MCP client over the service.
 
-The companion package [`@mba-ai/mcp-server`](../mcp-server) is a thin MCP
-client over this service — it has zero dependency on the framework.
+The operator story (why per model, BCB, AMPI, onboarding) lives in the [repo README](../../README.md).
 
-## Installation
+```text
+configure adapter → BCB (system watch) → AMPI (system live response)
+```
 
-```bash
+## What this package is
+
+- **Adapters** — per-model configuration, resolved from the lineage tree, loaded before boot and applied at runtime.
+- **BCB** — behavioral circuit breakers. You name known failure modes on this model and configure an escalation ladder plus a programmatic response.
+- **AMPI** — automated multi-process intervention. A deterministic named recipe that runs when a breaker fires (Sanitize, Assist, Sanction, Recover).
+- **Service** — binds `127.0.0.1` on an OS-assigned port and writes `<state dir>/mba/service.json`.
+- **CLI** — `mba` (`models`, `servers`, `machine`, `status`). The published bin is the CLI, not the service.
+
+## Install (library)
+
+```sh
 npm install @mba-ai/core
 ```
 
-## Running the global service
+That embeds the framework. It does not start the daemon.
 
-```bash
-npx @mba-ai/core
-# or, from a checkout:
+## Run the service
+
+From a checkout of this repo:
+
+```sh
+npm install
 npm run start:service
 ```
 
-The service binds `127.0.0.1:<port>` and writes a discovery file
-(`<state dir>/mba/service.json`).
+Or `npm run start` / `npm run dev` in this package. The CLI finds the service via discovery or `MBA_SERVICE_URL`.
 
-Upgrading from a pre-0.1.1 install? Run `mba migrate-paths` once — it moves
-the legacy `~/.mba` state and `~/models/adapters` store to the OS-aware
-locations (local-only, works with the service stopped, never overwrites).
+`npx @mba-ai/core` and the `mba` bin run the **CLI**. After a build, `npm link` in this directory puts `mba` on your PATH.
 
-## Environment variables
-
-|Variable|Description|Default|
-|---|---|---|
-|`MBA_BASE_DIR`|State dir (service discovery + SQLite state)|OS-aware (see `src/service/paths.ts`)|
-|`MBA_ADAPTER_DIR`|Directory containing the adapter lineage tree|OS-aware model store (see `src/service/paths.ts`)|
-|`MBA_UPSTREAM_URL`|Upstream model endpoint the service fronts|—|
-
-## Development
-
-```bash
-npm install
-npm run typecheck   # tsc --noEmit
-npm test            # vitest run
-npm run build       # emit dist/
+```sh
+mba --help
+mba status
 ```
 
-Requires Node ≥ 20.
+Node ≥ 20. llama.cpp on `PATH` if you boot with `mba servers boot`.
 
-## Related
+## Environment
 
-See [ADR-0084](../../docs/adr/0084-model-behavioral-adapter-specification.md)
-(specification), [ADR-0090](../../docs/adr/0090-adapter-lineage-tree.md)
-(lineage tree), and
-[ADR-0092](../../docs/adr/0092-mba-standalone-framework.md) (standalone
-framework) for the design.
+| Variable | Role |
+| --- | --- |
+| `MBA_SERVICE_URL` | Service URL if discovery is not used |
+| `MBA_BASE_DIR` | Store / state base override |
+| `MBA_ADAPTER_DIR` | Adapter tree (model store) |
+| `MBA_SWITCH_PORT` | Default boot port (8080) |
+| `MBA_UPSTREAM_URL` | Fallback upstream when the registry is empty |
+
+Defaults are OS-aware (see `src/service/paths.ts`). Upgrading from a pre-0.1.1 install: `mba migrate-paths` once (local, never overwrites).
+
+## Develop
+
+```sh
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+After CLI changes, rebuild this package so a linked `mba` picks them up.
+
+## Docs
+
+- [Repo README](../../README.md) — operator pitch, run, onboarding, CLI
+- [`docs/adr/`](../../docs/adr/) — architecture decision records
