@@ -4,5 +4,6 @@ coverage/
 *.log
 .DS_Store
 
-# Session notes — local only, never publish
+# Session notes and backlog — local only, never publish
 docs/handoffs/
+docs/backlog/
