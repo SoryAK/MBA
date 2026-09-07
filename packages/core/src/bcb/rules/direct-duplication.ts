@@ -47,7 +47,8 @@ export function runDirectDuplication(
 
   const message = formatDirectDuplicationMessage(last.tool, runLength);
   const edited = applyCm(messages, {
-    cut: "replace-tool-result",
+    cut: "replace",
+    target: "tool-result",
     toolCallId: last.toolCallId,
     content: message,
   });

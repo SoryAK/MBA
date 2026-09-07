@@ -49,7 +49,7 @@ describe("cm.cgc.pruneDuplicates", () => {
   it("prunes trailing duplicates and keeps the first pair", () => {
     const messages = duplicateTranscript();
     const out = pruneDuplicates({ messages, trip });
-    expect(out.cut).toBe("prune-duplicates");
+    expect(out.cut).toBe("sweep");
     expect(out.progress).toBe(0);
     const roles = out.messages.map((m) => m.role);
     expect(roles).toEqual(["user", "assistant", "tool", "assistant", "tool", "user"]);

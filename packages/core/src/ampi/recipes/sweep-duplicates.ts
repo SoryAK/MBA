@@ -1,21 +1,14 @@
 /**
- * AMPI recipe `sweep-duplicates` (ADR-0105).
- *
- * Runner only: name the CGC cut `prune-duplicates` and stop. The AMPI
- * engine asks CM to apply it. This recipe does not splice `messages[]`.
+ * Alias for `sanitize` + `duplicates` (ADR-0105).
  */
 
+import { runSanitize } from "./sanitize.js";
 import type { AmpiRecipe, AmpiRecipeContext, AmpiRecipeStep } from "../types.js";
 
 export const SWEEP_DUPLICATES_RECIPE = "sweep-duplicates";
 
 export function runSweepDuplicates(ctx: AmpiRecipeContext): AmpiRecipeStep {
-  return {
-    act: "rewrite-context",
-    cm: { cut: "prune-duplicates", trip: ctx.trip },
-    turnsUsed: 1,
-    progress: 0,
-  };
+  return runSanitize(ctx, { what: "duplicates" });
 }
 
 export const sweepDuplicatesRecipe: AmpiRecipe = {

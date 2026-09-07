@@ -2,20 +2,19 @@
  * Context Management engine (ADR-0105).
  *
  * One door: callers name a closed cut, the engine splices `messages[]`.
- * Unknown cuts are a no-op. A sequence runner (`runCm`) applies cuts in
- * order with a hard cap. AMPI and TCB both come through here.
  */
 
 import type { ChatMessage } from "../chat-message.js";
-import { insertSystem } from "./insert-system.js";
-import { pruneDuplicates } from "./cgc/prune-duplicates.js";
-import { replaceToolResult } from "./replace-tool-result.js";
+import { compact } from "./compact.js";
+import { insert } from "./insert.js";
+import { replace } from "./replace.js";
+import { setMark } from "./set-mark.js";
+import { sweep } from "./sweep.js";
 import { CM_CUTS, type CmCut, type CmEditResult, type CmEngineResult, type CmIntent } from "./types.js";
 
 const KNOWN = new Set<string>(CM_CUTS);
 
 export interface RunCmOptions {
-  /** Hard cap on cuts applied. Defaults to the number of intents. */
   readonly maxCuts?: number;
 }
 
@@ -27,20 +26,35 @@ export function applyCm(
     return { messages, cut: intent.cut, progress: 0 };
   }
   switch (intent.cut) {
-    case "prune-duplicates":
-      return pruneDuplicates({ messages, trip: intent.trip });
-    case "replace-tool-result":
-      return replaceToolResult({
+    case "replace":
+      return replace({
         messages,
-        toolCallId: intent.toolCallId,
+        target: intent.target,
         content: intent.content,
+        toolCallId: intent.toolCallId,
+        at: intent.at,
       });
-    case "insert-system":
-      return insertSystem({
+    case "insert":
+      return insert({
         messages,
+        role: intent.role,
         at: intent.at,
         contents: intent.contents,
       });
+    case "set-mark":
+      return setMark({
+        messages,
+        tag: intent.tag,
+        toolCallId: intent.toolCallId,
+      });
+    case "sweep":
+      return sweep({
+        messages,
+        what: intent.what,
+        trip: intent.trip,
+      });
+    case "compact":
+      return compact({ messages, target: intent.target });
   }
 }
 

@@ -1,7 +1,7 @@
 /**
  * Proactive BCB hints — inject guidance into the conversation before the
  * model repeats a known bad pattern. Hints are system messages inserted by
- * CM (`insert-system`); tool results are not rewritten here.
+ * CM (`insert` / `system`); tool results are not rewritten here.
  */
 
 import type { ChatMessage } from "../chat-message.js";
@@ -76,7 +76,8 @@ export function insertEofOverflowHints(
   );
   const insertAt = lastCallIndex >= 0 ? lastCallIndex : messages.length;
   const edited = applyCm(messages, {
-    cut: "insert-system",
+    cut: "insert",
+    role: "system",
     at: insertAt,
     contents: Array.from(hints.values()),
   });

@@ -203,14 +203,14 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 ## Open questions (to nail as part of AMPI + CM work)
 
 1. **Phase boundary** — how MBA knows a search or reasoning phase ended (explicit recipe end, next user turn, model token, or all three).
-2. **Mark representation** — in-message tag, side table keyed by `tool_call_id` / span, or both.
+2. **Mark representation** — v1 is an in-message `mba.mark` (`scratch` | `pin`) on the tool pair, so it travels with the transcript. A side table can wait.
 3. **Who may mark** — system-only for v1 vs model nomination with system veto.
 4. **Recipe file format** — still deferred from ADR-0088 / 0101; when it lands, recipes name a CM cut, they do not embed ad hoc splices.
 
 ## Implementation order (this before ADR-0104)
 
 1. **Done.** First slice: `sanitize` / `duplicates` (alias `sweep-duplicates`) → `sweep` / `duplicates`. Engines exist (`runAmpi`, `applyCm` / `runCm`). TCB stop-text and hints go through CM Write.
-2. Specify mark representation, then `set-mark` and `sweep` modes `scratch` / `budget`.
+2. **In progress.** Marks are `mba.mark` on the tool pair. `set-mark` and `sweep` / `scratch` ship; `budget` waits on a window size.
 3. `compact` / `reasoning`; `sanitize` modes `spent` / `phase` / `pin`.
 4. `assist` / `clamp` then `feed`.
 5. `recover` / `rollback` (needs `pin` first).

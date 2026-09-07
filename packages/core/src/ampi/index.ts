@@ -7,6 +7,7 @@
 export { runAmpi, runRecipe } from "./engine.js";
 export type { RunAmpiOptions, RunRecipeOptions } from "./engine.js";
 export { builtinRecipes, lookupRecipe } from "./registry.js";
+export { SANITIZE_RECIPE, sanitizeRecipe } from "./recipes/sanitize.js";
 export { SWEEP_DUPLICATES_RECIPE, sweepDuplicatesRecipe } from "./recipes/sweep-duplicates.js";
 export type {
   AmpiAct,

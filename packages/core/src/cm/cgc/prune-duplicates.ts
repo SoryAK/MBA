@@ -1,5 +1,5 @@
 /**
- * CGC cut `prune-duplicates` (ADR-0105).
+ * Sweep mode `duplicates` (ADR-0105).
  *
  * Context Management owns this edit. AMPI recipes may call it; they do not
  * implement the splice.
@@ -93,7 +93,7 @@ export function pruneDuplicates(ctx: CmEditContext): CmEditResult {
   const run = trailingDuplicateRun(ctx.messages, ctx.trip);
   const extra = Math.max(0, run.length - 1);
   if (extra === 0) {
-    return { messages: ctx.messages, cut: "prune-duplicates", progress: 0 };
+    return { messages: ctx.messages, cut: "sweep", progress: 0 };
   }
 
   const drop = new Set<number>();
@@ -104,5 +104,5 @@ export function pruneDuplicates(ctx: CmEditContext): CmEditResult {
   const kept: ChatMessage[] = ctx.messages.filter((_, i) => !drop.has(i));
   kept.push({ role: "user", content: formatMarker(run[0]!.tool, extra) });
 
-  return { messages: kept, cut: "prune-duplicates", progress: 0 };
+  return { messages: kept, cut: "sweep", progress: 0 };
 }
