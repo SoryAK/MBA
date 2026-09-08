@@ -71,11 +71,27 @@ model). This gives the daemon a live, queryable view of what is running.
   before closing the HTTP server (G1).
 - `slotSavePath(modelPath, fork)` — G3 KV path.
 
+**Phase 4 — slot / KV control.** The llama.cpp row now *drives* the G3
+folder, not just creates it. `POST /servers/slots` and `GET /servers/slots`
+dispatch on `serverType`:
+
+- llama.cpp: `POST /slots/{id}?action=save|restore|erase` and `GET /slots`.
+  Filenames are basenames only, written under `--slot-save-path`
+  (`<dirname(modelFile)>/kv/<fork>/slots`). Boot passes `--slots` so the
+  endpoint stays on (`extraArgs` cannot set `--no-slots`). Registry entries
+  record `fork` so the dir can be re-derived after boot. Default slot id is 0.
+- ollama: 400 — no slots.
+
+AMPI still only names the recipe. CM still only splices `messages[]`. This
+row is the model-plane button. Trip mop (prefix-cut on the next prompt, erase
+as fallback) is a later hook on this surface, not a fifth runner.
+
 **Service routes** (`server.ts`): `GET /servers` (list + health + resolved),
 `POST /servers/boot` (201 on success, 409 port-busy, 404 unknown model, 500
-boot-failed), `POST /servers/stop` (stops by pid, removes the entry).
+boot-failed), `POST /servers/stop` (stops by pid, removes the entry),
+`GET /servers/slots?id=` (list), `POST /servers/slots` (save / restore / erase).
 
-**CLI** (`cli/mba.ts`): `mba servers list|boot|stop`. The restart flow is
+**CLI** (`cli/mba.ts`): `mba servers list|boot|stop|logs|slots`. The restart flow is
 rewired to the in-daemon path (`restartServer` stops the current server by
 modelFile, then `POST /servers/boot` on the same port) — the external boot
 script is no longer invoked.

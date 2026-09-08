@@ -1,5 +1,5 @@
 /**
- * Server plane (ADR-0097): list / boot / stop / logs.
+ * Server plane (ADR-0097): list / boot / stop / logs / slots.
  */
 
 import { defaultSwitchPort, fail, serviceGet, servicePost } from "./client.js";
@@ -194,6 +194,54 @@ async function cmdServersStop(baseUrl: string, id: string): Promise<void> {
   process.stdout.write(`[mba] stopped ${id}\n`);
 }
 
+async function cmdServersSlots(
+  baseUrl: string,
+  id: string,
+  action: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<void> {
+  if (!action) {
+    const body = await serviceGet<{ id: string; dir: string; slots: unknown }>(
+      baseUrl,
+      `/servers/slots?id=${encodeURIComponent(id)}`,
+    );
+    if (json) {
+      process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(`[mba] ${body.id}  ${body.dir}\n`);
+    process.stdout.write(`${JSON.stringify(body.slots, null, 2)}\n`);
+    return;
+  }
+  if (action !== "save" && action !== "restore" && action !== "erase") {
+    fail("usage: mba servers slots <id> [erase|save <file>|restore <file>] [slotId]");
+  }
+  const leftover = [...rest];
+  let filename: string | undefined;
+  if (action === "save" || action === "restore") {
+    filename = leftover.shift();
+    if (!filename) fail(`usage: mba servers slots <id> ${action} <filename> [slotId]`);
+  }
+  let slotId: number | undefined;
+  if (leftover[0] !== undefined) {
+    const n = Number(leftover[0]);
+    if (!Number.isInteger(n) || n < 0) fail("slotId must be a non-negative integer");
+    slotId = n;
+  }
+  const result = await servicePost<unknown>(baseUrl, "/servers/slots", {
+    id,
+    action,
+    filename,
+    slotId,
+  });
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`[mba] slot ${action} ok (${id})\n`);
+}
+
 async function pickServerId(baseUrl: string, title: string): Promise<string | null> {
   const { servers } = await serviceGet<{ servers: ServerEntry[] }>(baseUrl, "/servers");
   if (servers.length === 0) {
@@ -359,13 +407,31 @@ export async function cmdServers(
       await cmdServersLogs(baseUrl, id, lines, follow);
       return;
     }
+    case "slots":
+    case "slot": {
+      let [id, action, ...rest] = args;
+      if (!id) {
+        if (!process.stdin.isTTY) {
+          fail("usage: mba servers slots <id> [erase|save <file>|restore <file>] [slotId]");
+        }
+        const picked = await pickServerId(baseUrl, "slots");
+        if (picked === null) {
+          cancelled();
+          return;
+        }
+        id = picked;
+      }
+      await cmdServersSlots(baseUrl, id, action, rest, json);
+      return;
+    }
     default:
       fail(
-        "usage: mba servers <list|boot|stop|logs>\n" +
+        "usage: mba servers <list|boot|stop|logs|slots>\n" +
           "  list [--plain]       list registered servers (interactive on a TTY; --plain forces the table)\n" +
           "  boot <ref> [port]    boot a model server (port defaults to 8080) [--type ollama]\n" +
           "  stop <id>            stop a registered server (by id)\n" +
-          "  logs <id>            show a server's captured log lines [--lines N] [--follow]",
+          "  logs <id>            show a server's captured log lines [--lines N] [--follow]\n" +
+          "  slots <id>           list llama.cpp slots; erase|save <file>|restore <file> [slotId]",
       );
   }
 }

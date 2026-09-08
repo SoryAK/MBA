@@ -63,6 +63,8 @@ export const MANAGED_LLAMA_FLAGS: ReadonlySet<string> = new Set([
   "threads",
   "jinja",
   "parallel",
+  "slots",
+  "no-slots",
   "cache-reuse",
   "cache-ram",
   "reasoning-budget",

@@ -145,4 +145,51 @@ describe("ollama ops", () => {
     await expect(serverTypeOps["ollama"].health(entry, up.fetchImpl)).resolves.toBe(true);
     await expect(serverTypeOps["ollama"].health(entry, down.fetchImpl)).resolves.toBe(false);
   });
+
+  it("slots is unsupported", async () => {
+    const entry: UpstreamEntry = {
+      id: "ollama-11434",
+      serverType: "ollama",
+      modelFile: tag,
+      port: 11434,
+      startedAt: "2026-08-25T02:00:00.000Z",
+    };
+    await expect(serverTypeOps["ollama"].slots(entry, { action: "erase" })).rejects.toThrow(/no slots/i);
+    await expect(serverTypeOps["ollama"].listSlots(entry, ollamaFetch().fetchImpl)).rejects.toThrow(/no slots/i);
+  });
+});
+
+describe("llama.cpp slots", () => {
+  it("erase POSTs /slots/{id}?action=erase and reports the G3 dir", async () => {
+    const calls: Array<{ method: string; url: string; body: string }> = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        method: (init?.method ?? "GET").toUpperCase(),
+        url: String(input),
+        body: typeof init?.body === "string" ? init.body : "",
+      });
+      return new Response(JSON.stringify({ n_erased: 3 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const entry: UpstreamEntry = {
+      id: "llama-cpp-8080",
+      serverType: "llama.cpp",
+      modelFile: "/store/qwen/qwen.gguf",
+      port: 8080,
+      fork: "upstream",
+      pid: 1,
+      startedAt: "2026-09-08T02:00:00.000Z",
+    };
+    const result = await serverTypeOps["llama.cpp"].slots(entry, { action: "erase" }, { fetchImpl });
+    expect(result.action).toBe("erase");
+    expect(result.slotId).toBe(0);
+    expect(result.dir).toBe("/store/qwen/kv/upstream/slots");
+    expect(calls[0]).toMatchObject({
+      method: "POST",
+      url: "http://127.0.0.1:8080/slots/0?action=erase",
+      body: "{}",
+    });
+  });
 });

@@ -119,7 +119,7 @@ A new AMPI card is a **mode** of one of the four functions, or we are adding a f
 - **`sanitize`** — `{ what: duplicates | scratch | reasoning | phase, pin?: true }`
 - **`assist`** — `{ how: feed | clamp | redirect | lost }` (`lost` waits on ADR-0104)
 - **`sanction`** — `{ how: revoke }` — later; after Assist is real. Ladder mask/kill can stay the cheap form.
-- **`recover`** — `{ how: rollback | reset }` — needs `pin` first. v1 is context-only. Session/KV reset is the same function, later mode (model plane).
+- **`recover`** — `{ how: rollback | reset }` — needs `pin` first. v1 is context-only. Session/KV reset uses the llama.cpp slot row (ADR-0097 Phase 4: save / restore / erase in the G3 folder). Recover recipes still later; sanitize trip will hook this plane (prefix-cut on the next prompt, erase as fallback).
 
 Shipped `sweep-duplicates` is `sanitize` + `duplicates`. Keep the alias.
 
@@ -145,11 +145,15 @@ AMPI (sanitize | assist | sanction | recover)
         │
         ▼
 CM (write | mark | sweep | compact)
+        │
+        ▼  (later: after a real splice)
+llama.cpp row (save | restore | erase)
 ```
 
 - **AMPI engine (`runAmpi`)** — looks up a function/mode, asks CM to apply each intent, enforces `maxTurns` and a decreasing progress measure. Notch-1 expressions and worker isolation remain as in ADR-0088 / ADR-0101.
 - **CM engine (`applyCm` / `runCm`)** — the only door that splices `messages[]`. Closed `CmIntent` menu. `runCm` applies a sequence with a hard cut cap.
 - **Sweep + Compact** — cleanup *under* CM. Not a second runner. Not recipe names.
+- **llama.cpp row (ADR-0097)** — slot save / restore / erase. Does not splice `messages[]`.
 
 The shipped built-in path is `sanitize` / `duplicates` (alias `sweep-duplicates`) → `sweep` / `duplicates`. Recipes name a CM intent. They do not return a spliced `messages[]`.
 
@@ -215,11 +219,12 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 1. **Done.** First slice: `sanitize` / `duplicates` (alias `sweep-duplicates`) → `sweep` / `duplicates`. Engines exist (`runAmpi`, `applyCm` / `runCm`). TCB stop-text and hints go through CM Write.
 2. **Done.** Marks are `mba.mark` on the tool pair. `set-mark` and `sweep` / `scratch` ship. Pin is a keeper list (`listKeepers`); `budget` waits on a window size.
 3. **Done.** `compact` / `reasoning`; `sanitize` modes `reasoning` / `phase` / `pin` (`pin?: true` pins the trip before the mop).
-4. SM v1 (ADR-0106) — two sandboxes + door. Default off.
-5. `assist` / `clamp` then `feed`.
-6. `recover` / `rollback` (needs `pin` first).
-7. `sanction` after Assist is real.
-8. `assist` / `lost` with ADR-0104, not before.
+4. **Done.** Model-plane slot control (ADR-0097 Phase 4): save / restore / erase / list. Sanitize still does not erase-after-mop; that is the next wire on this plane.
+5. SM v1 (ADR-0106) — two sandboxes + door. Default off.
+6. `assist` / `clamp` then `feed`.
+7. `recover` / `rollback` (needs `pin` first).
+8. `sanction` after Assist is real.
+9. `assist` / `lost` with ADR-0104, not before.
 
 ## Relationship to other ADRs
 
