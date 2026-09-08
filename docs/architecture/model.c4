@@ -1,0 +1,91 @@
+model {
+  operator = actor "Operator" {
+    description "You. Pull, boot, fill cards, read notes."
+  }
+
+  host = system "Download host" {
+    description "HuggingFace or any URL that serves a GGUF."
+    style { color sky }
+  }
+
+  harness = app "Harness" {
+    description "Cursor, Copilot, Cline, Claude Code. Not MBA. Reads the project and talks HTTP to the model endpoint."
+    style { color sky }
+  }
+
+  llama = system "llama-server" {
+    description "The model host. MBA boots it; MBA is not this process."
+    technology "llama.cpp"
+    style { color green }
+  }
+
+  project = system "Project folder" {
+    description "The repo the harness already knows. Project playbook stays here."
+    style { color slate }
+
+    card = file "Project CLAUDE.md" {
+      description "The project's standing playbook. Harness injects this. MBA does not own it."
+    }
+    envelope = file "Staged model card" {
+      #proposed
+      description """
+        Not built yet. Same instructions.md, filename/path the harness already reads.
+        Environment (harness + ide) picks the envelope. Content stays one card in the store.
+        notes.md never lands here.
+      """
+      style { color amber }
+    }
+  }
+
+  mba = system "MBA" {
+    description "Per-model runtime dossier. Not a model host and not a client."
+    technology "Node"
+
+    cli = app "mba CLI" {
+      description "mba models pull, mba s boot, status."
+    }
+    service = service "Service" {
+      description "Daemon on 127.0.0.1. Owns pull, boot, registry, proxy."
+    }
+    resolver = component "Resolver" {
+      description "Family then model, then environment folder. Last-specific wins."
+    }
+    mcp = service "MCP server" {
+      description "Control plane for hosts. Not on the per-request chat path."
+    }
+    proxy = service "Proxy" {
+      description "Chat HTTP in, llama-server out. Sanitize mop and slot erase live here."
+    }
+    store = store "Model store" {
+      description "The house for one model. Source of truth."
+
+      family = file "Family tier" {
+        description "family.yaml, family bindings, family instructions.md and notes.md (if the family is new)."
+      }
+      modeldir = file "Model folder" {
+        description """
+          id.yaml, GGUF, bcb.jsonl, tcb.jsonl, server_setup.json,
+          instructions.md (model reads later), notes.md (you read, never sent).
+        """
+      }
+      kv = file "KV slot dirs" {
+        description "kv/upstream/slots and kv/llama.cpp/slots. Boot-ready empty dirs on pull."
+      }
+    }
+  }
+
+  operator -> mba.cli "runs commands"
+  mba.cli -> mba.service "HTTP to the daemon"
+  mba.service -> mba.resolver "resolve adapter"
+  mba.resolver -> mba.store "read YAML and bindings"
+  mba.service -[writes]-> mba.store "pull writes the house"
+  mba.service -> llama "spawn + flags + slot-save-path"
+  mba.mcp -> mba.service "control plane"
+  harness -> mba.proxy "chat completions"
+  mba.proxy -> llama "forward (and mop / erase slot)"
+  harness -> project.card "injects project playbook"
+  mba.service -[proposed]-> project.envelope "stage card (env picks filename)" {
+    description "Same instructions.md. Envelope from harness+ide. Not built."
+  }
+  mba.service -> host "download GGUF"
+}
