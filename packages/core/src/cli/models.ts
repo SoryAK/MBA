@@ -256,7 +256,7 @@ export async function cmdModelsPull(
     if (result.familyCreated) {
       process.stdout.write("[mba] family tier scaffolded (family.yaml + empty bindings)\n");
     }
-    process.stdout.write("[mba] fill in the TODO fields in the adapter yaml, then boot\n");
+    process.stdout.write("[mba] fill the TODO adapter fields, plus instructions.md (for the model) and notes.md (for you)\n");
   } catch (error) {
     process.stderr.write(`[mba] error: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

@@ -178,6 +178,17 @@ export interface MbaBindings {
    * (which describes the runtime, not the flags).
    */
   readonly server_setup?: string;
+  /**
+   * Playbook the model reads (CLAUDE.md-style, written for these weights).
+   * Family file is the default; a model file replaces it (not concatenated).
+   * Not an environment overlay — never placed in `environments/`.
+   */
+  readonly instructions?: string;
+  /**
+   * Operator notes for this family or model. You read this; it is never
+   * injected. Family file is the default; a model file replaces it.
+   */
+  readonly notes?: string;
 }
 
 export interface MbaAlert {
@@ -330,6 +341,15 @@ export interface MbaResolvedConfig {
    * the model. Consumers use it to validate dials (e.g. ctxSize ceiling).
    */
   readonly profile?: MbaModelProfile;
+  /**
+   * Winning `instructions.md` path (family then model, last-specific wins).
+   * Store only — not injected into the prompt in this cut.
+   */
+  readonly instructionsPath?: string;
+  /**
+   * Winning `notes.md` path. Operator-only; never injected.
+   */
+  readonly notesPath?: string;
   /** Optional resolution diagnostics events for consumers to emit. */
   readonly diagnostics: readonly MbaResolutionDiagnostic[];
 }

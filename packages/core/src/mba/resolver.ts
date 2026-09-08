@@ -201,6 +201,8 @@ export function resolveMbaConfig(
 
   const selectedIds: string[] = [];
   let profile: MbaModelProfile | undefined;
+  let instructionsPath: string | undefined;
+  let notesPath: string | undefined;
 
   for (const { path, adapter } of selected) {
     selectedIds.push(adapter.metadata.id);
@@ -267,6 +269,24 @@ export function resolveMbaConfig(
       }
     }
 
+    // Markdown cards: last-specific path wins. Missing file is a diagnostic
+    // and does not overwrite a lower rung's path (so a broken model binding
+    // still inherits the family card).
+    for (const file of ["instructions", "notes"] as const) {
+      const rel = adapter.bindings[file];
+      if (!rel) continue;
+      const abs = resolveRelativePath(path, rel);
+      if (!statSync(abs, { throwIfNoEntry: false })) {
+        diagnostics.push({
+          kind: "load-error",
+          message: `failed to load ${file} for ${adapter.metadata.id}: file not found`,
+        });
+        continue;
+      }
+      if (file === "instructions") instructionsPath = abs;
+      else notesPath = abs;
+    }
+
     // Rung B: the scope's environment override folder (ADR-0091). Only scope
     // adapters (family / model) carry an environments/ folder; a legacy env
     // adapter IS the environment, so it has none. The folder holds only the
@@ -303,6 +323,16 @@ export function resolveMbaConfig(
     }
   }
 
-  return { bcbConfig, structural, server, alerts, selectedIds, profile, diagnostics };
+  return {
+    bcbConfig,
+    structural,
+    server,
+    alerts,
+    selectedIds,
+    profile,
+    instructionsPath,
+    notesPath,
+    diagnostics,
+  };
 }
 

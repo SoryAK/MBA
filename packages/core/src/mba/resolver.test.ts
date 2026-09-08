@@ -487,4 +487,136 @@ bindings:
     const resolved = resolveMbaConfig(mbaDir, { modelName: "m1", harness: "copilot" });
     expect(resolved.diagnostics.some((d) => d.kind === "unknown-rule-class")).toBe(true);
   });
+
+  it("resolves instructions and notes last-specific-wins", () => {
+    const mbaDir = join(dir, "mba");
+    const adaptersDir = join(mbaDir, "adapters");
+    const familyDir = join(adaptersDir, "qwen3-coder");
+    const modelDir = join(familyDir, "qwen3-coder-30b");
+    mkdirSync(modelDir, { recursive: true });
+
+    writeFileSync(
+      join(familyDir, "family.yaml"),
+      `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: qwen3-coder-family
+  family: qwen3-coder
+identity:
+  model:
+    family: qwen3-coder
+bindings:
+  instructions: "./instructions.md"
+  notes: "./notes.md"
+`,
+    );
+    writeFileSync(join(familyDir, "instructions.md"), "# family instructions\n");
+    writeFileSync(join(familyDir, "notes.md"), "# family notes\n");
+
+    writeFileSync(
+      join(modelDir, "model.yaml"),
+      `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: qwen3-coder-30b
+identity:
+  model:
+    name: qwen3-coder-30b
+bindings:
+  instructions: "./instructions.md"
+  notes: "./notes.md"
+`,
+    );
+    writeFileSync(join(modelDir, "instructions.md"), "# model instructions\n");
+    writeFileSync(join(modelDir, "notes.md"), "# model notes\n");
+
+    const resolved = resolveMbaConfig(mbaDir, { modelName: "qwen3-coder-30b", harness: "copilot" });
+    expect(resolved.instructionsPath).toBe(join(modelDir, "instructions.md"));
+    expect(resolved.notesPath).toBe(join(modelDir, "notes.md"));
+  });
+
+  it("keeps the family card when the model binding file is missing", () => {
+    const mbaDir = join(dir, "mba");
+    const adaptersDir = join(mbaDir, "adapters");
+    const familyDir = join(adaptersDir, "qwen3-coder");
+    const modelDir = join(familyDir, "qwen3-coder-30b");
+    mkdirSync(modelDir, { recursive: true });
+
+    writeFileSync(
+      join(familyDir, "family.yaml"),
+      `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: qwen3-coder-family
+  family: qwen3-coder
+identity:
+  model:
+    family: qwen3-coder
+bindings:
+  instructions: "./instructions.md"
+`,
+    );
+    writeFileSync(join(familyDir, "instructions.md"), "# family instructions\n");
+
+    writeFileSync(
+      join(modelDir, "model.yaml"),
+      `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: qwen3-coder-30b
+identity:
+  model:
+    name: qwen3-coder-30b
+bindings:
+  instructions: "./instructions.md"
+`,
+    );
+
+    const resolved = resolveMbaConfig(mbaDir, { modelName: "qwen3-coder-30b", harness: "copilot" });
+    expect(resolved.instructionsPath).toBe(join(familyDir, "instructions.md"));
+    expect(resolved.diagnostics.some((d) => d.kind === "load-error" && d.message.includes("instructions"))).toBe(
+      true,
+    );
+  });
+
+  it("inherits family instructions when the model yaml omits the binding", () => {
+    const mbaDir = join(dir, "mba");
+    const adaptersDir = join(mbaDir, "adapters");
+    const familyDir = join(adaptersDir, "qwen3-coder");
+    const modelDir = join(familyDir, "qwen3-coder-30b");
+    mkdirSync(modelDir, { recursive: true });
+
+    writeFileSync(
+      join(familyDir, "family.yaml"),
+      `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: qwen3-coder-family
+  family: qwen3-coder
+identity:
+  model:
+    family: qwen3-coder
+bindings:
+  instructions: "./instructions.md"
+`,
+    );
+    writeFileSync(join(familyDir, "instructions.md"), "# family instructions\n");
+
+    writeFileSync(
+      join(modelDir, "model.yaml"),
+      `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: qwen3-coder-30b
+identity:
+  model:
+    name: qwen3-coder-30b
+bindings: {}
+`,
+    );
+
+    const resolved = resolveMbaConfig(mbaDir, { modelName: "qwen3-coder-30b", harness: "copilot" });
+    expect(resolved.instructionsPath).toBe(join(familyDir, "instructions.md"));
+    expect(resolved.notesPath).toBeUndefined();
+  });
 });

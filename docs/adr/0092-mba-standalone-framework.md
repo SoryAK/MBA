@@ -17,7 +17,10 @@ Key questions covered in discussion:
 2. **Server lifecycle ownership** — who owns model server processes? The framework (MBA service) owns lifecycle; the proxy consumes resolved config and talks to servers.
 3. **Move vs duplicate** — the BCB/TCB/AMPI engine is absorbed into the framework, not duplicated. It is core to the product, not a plugin.
 4. **Repo question** — a framework for others needs a clean public API, independent versioning, and no original proxy coupling. But graduating to a separate repo before the boundary is proven in-repo is premature.
-5. **Core vs plugin** — BCB/TCB/AMPI is core (the differentiator). Model-tailored skills are a second-cut surface (no existing code).
+5. **Core vs plugin** — BCB/TCB/AMPI is core (the differentiator). Per-model
+   instruction cards (what the model reads) and operator notes (never
+   injected) live in the store as `instructions.md` / `notes.md` (ADR-0091,
+   ADR-0098). Live injection into the prompt is still a later cut.
 
 ## Decision Drivers
 
@@ -72,7 +75,9 @@ Key questions covered in discussion:
 ## Explicit Deferrals
 
 - GGUF file parsing for profile extraction — deferred to a later cut
-- Model-tailored skills surface — new surface, no existing code; second cut
+- Per-model instruction cards and operator notes live in the store
+  (`instructions.md` / `notes.md`). Live injection into the prompt is a
+  later cut.
 
 ## Migration Staging
 

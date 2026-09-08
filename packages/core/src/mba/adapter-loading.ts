@@ -18,7 +18,8 @@ import type { AdapterEntry } from "./adapter-identity.js";
  * (ADR-0091). Maps the binding key to its on-disk file name. An environment
  * folder holds only the files it overrides; absent files inherit from lower
  * rungs. A `profile` is deliberately NOT here — environments may only touch
- * dials, never the model's immutable facts.
+ * dials, never the model's immutable facts. Markdown cards (`instructions.md`,
+ * `notes.md`) are also not here: they inherit family → model, not by harness.
  */
 export const ENV_BINDING_FILES: ReadonlyArray<readonly ["bcb" | "tcb" | "structural" | "server_setup", string]> = [
   ["bcb", "bcb.jsonl"],
