@@ -1,0 +1,75 @@
+views {
+  view index {
+    title "MBA landscape"
+    description "Three stories: store the house, boot the server, talk through a harness."
+    include operator, host, harness, llama, project, mba
+    include mba.*
+    exclude mba.store.*
+    autoLayout LeftRight
+  }
+
+  view house of mba.store {
+    title "1 — The house (store)"
+    description "What pull writes. Family is the default; the model file replaces it."
+    include *
+    include -> mba.store
+  }
+
+  view clients-landscape {
+    title "3 — Harness, project, proxy"
+    description "MBA is not the client. Environment (harness + ide) will pick the envelope; that staging is not built yet."
+    include harness, project, project.*, mba.proxy, mba.service, llama, mba.mcp
+    autoLayout LeftRight
+    style project.envelope { color amber }
+  }
+
+  dynamic view pull {
+    title "1 — Pull and scaffold"
+    description "Download, hash as bytes arrive, then write the house. A resumed partial is hashed from disk first. Network stops after the GGUF."
+    variant sequence
+
+    operator -> mba.cli "mba models pull"
+    mba.cli -> mba.service "POST /models/pull"
+    mba.service -> host "stream GGUF"
+    mba.service <- host "whole GGUF file (hash on the wire)"
+    mba.service -> mba.store.modeldir "if digest matches: keep GGUF"
+    parallel {
+      mba.service -> mba.store.modeldir "parse header, write yaml"
+      mba.service -> mba.store.modeldir "empty bindings + blank cards"
+      mba.service -> mba.store.kv "kv/upstream and kv/llama.cpp slots"
+    }
+    opt "family folder has no family.yaml yet" {
+      mba.service -> mba.store.family "family.yaml + family cards + bindings"
+    }
+  }
+
+  dynamic view boot {
+    title "2 — Boot the model"
+    description "Resolve the house into llama.cpp flags, then spawn. Slot-save-path is already on disk from pull."
+    variant sequence
+
+    operator -> mba.cli "mba s boot <id>"
+    mba.cli -> mba.service "POST boot"
+    mba.service -> mba.resolver "family then model then env folder"
+    mba.resolver -> mba.store "read yaml, bcb, tcb, server_setup"
+    mba.service -> llama "spawn llama-server (ctx, GPU, slot-save-path)"
+    mba.service -> mba.store.kv "use existing slot dirs"
+  }
+
+  dynamic view connect {
+    title "3 — Connect a client"
+    description "Harness builds the prompt from the project. MBA proxies the HTTP call. Staging the model card into the project is next, not live."
+    variant sequence
+
+    harness -> project.card "reads project CLAUDE.md"
+    opt "not built — env picks the filename" {
+      mba.service -> project.envelope "copy instructions.md into harness slot"
+      harness -> project.envelope "same pipe as CLAUDE.md"
+    }
+    harness -> mba.proxy "POST /v1/chat/completions"
+    mba.proxy -> llama "forward"
+    opt "sanitize actually changed what the model sees" {
+      mba.proxy -> llama "POST /slots/0?action=erase"
+    }
+  }
+}
