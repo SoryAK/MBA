@@ -24,7 +24,8 @@ import { fingerprint } from "../bcb/fingerprint.js";
 import { buildBcbKillResponse } from "../bcb/kill-response.js";
 import { applyToolCircuitBreakers } from "../bcb/tool-circuit-breaker.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
-import { runAmpi } from "../ampi/index.js";
+import { parseAmpiRecipe, runAmpi } from "../ampi/index.js";
+import type { ReasoningGate } from "../cm/reasoning.js";
 
 /**
  * Outcome of an intervention.
@@ -47,11 +48,17 @@ export type InterventionResult =
  * @param db     The BCB kill-state database, or undefined to disable
  *               escalation (trips still rewrite tool results, but no kill).
  */
+export interface InterveneOptions {
+  /** Model + server dial. Compact is skipped when this is an explicit off. */
+  readonly reasoning?: ReasoningGate | (() => ReasoningGate | undefined);
+}
+
 export function intervene(
   body: string,
   ua: string,
   config: ToolCircuitBreakerConfig,
   db: DatabaseSync | undefined,
+  opts: InterveneOptions = {},
 ): InterventionResult {
   let parsed: Record<string, unknown>;
   try {
@@ -104,10 +111,16 @@ export function intervene(
       }
 
       if (escalation.action === "ampi" && escalation.recipe) {
-        // Recipe is an AMPI runner name (e.g. sweep-duplicates). CM does the splice.
-        const rewritten = runAmpi(escalation.recipe, {
+        // Recipe is an AMPI runner name (e.g. sweep-duplicates or
+        // sanitize/reasoning). CM does the splice.
+        const parsedRecipe = parseAmpiRecipe(escalation.recipe);
+        const reasoning =
+          typeof opts.reasoning === "function" ? opts.reasoning() : opts.reasoning;
+        const rewritten = runAmpi(parsedRecipe.name, {
           messages: (parsed.messages as ChatMessage[]) ?? chatMessages,
           trip: lastTrip,
+          sanitize: parsedRecipe.sanitize,
+          reasoning,
         });
         parsed.messages = rewritten.messages;
         outBody = JSON.stringify(parsed);

@@ -12,6 +12,10 @@ export { insert, insertSystem } from "./insert.js";
 export { setMark } from "./set-mark.js";
 export { sweep } from "./sweep.js";
 export { compact } from "./compact.js";
+export { listKeepers } from "./keepers.js";
+export type { Keeper } from "./keepers.js";
+export { reasoningIsOn, shouldCompactReasoning } from "./reasoning.js";
+export type { ReasoningGate } from "./reasoning.js";
 export type {
   CmCut,
   CmCgcCut,

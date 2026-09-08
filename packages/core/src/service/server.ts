@@ -79,6 +79,7 @@ import {
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
 import { createModelProxyRoutes } from "./model-proxy.js";
+import { reasoningGateForModel } from "./reasoning-gate.js";
 import { pullModel } from "../model/model-pull.js";
 import {
   listUpstreams,
@@ -165,6 +166,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       fetch: opts.fetch,
       tcbConfig,
       bcbDb,
+      reasoningGate: (model) => reasoningGateForModel(model, opts.adapterDir),
     }),
   );
 

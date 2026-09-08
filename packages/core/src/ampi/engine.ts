@@ -10,7 +10,8 @@
  * Worker-thread isolation and the Notch-1 expression language are deferred.
  */
 
-import { applyCm } from "../cm/engine.js";
+import { runCm } from "../cm/engine.js";
+import type { CmIntent } from "../cm/types.js";
 import { lookupRecipe } from "./registry.js";
 import type { AmpiEngineResult, AmpiRecipe, AmpiRecipeContext } from "./types.js";
 
@@ -48,7 +49,8 @@ export function runAmpi(
     const step = recipe.run({ ...ctx, messages });
     turnsUsed += 1;
     act = step.act;
-    const edited = applyCm(messages, step.cm);
+    const intents: readonly CmIntent[] = Array.isArray(step.cm) ? step.cm : [step.cm];
+    const edited = runCm(messages, intents);
     if (step.progress >= progress) {
       break;
     }

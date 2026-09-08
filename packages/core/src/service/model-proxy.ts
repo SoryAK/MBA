@@ -52,6 +52,7 @@ import { readModelCatalog } from "./model-catalog.js";
 import { probeEntryHealth } from "./server-types.js";
 import { intervene } from "./intervention.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
+import type { ReasoningGate } from "../cm/reasoning.js";
 
 export interface ModelProxyOptions {
   /**
@@ -79,6 +80,11 @@ export interface ModelProxyOptions {
    * (trips still rewrite tool results, but no kill-state is persisted).
    */
   readonly bcbDb?: DatabaseSync;
+  /**
+   * Reasoning dial for the request's model (ADR-0105). Called only when an
+   * AMPI recipe is about to run. Unknown → compact may still try.
+   */
+  readonly reasoningGate?: (model: string | undefined) => ReasoningGate | undefined;
 }
 
 /** Strip a trailing slash so `${base}/v1/…` never double-slashes. */
@@ -177,11 +183,19 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     // A kill short-circuits here — the upstream is never touched.
     let forwardBody = body;
     if (opts.tcbConfig) {
+      let modelForGate: string | undefined;
+      try {
+        const parsed = JSON.parse(body) as { model?: unknown };
+        modelForGate = typeof parsed.model === "string" ? parsed.model : undefined;
+      } catch {
+        modelForGate = undefined;
+      }
       const result = intervene(
         body,
         c.req.header("user-agent") ?? "",
         opts.tcbConfig(),
         opts.bcbDb,
+        { reasoning: () => opts.reasoningGate?.(modelForGate) },
       );
       if (result.action === "kill") {
         return result.response;

@@ -6,8 +6,15 @@
 
 export { runAmpi, runRecipe } from "./engine.js";
 export type { RunAmpiOptions, RunRecipeOptions } from "./engine.js";
+export { parseAmpiRecipe } from "./parse-recipe.js";
+export type { ParsedAmpiRecipe } from "./parse-recipe.js";
 export { builtinRecipes, lookupRecipe } from "./registry.js";
-export { SANITIZE_RECIPE, sanitizeRecipe } from "./recipes/sanitize.js";
+export {
+  SANITIZE_RECIPE,
+  sanitizeRecipe,
+  runSanitize,
+  sanitizeIntents,
+} from "./recipes/sanitize.js";
 export { SWEEP_DUPLICATES_RECIPE, sweepDuplicatesRecipe } from "./recipes/sweep-duplicates.js";
 export type {
   AmpiAct,
@@ -16,5 +23,7 @@ export type {
   AmpiRecipeContext,
   AmpiRecipeResult,
   AmpiRecipeStep,
+  SanitizeOptions,
+  SanitizeWhat,
 } from "./types.js";
-export { AMPI_ACTS } from "./types.js";
+export { AMPI_ACTS, SANITIZE_WHATS } from "./types.js";
