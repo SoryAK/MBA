@@ -19,12 +19,15 @@
  *   <store>/<family>/<id>/instructions.md|notes.md
  *   <store>/<family>/<id>/kv/<fork>/slots   (G3 slot-save dirs, both forks)
  *
- * The download is the only network step; everything after the sha256 check
- * is local filesystem work. A failed verify deletes the partial and leaves
- * no scaffold behind.
+ * The download is the only network step; sha256 is updated as bytes arrive
+ * (a resumed `.partial` is hashed from disk first). Everything after the
+ * digest check is local filesystem work. A failed verify deletes the partial
+ * and leaves no scaffold behind. If weights land but the house fails to
+ * write, the GGUF is kept; the same pull command finishes the scaffold
+ * without downloading again.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, type Hash } from "node:crypto";
 import {
   createReadStream,
   createWriteStream,
@@ -38,13 +41,12 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { pipeline } from "node:stream";
+import { mkdir, writeFile } from "node:fs/promises";
 import { slotSavePath } from "../mba/server-lifecycle.js";
 import { defaultModelStoreRoot } from "../service/paths.js";
 import {
   draftAdapterYaml,
   draftFamilyYaml,
-  draftInstructionsMd,
-  draftNotesMd,
 } from "./draft-adapter.js";
 import { parseGgufMetadata } from "./gguf-metadata.js";
 import { deriveGgufProfile } from "./gguf-profile.js";
@@ -95,6 +97,71 @@ export interface PullModelResult {
 
 const EMPTY_JSON = "{}";
 
+async function writeIfAbsent(path: string, content: string): Promise<void> {
+  if (existsSync(path)) return;
+  await writeFile(path, content);
+}
+
+/**
+ * Empty bindings, cards, and KV dirs. Does not need the GGUF header.
+ * Started beside header parse so libuv can write while the main thread reads.
+ * Returns whether this pull created the family tier.
+ * Existing files are left alone so a retry after a failed scaffold cannot
+ * clobber a card the operator already filled.
+ */
+async function writeEmptyScaffolds(
+  modelDir: string,
+  familyDir: string,
+  family: string,
+  dest: string,
+): Promise<boolean> {
+  const jobs: Promise<unknown>[] = [
+    writeIfAbsent(join(modelDir, "bcb.jsonl"), EMPTY_JSON),
+    writeIfAbsent(join(modelDir, "tcb.jsonl"), EMPTY_JSON),
+    writeIfAbsent(join(modelDir, "server_setup.json"), EMPTY_JSON),
+    writeIfAbsent(join(modelDir, "instructions.md"), ""),
+    writeIfAbsent(join(modelDir, "notes.md"), ""),
+    mkdir(slotSavePath(dest, "upstream"), { recursive: true }),
+    mkdir(slotSavePath(dest, "llama.cpp"), { recursive: true }),
+  ];
+
+  const familyYaml = join(familyDir, "family.yaml");
+  const familyCreated = !existsSync(familyYaml);
+  if (familyCreated) {
+    jobs.push(
+      writeIfAbsent(familyYaml, draftFamilyYaml({ family })),
+      writeIfAbsent(join(familyDir, "bcb.jsonl"), EMPTY_JSON),
+      writeIfAbsent(join(familyDir, "tcb.jsonl"), EMPTY_JSON),
+      writeIfAbsent(join(familyDir, "structural.json"), EMPTY_JSON),
+      writeIfAbsent(join(familyDir, "server_setup.json"), EMPTY_JSON),
+      writeIfAbsent(join(familyDir, "instructions.md"), ""),
+      writeIfAbsent(join(familyDir, "notes.md"), ""),
+    );
+  }
+  await Promise.all(jobs);
+  return familyCreated;
+}
+
+/**
+ * How to treat an existing model folder.
+ * - fresh: missing or empty — download
+ * - resume: only the matching `.partial` — Range-append
+ * - finish: weights are there, adapter YAML is not — skip download, write the house
+ * - conflict: anything else (already pulled, or junk)
+ */
+function planModelDir(
+  modelDir: string,
+  fileName: string,
+  id: string,
+): "fresh" | "resume" | "finish" | "conflict" {
+  if (!existsSync(modelDir)) return "fresh";
+  const entries = readdirSync(modelDir);
+  if (entries.length === 0) return "fresh";
+  if (entries.length === 1 && entries[0] === `${fileName}.partial`) return "resume";
+  if (entries.includes(fileName) && !entries.includes(`${id}.yaml`)) return "finish";
+  return "conflict";
+}
+
 /** Bad input (missing/invalid id, sha256, or url) → HTTP 400. */
 export class PullValidationError extends Error {}
 /** The model folder already exists → HTTP 409. */
@@ -110,15 +177,32 @@ function resolveStoreRoot(storeRoot?: string): string {
 }
 
 /**
+ * Feed an existing file into a running hasher (resume prefix). Constant
+ * memory — same rule as `sha256OfFile`.
+ */
+async function feedHashFromFile(hash: Hash, path: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const rs = createReadStream(path);
+    rs.on("error", reject);
+    rs.on("data", (chunk: string | Buffer) => {
+      hash.update(chunk);
+    });
+    rs.on("end", () => resolve());
+  });
+}
+
+/**
  * Download `url` to `dest`, resuming from an existing `<dest>.partial` when
- * present. Returns true when a resume happened.
+ * present. Hashes the same bytes that are written (and the resume prefix
+ * from disk). Returns whether a resume happened and the digest of the
+ * completed partial.
  */
 async function downloadWithResume(
   url: string,
   dest: string,
   doFetch: typeof fetch,
   onProgress?: (downloaded: number, total: number | null) => void,
-): Promise<boolean> {
+): Promise<{ resumed: boolean; digest: string }> {
   const partial = `${dest}.partial`;
   let start = 0;
   if (existsSync(partial)) {
@@ -131,8 +215,8 @@ async function downloadWithResume(
   const res = await doFetch(url, { headers });
 
   if (start > 0 && res.status === 416) {
-    // The partial already covers the whole file.
-    return true;
+    // The partial already covers the whole file — hash what is on disk.
+    return { resumed: true, digest: await sha256OfFile(partial) };
   }
   if (res.status === 206) {
     // Resume: append to the existing partial.
@@ -145,6 +229,10 @@ async function downloadWithResume(
   if (!res.body) throw new Error(`download failed: empty response body for ${url}`);
 
   const mode = start > 0 ? "a" : "w";
+  const hash = createHash("sha256");
+  if (start > 0) {
+    await feedHashFromFile(hash, partial);
+  }
 
   // Total size from the server when advertised (null for chunked/unknown).
   // On a 206 resume the content-length is only the REMAINING bytes, so add
@@ -161,11 +249,12 @@ async function downloadWithResume(
       const { done, value } = await reader.read();
       if (done) break;
 
+      hash.update(value);
       downloadedBytes += value.length;
       onProgress?.(downloadedBytes, totalSize);
 
       // Respect backpressure: when the write buffer is full, wait for drain
-      // before pulling the next chunk (multi-GB downloads must not buffer
+      // before pulling the next chunk (multi-GB GGUFs must not buffer
       // the whole file in memory). The drain/error listeners remove each
       // other so a long download does not accumulate stale listeners
       // (MaxListenersExceededWarning).
@@ -198,7 +287,7 @@ async function downloadWithResume(
       fileStream.once("finish", onFinish);
       fileStream.end();
     });
-    return start > 0;
+    return { resumed: start > 0, digest: hash.digest("hex") };
   } catch (error) {
     fileStream.destroy();
     throw error;
@@ -207,7 +296,8 @@ async function downloadWithResume(
 
 /**
  * Stream a file's sha256 in constant memory. Multi-GB GGUFs must never be
- * read whole into a Buffer just to hash them.
+ * read whole into a Buffer just to hash them. Pull hashes as it downloads;
+ * this helper is the 416 (already-complete partial) path and tests.
  */
 export async function sha256OfFile(path: string): Promise<string> {
   const hash = createHash("sha256");
@@ -267,37 +357,46 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
   const fileName = basename(new URL(url).pathname) || "model.gguf";
   const dest = join(modelDir, fileName);
 
-  if (existsSync(modelDir)) {
-    // A folder holding ONLY our own .partial is a resume-in-progress, not a
-    // conflict — everything else means the model was already pulled.
-    const entries = readdirSync(modelDir);
-    const onlyPartial = entries.length === 1 && entries[0] === `${fileName}.partial`;
-    if (!onlyPartial) {
-      throw new PullConflictError(
-        `model folder already exists: ${modelDir} — remove it first to re-pull. If you want to resume a download, remove the partial file (${fileName}.partial) and try again.`,
-      );
-    }
+  const dirPlan = planModelDir(modelDir, fileName, id);
+  if (dirPlan === "conflict") {
+    throw new PullConflictError(
+      `model folder already exists: ${modelDir} — remove it first to re-pull`,
+    );
   }
 
   mkdirSync(modelDir, { recursive: true });
   const partial = `${dest}.partial`;
-  const cleanup = (): void => {
+  const cleanupPartial = (): void => {
     rmSync(partial, { force: true });
   };
 
-  try {
-    const resumed = await downloadWithResume(url, dest, doFetch, opts.onProgress);
-
-    const actual = await sha256OfFile(partial);
+  let resumed = false;
+  if (dirPlan === "finish") {
+    const actual = await sha256OfFile(dest);
     if (actual !== sha256.toLowerCase()) {
-      cleanup();
       throw new PullVerifyError(
-        `sha256 mismatch: expected ${sha256.toLowerCase()}, got ${actual} — partial deleted`,
+        `sha256 mismatch: expected ${sha256.toLowerCase()}, got ${actual} — existing weights left in place; remove ${modelDir} to re-pull`,
+      );
+    }
+  } else {
+    const downloaded = await downloadWithResume(url, dest, doFetch, opts.onProgress);
+    resumed = downloaded.resumed;
+    if (downloaded.digest !== sha256.toLowerCase()) {
+      cleanupPartial();
+      throw new PullVerifyError(
+        `sha256 mismatch: expected ${sha256.toLowerCase()}, got ${downloaded.digest} — partial deleted`,
       );
     }
     renameSync(partial, dest);
+  }
 
-    // Header parse + profile derivation (local, no network).
+  const adapterPath = join(modelDir, `${id}.yaml`);
+  try {
+    // Empty files do not need the header. Kick them to the fs threadpool
+    // so they overlap the (sync) header parse on this thread. YAML is last
+    // so a missing adapter is the signal that the house is unfinished.
+    const scaffold = writeEmptyScaffolds(modelDir, familyDir, family, dest);
+
     const meta = parseGgufMetadata(dest);
     const profile = deriveGgufProfile(meta, fileName, sha256.toLowerCase());
     const ggufName =
@@ -315,39 +414,14 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
           ? `${urlRef.owner}/${urlRef.repo}`
           : undefined;
 
-    // Model tier: draft adapter + empty bindings.
-    const adapterPath = join(modelDir, `${id}.yaml`);
-    writeFileSync(
-      adapterPath,
-      draftAdapterYaml({ id, family, fileName, sha256, profile, ggufName, baseModel }),
-    );
-    writeFileSync(join(modelDir, "bcb.jsonl"), EMPTY_JSON);
-    writeFileSync(join(modelDir, "tcb.jsonl"), EMPTY_JSON);
-    writeFileSync(join(modelDir, "server_setup.json"), EMPTY_JSON);
-    writeFileSync(join(modelDir, "instructions.md"), draftInstructionsMd("model"));
-    writeFileSync(join(modelDir, "notes.md"), draftNotesMd("model"));
-
-    // KV slot-save dirs for both fork variants (G3): llama-server requires
-    // --slot-save-path to be an existing directory, so a fresh pull is
-    // boot-ready without any extra step. The fork is a boot-time choice, so
-    // both variants are scaffolded up front (cheap empty dirs).
-    for (const fork of ["upstream", "llama.cpp"] as const) {
-      mkdirSync(slotSavePath(dest, fork), { recursive: true });
+    const familyCreated = await scaffold;
+    if (!existsSync(adapterPath)) {
+      writeFileSync(
+        adapterPath,
+        draftAdapterYaml({ id, family, fileName, sha256, profile, ggufName, baseModel }),
+      );
     }
-
-    // Family tier: only when the family has no family.yaml yet.
-    let familyCreated = false;
-    const familyYaml = join(familyDir, "family.yaml");
-    if (!existsSync(familyYaml)) {
-      writeFileSync(familyYaml, draftFamilyYaml({ family }));
-      writeFileSync(join(familyDir, "bcb.jsonl"), EMPTY_JSON);
-      writeFileSync(join(familyDir, "tcb.jsonl"), EMPTY_JSON);
-      writeFileSync(join(familyDir, "structural.json"), EMPTY_JSON);
-      writeFileSync(join(familyDir, "server_setup.json"), EMPTY_JSON);
-      writeFileSync(join(familyDir, "instructions.md"), draftInstructionsMd("family"));
-      writeFileSync(join(familyDir, "notes.md"), draftNotesMd("family"));
-      familyCreated = true;
-    }
+    cleanupPartial();
 
     return {
       id,
@@ -359,7 +433,9 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
       familyCreated,
     };
   } catch (err) {
-    cleanup();
-    throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `weights verified at ${dest}; scaffold failed: ${detail} — re-run the same pull to finish the house`,
+    );
   }
 }

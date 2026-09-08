@@ -117,8 +117,8 @@ describe("pullModel", () => {
       expect(existsSync(join(modelDir, "server_setup.json"))).toBe(true);
       expect(existsSync(join(modelDir, "instructions.md"))).toBe(true);
       expect(existsSync(join(modelDir, "notes.md"))).toBe(true);
-      expect(readFileSync(join(modelDir, "instructions.md"), "utf8")).toMatch(/TODO/);
-      expect(readFileSync(join(modelDir, "notes.md"), "utf8")).toMatch(/not sent to the model/);
+      expect(readFileSync(join(modelDir, "instructions.md"), "utf8")).toBe("");
+      expect(readFileSync(join(modelDir, "notes.md"), "utf8")).toBe("");
       expect(yaml.bindings.instructions).toBe("./instructions.md");
       expect(yaml.bindings.notes).toBe("./notes.md");
 
@@ -136,6 +136,8 @@ describe("pullModel", () => {
       expect(existsSync(join(familyDir, "structural.json"))).toBe(true);
       expect(existsSync(join(familyDir, "instructions.md"))).toBe(true);
       expect(existsSync(join(familyDir, "notes.md"))).toBe(true);
+      expect(readFileSync(join(familyDir, "instructions.md"), "utf8")).toBe("");
+      expect(readFileSync(join(familyDir, "notes.md"), "utf8")).toBe("");
       expect(fam.bindings.instructions).toBe("./instructions.md");
       expect(fam.bindings.notes).toBe("./notes.md");
     } finally {
@@ -155,6 +157,7 @@ describe("pullModel", () => {
       expect(result.resumed).toBe(true);
       expect(readFileSync(join(modelDir, "weights.gguf"))).toEqual(GGUF);
       expect(existsSync(partial)).toBe(false);
+      expect(await sha256OfFile(join(modelDir, "weights.gguf"))).toBe(SHA256);
     } finally {
       rmSync(store, { recursive: true, force: true });
     }
@@ -260,11 +263,74 @@ describe("pullModel", () => {
     }
   });
 
-  it("refuses to pull into an existing model folder", async () => {
+  it("refuses to pull into an already-scaffolded model folder", async () => {
     const store = freshStore();
     try {
-      mkdirSync(join(store, "test-model", "test-model"), { recursive: true });
-      await expect(pullModel(opts(store))).rejects.toThrow(/exists/i);
+      const modelDir = join(store, "test-model", "test-model");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "weights.gguf"), GGUF);
+      writeFileSync(join(modelDir, "test-model.yaml"), "kind: ModelBehavioralAdapter\n");
+      await expect(pullModel(opts(store))).rejects.toThrow(
+        /model folder already exists: .* — remove it first to re-pull$/,
+      );
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("treats an empty model folder as a fresh pull, not a conflict", async () => {
+    const store = freshStore();
+    try {
+      const modelDir = join(store, "test-model", "test-model");
+      mkdirSync(modelDir, { recursive: true });
+      const result = await pullModel(opts(store));
+      expect(result.adapterPath).toBe(join(modelDir, "test-model.yaml"));
+      expect(existsSync(join(modelDir, "weights.gguf"))).toBe(true);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("finishes the house when weights exist but the adapter yaml does not", async () => {
+    const store = freshStore();
+    try {
+      const modelDir = join(store, "test-model", "test-model");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "weights.gguf"), GGUF);
+      writeFileSync(join(modelDir, "notes.md"), "keep me\n");
+
+      let fetched = false;
+      const result = await pullModel(
+        opts(store, {
+          fetch: async () => {
+            fetched = true;
+            throw new Error("finish path must not download");
+          },
+        }),
+      );
+
+      expect(fetched).toBe(false);
+      expect(result.resumed).toBe(false);
+      expect(existsSync(join(modelDir, "test-model.yaml"))).toBe(true);
+      expect(existsSync(join(modelDir, "bcb.jsonl"))).toBe(true);
+      expect(readFileSync(join(modelDir, "notes.md"), "utf8")).toBe("keep me\n");
+      expect(readFileSync(join(modelDir, "instructions.md"), "utf8")).toBe("");
+      expect(existsSync(join(store, "test-model", "family.yaml"))).toBe(true);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves existing weights in place when a finish-house digest does not match", async () => {
+    const store = freshStore();
+    try {
+      const modelDir = join(store, "test-model", "test-model");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "weights.gguf"), GGUF);
+      const bad = "0".repeat(64);
+      await expect(pullModel(opts(store, { sha256: bad }))).rejects.toThrow(/existing weights left in place/);
+      expect(existsSync(join(modelDir, "weights.gguf"))).toBe(true);
+      expect(existsSync(join(modelDir, "test-model.yaml"))).toBe(false);
     } finally {
       rmSync(store, { recursive: true, force: true });
     }
