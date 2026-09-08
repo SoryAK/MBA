@@ -63,6 +63,7 @@ export function usageServers(): string {
     dim("  mba servers slots <id> restore f load f from that folder"),
     dim("  mba servers boot          pick model + port on a TTY"),
     dim("  --yes                     skip the boot flag confirm"),
+    dim("  llama-server              picked at boot from known builds (cuda/hip/vulkan)"),
     dim("  --type ollama             boot an ollama tag"),
     dim("  --json                    on list"),
     dim("  MBA_SWITCH_PORT           default boot port (8080)"),

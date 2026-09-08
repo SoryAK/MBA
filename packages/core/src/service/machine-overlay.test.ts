@@ -192,6 +192,27 @@ describe("applyMachineOverlay", () => {
     expect(result.annotations).not.toContain("gpuLayers clamped to 0 (no GPU detected)");
   });
 
+  it("clamps gpuLayers down when weights overflow VRAM but RAM can hold the rest", () => {
+    const model = createMinimalGgufFile(dir, {
+      blockCount: 32,
+      hiddenSize: 512,
+      headCount: 8,
+      headCountKv: 2,
+      fileSizeBytes: 80 * 1024 * 1024,
+    });
+    const m = machine({
+      cpuCores: 8,
+      totalRamBytes: 16 * 1024 * 1024 * 1024,
+      gpus: [{ name: "Small GPU", vramBytes: 20 * 1024 * 1024 }],
+    });
+    const result = applyMachineOverlay(baseFlags({ ctxSize: 2048, gpuLayers: 32 }), model, m);
+    expect(result.flags.gpuLayers).toBeDefined();
+    expect(result.flags.gpuLayers!).toBeLessThan(32);
+    expect(result.annotations.some((a) => a.startsWith("gpuLayers clamped from 32"))).toBe(true);
+    expect(result.clampedFits).toBe(true);
+    expect(result.originalFits).toBe(false);
+  });
+
   it("clamps ctxSize to fit RAM", () => {
     // Small model whose base fits in 300 MB but a 64k context would overflow.
     const model = createMinimalGgufFile(dir, {
