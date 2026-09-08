@@ -110,4 +110,4 @@ Implementation of steps 1–4 waits until AMPI and CM (ADR-0105) are nailed down
 
 - **ADR-0086 / TCB:** TCB stays the tool-loop detector. This family sits beside it under BCB, not inside a `read_file` rule.
 - **ADR-0101 (AMPI):** Uncertainty trips use the same ladder → `action: ampi` path. No new runner.
-- **ADR-0105 (CM):** When a recipe says “drop dead-end reads” or “compact spent reasoning,” CM / CGC does the edit. This ADR does not own context mutation.
+- **ADR-0105 (CM):** When a recipe says “drop dead-end reads” or “compact reasoning,” CM / CGC does the edit. This ADR does not own context mutation.

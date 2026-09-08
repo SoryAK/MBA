@@ -77,6 +77,18 @@ describe("CM engine", () => {
     expect(String(swept.messages[swept.messages.length - 1]!.content)).toContain("[[mba:");
   });
 
+  it("dispatches compact reasoning", () => {
+    const messages: ChatMessage[] = [
+      { role: "assistant", content: "<think>noise</think>\nkeep" },
+    ];
+    const out = applyCm(messages, { cut: "compact", target: "reasoning" });
+    expect(out.cut).toBe("compact");
+    expect(out.progress).toBe(1);
+    expect(String(out.messages[0]!.content)).toContain("[[mba:");
+    expect(String(out.messages[0]!.content)).toContain("keep");
+    expect(String(out.messages[0]!.content)).not.toContain("<think>");
+  });
+
   it("no-ops an unknown cut", () => {
     const messages: ChatMessage[] = [{ role: "user", content: "hi" }];
     const out = applyCm(messages, { cut: "not-a-cut" } as unknown as CmIntent);

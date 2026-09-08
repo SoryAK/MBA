@@ -20,6 +20,7 @@ import { DatabaseSync } from "node:sqlite";
 import { intervene, type InterventionResult } from "./intervention.js";
 import { openBcbDb } from "../bcb/kill-state.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
+import { COMPACT_REASONING_RESIDUE } from "../cm/compact.js";
 
 let dir: string;
 let db: DatabaseSync;
@@ -279,5 +280,115 @@ describe("intervene (ADR-0101 Step 2)", () => {
     // rewrites the tool result (nudge is the default tier), so it forwards.
     const res = intervene(body, "unknown-ua", config, db);
     expect(res.action).toBe("forward");
+  });
+
+  it("runs sanitize/reasoning on the live AMPI path and keeps the answer", () => {
+    const ampiConfig: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          directDuplication: {
+            enabled: true,
+            threshold: 2,
+            escalation: {
+              tiers: [
+                {
+                  tier: "nudge",
+                  afterIgnoredTrips: 0,
+                  action: "ampi",
+                  recipe: "sanitize/reasoning",
+                },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const args = JSON.stringify({ path: "notes.md" });
+    const pair = (id: string) => [
+      {
+        role: "assistant",
+        tool_calls: [
+          { id, type: "function", function: { name: "read_file", arguments: args } },
+        ],
+      },
+      { role: "tool", tool_call_id: id, content: `body-${id}` },
+    ];
+    const body = JSON.stringify({
+      model: "m",
+      messages: [
+        { role: "system", content: "you are cline-ampi-reasoning" },
+        { role: "user", content: "read notes" },
+        ...pair("c1"),
+        ...pair("c2"),
+        ...pair("c3"),
+        { role: "assistant", content: "<think>maybe bar</think>\nuse notes.md" },
+      ],
+    });
+    const res = intervene(body, "copilot", ampiConfig, db);
+    expect(res.action).toBe("forward");
+    if (res.action === "forward") {
+      const parsed = JSON.parse(res.body) as {
+        messages: Array<{ role?: string; content?: unknown }>;
+      };
+      const last = parsed.messages[parsed.messages.length - 1]!;
+      expect(String(last.content)).toBe(`${COMPACT_REASONING_RESIDUE}\nuse notes.md`);
+    }
+  });
+
+  it("skips compact on sanitize/reasoning when the dial is off", () => {
+    const ampiConfig: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          directDuplication: {
+            enabled: true,
+            threshold: 2,
+            escalation: {
+              tiers: [
+                {
+                  tier: "nudge",
+                  afterIgnoredTrips: 0,
+                  action: "ampi",
+                  recipe: "sanitize/reasoning",
+                },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const args = JSON.stringify({ path: "notes.md" });
+    const pair = (id: string) => [
+      {
+        role: "assistant",
+        tool_calls: [
+          { id, type: "function", function: { name: "read_file", arguments: args } },
+        ],
+      },
+      { role: "tool", tool_call_id: id, content: `body-${id}` },
+    ];
+    const think = "<think>maybe bar</think>\nuse notes.md";
+    const body = JSON.stringify({
+      model: "m",
+      messages: [
+        { role: "system", content: "you are cline-ampi-reasoning-off" },
+        { role: "user", content: "read notes" },
+        ...pair("c1"),
+        ...pair("c2"),
+        ...pair("c3"),
+        { role: "assistant", content: think },
+      ],
+    });
+    const res = intervene(body, "copilot", ampiConfig, db, {
+      reasoning: { reasoningBudget: 0 },
+    });
+    expect(res.action).toBe("forward");
+    if (res.action === "forward") {
+      const parsed = JSON.parse(res.body) as {
+        messages: Array<{ content?: unknown }>;
+      };
+      expect(String(parsed.messages[parsed.messages.length - 1]!.content)).toBe(think);
+    }
   });
 });
