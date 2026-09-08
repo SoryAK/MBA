@@ -643,11 +643,15 @@ export function searchHfInteractive(
 export function pickLabeledInteractive(
   title: string,
   items: Array<{ label: string; value: string }>,
+  opts?: { selectedValue?: string },
 ): Promise<string | null> {
   return new Promise<string | null>((resolve, reject) => {
     const stdin = process.stdin;
     const frame = createMenuFrame();
-    let cursor = 0;
+    const selectedAt = opts?.selectedValue
+      ? items.findIndex((it) => it.value === opts.selectedValue)
+      : 0;
+    let cursor = selectedAt >= 0 ? selectedAt : 0;
 
     const render = () => {
       const lines = [`${brand(title)}  ${dim("↑↓ pick · enter · esc")}`];
