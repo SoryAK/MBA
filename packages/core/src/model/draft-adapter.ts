@@ -9,6 +9,7 @@
  * Deliberately TODO in the draft:
  * - `profile.imatrix` — build-machine paths, not part of the download
  * - `client.vision` / `client.toolCalling` — defaults are guesses, not facts
+ * - `instructions.md` / `notes.md` — stubs; fill when you know these weights
  *
  * `metadata.name` / `identity.model.name` are derived from the GGUF header's
  * `general.name` when available (passed via `ggufName`); otherwise they fall
@@ -82,6 +83,8 @@ export function draftAdapterYaml(input: DraftAdapterInput): string {
       bcb: "./bcb.jsonl",
       tcb: "./tcb.jsonl",
       server_setup: "./server_setup.json",
+      instructions: "./instructions.md",
+      notes: "./notes.md",
     },
   };
 
@@ -148,8 +151,67 @@ export function draftFamilyYaml(input: { family: string }): string {
       tcb: "./tcb.jsonl",
       structural: "./structural.json",
       server_setup: "./server_setup.json",
+      instructions: "./instructions.md",
+      notes: "./notes.md",
     },
   };
 
   return YAML.stringify(doc, { lineWidth: 0 });
+}
+
+/**
+ * TODO stub for `instructions.md`. The model reads this later; pull only
+ * stores the file. Family is the default; a model file replaces it.
+ */
+export function draftInstructionsMd(scope: "family" | "model"): string {
+  if (scope === "family") {
+    return (
+      "# Instructions for this family\n" +
+      "\n" +
+      "TODO: workflow playbook for models in this family (like a project\n" +
+      "CLAUDE.md), written so the model can follow it. The model reads this.\n" +
+      "\n" +
+      "A model's instructions.md replaces this file. Do not put operator\n" +
+      "quirks here — those go in notes.md.\n"
+    );
+  }
+  return (
+    "# Instructions for this model\n" +
+    "\n" +
+    "TODO: workflow playbook for THESE weights (like a project CLAUDE.md),\n" +
+    "written so this model can follow it. The model reads this.\n" +
+    "\n" +
+    "A family instructions.md is the default. This file replaces it.\n" +
+    "To inherit the family card, delete this file and the `instructions`\n" +
+    "binding in the YAML.\n" +
+    "\n" +
+    "Do not put operator quirks here — those go in notes.md.\n"
+  );
+}
+
+/**
+ * TODO stub for `notes.md`. You read this; it is never sent to the model.
+ * Family is the default; a model file replaces it.
+ */
+export function draftNotesMd(scope: "family" | "model"): string {
+  if (scope === "family") {
+    return (
+      "# Notes (operator)\n" +
+      "\n" +
+      "TODO: how this family actually behaves, what to watch. You read this.\n" +
+      "It is not sent to the model.\n" +
+      "\n" +
+      "A model's notes.md replaces this file.\n"
+    );
+  }
+  return (
+    "# Notes (operator)\n" +
+    "\n" +
+    "TODO: how this model actually behaves, what to watch. You read this.\n" +
+    "It is not sent to the model.\n" +
+    "\n" +
+    "A family notes.md is the default. This file replaces it.\n" +
+    "To inherit the family notes, delete this file and the `notes` binding\n" +
+    "in the YAML.\n"
+  );
 }

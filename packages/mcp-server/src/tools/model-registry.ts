@@ -20,6 +20,8 @@ export interface ModelRegistryEntry {
     readonly tcb?: unknown;
     readonly structural?: unknown;
     readonly server_setup?: unknown;
+    readonly instructions?: unknown;
+    readonly notes?: unknown;
   };
 }
 
@@ -46,6 +48,8 @@ export function createModelRegistryHandler(
           tcb: a.bindings.tcb,
           structural: a.bindings.structural,
           server_setup: a.bindings.server_setup,
+          instructions: a.bindings.instructions,
+          notes: a.bindings.notes,
         },
       };
     });

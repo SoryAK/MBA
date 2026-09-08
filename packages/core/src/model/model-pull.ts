@@ -12,9 +12,11 @@
  *
  *   <store>/<family>/family.yaml            (only if absent)
  *   <store>/<family>/bcb.jsonl|tcb.jsonl|structural.json|server_setup.json
+ *   <store>/<family>/instructions.md|notes.md
  *   <store>/<family>/<id>/<id>.yaml         (draft adapter, TODO-marked)
  *   <store>/<family>/<id>/<file>.gguf
  *   <store>/<family>/<id>/bcb.jsonl|tcb.jsonl|server_setup.json
+ *   <store>/<family>/<id>/instructions.md|notes.md
  *   <store>/<family>/<id>/kv/<fork>/slots   (G3 slot-save dirs, both forks)
  *
  * The download is the only network step; everything after the sha256 check
@@ -38,7 +40,12 @@ import { basename, join } from "node:path";
 import { pipeline } from "node:stream";
 import { slotSavePath } from "../mba/server-lifecycle.js";
 import { defaultModelStoreRoot } from "../service/paths.js";
-import { draftAdapterYaml, draftFamilyYaml } from "./draft-adapter.js";
+import {
+  draftAdapterYaml,
+  draftFamilyYaml,
+  draftInstructionsMd,
+  draftNotesMd,
+} from "./draft-adapter.js";
 import { parseGgufMetadata } from "./gguf-metadata.js";
 import { deriveGgufProfile } from "./gguf-profile.js";
 import { parseHfRef, parseHfUrl, resolveHfSource } from "./hf-resolve.js";
@@ -317,6 +324,8 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
     writeFileSync(join(modelDir, "bcb.jsonl"), EMPTY_JSON);
     writeFileSync(join(modelDir, "tcb.jsonl"), EMPTY_JSON);
     writeFileSync(join(modelDir, "server_setup.json"), EMPTY_JSON);
+    writeFileSync(join(modelDir, "instructions.md"), draftInstructionsMd("model"));
+    writeFileSync(join(modelDir, "notes.md"), draftNotesMd("model"));
 
     // KV slot-save dirs for both fork variants (G3): llama-server requires
     // --slot-save-path to be an existing directory, so a fresh pull is
@@ -335,6 +344,8 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
       writeFileSync(join(familyDir, "tcb.jsonl"), EMPTY_JSON);
       writeFileSync(join(familyDir, "structural.json"), EMPTY_JSON);
       writeFileSync(join(familyDir, "server_setup.json"), EMPTY_JSON);
+      writeFileSync(join(familyDir, "instructions.md"), draftInstructionsMd("family"));
+      writeFileSync(join(familyDir, "notes.md"), draftNotesMd("family"));
       familyCreated = true;
     }
 

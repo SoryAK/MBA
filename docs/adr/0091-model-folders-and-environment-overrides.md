@@ -85,6 +85,8 @@ it is structurally impossible for an environment to touch the model's
 ├── tcb.jsonl
 ├── structural.json
 ├── server_setup.json
+├── instructions.md                    # family playbook (model reads; default)
+├── notes.md                           # family operator notes (never injected)
 ├── environments/                      # family-wide environment policies
 │   └── copilot+vscode+llamacpp/
 │       └── server_setup.json          # only files that override
@@ -94,6 +96,8 @@ it is structurally impossible for an environment to touch the model's
     ├── tcb.jsonl
     ├── structural.json
     ├── server_setup.json
+    ├── instructions.md                # replaces family (not concatenated)
+    ├── notes.md                       # replaces family; operator-only
     └── environments/                  # model-specific environment overrides
         └── copilot+vscode+llamacpp/
             └── server_setup.json
@@ -154,6 +158,8 @@ bindings:
   tcb: "./tcb.jsonl"
   structural: "./structural.json"
   server_setup: "./server_setup.json"
+  instructions: "./instructions.md"
+  notes: "./notes.md"
 ```
 
 ### Invariants
@@ -180,6 +186,12 @@ bindings:
 4. **`file` lives with `profile`** — one fact: "these weights, at this path,
    with this spec sheet." The MCP server's existing
    `identity.model.file` contract is unchanged.
+5. **Markdown cards are not environment overlays.** `instructions.md` is the
+   playbook the model reads (CLAUDE.md-style, written for these weights).
+   `notes.md` is operator-only and is never injected. Family file is the
+   default; a model file replaces it (not concatenated). They are not
+   placed in `environments/` — those folders stay the four JSON/JSONL
+   binding types. Pull writes TODO stubs; live injection is a later cut.
 
 ### Merge ladder
 
