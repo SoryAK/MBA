@@ -1,13 +1,10 @@
 # MBA
 
-![WIP](https://img.shields.io/badge/status-work%20in%20progress-orange?style=for-the-badge)
 [![npm](https://img.shields.io/npm/v/@mba-ai/core.svg?style=for-the-badge)](https://www.npmjs.com/package/@mba-ai/core)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](https://github.com/SoryAK/MBA/pulls)
 
 **MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. It is not a model host (Ollama) and not a client (Cline). It is the per-model behavior layer and control plan on your machine.
-
-Work in progress. APIs and file formats may still move.
 
 ```text
 configure adapter → BCB (system watch) → AMPI (system live response)
@@ -148,4 +145,4 @@ After CLI changes, rebuild `@mba-ai/core` so a linked `mba` picks them up (`npm 
 
 ## License
 
-[MIT](LICENSE) © 2026 SoryAK
+[Apache-2.0](LICENSE) © 2026 SoryAK

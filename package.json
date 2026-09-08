@@ -15,7 +15,7 @@
     "start:service": "npm run start --workspace @mba-ai/core",
     "mba": "npx tsx packages/core/src/cli/mba.ts"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "devDependencies": {
     "@types/node": "^22.10.0",
     "tsx": "^4.20.0",
