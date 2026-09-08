@@ -3,7 +3,7 @@
  */
 
 import { fail, serviceGet, servicePost, servicePostSse } from "./client.js";
-import { brand, dim, doneBox, heading, option, paint, BOLD } from "./style.js";
+import { brand, dim, doneBox, heading, option, paint, shortenHome, BOLD } from "./style.js";
 import {
   askTextInteractive,
   askValueInteractive,
@@ -246,17 +246,12 @@ export async function cmdModelsPull(
     const result = await servicePostSse<PullResult>(baseUrl, "/models/pull", body);
     process.stdout.write(
       doneBox("PULLED", [
-        ["id", result.id],
-        ["family", result.family],
-        ["weights", result.modelDir],
-        ["adapter", result.adapterPath],
+        ["id", result.resumed ? `${result.id} · resumed` : result.id],
+        ["family", result.familyCreated ? `${result.family} · new` : result.family],
         ["next", `mba s boot ${result.id}`],
       ]) + "\n",
     );
-    if (result.familyCreated) {
-      process.stdout.write("[mba] family tier scaffolded (family.yaml + empty bindings)\n");
-    }
-    process.stdout.write("[mba] fill the TODO adapter fields, plus instructions.md (for the model) and notes.md (for you)\n");
+    process.stdout.write(`${dim(`  ${shortenHome(result.modelDir)}`)}\n`);
   } catch (error) {
     process.stderr.write(`[mba] error: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
