@@ -115,6 +115,12 @@ describe("pullModel", () => {
       expect(existsSync(join(modelDir, "bcb.jsonl"))).toBe(true);
       expect(existsSync(join(modelDir, "tcb.jsonl"))).toBe(true);
       expect(existsSync(join(modelDir, "server_setup.json"))).toBe(true);
+      expect(existsSync(join(modelDir, "instructions.md"))).toBe(true);
+      expect(existsSync(join(modelDir, "notes.md"))).toBe(true);
+      expect(readFileSync(join(modelDir, "instructions.md"), "utf8")).toMatch(/TODO/);
+      expect(readFileSync(join(modelDir, "notes.md"), "utf8")).toMatch(/not sent to the model/);
+      expect(yaml.bindings.instructions).toBe("./instructions.md");
+      expect(yaml.bindings.notes).toBe("./notes.md");
 
       // KV slot-save dirs for both fork variants (G3): llama-server requires
       // --slot-save-path to be an existing directory, so a fresh pull must be
@@ -128,6 +134,10 @@ describe("pullModel", () => {
       expect(fam.metadata.id).toBe("test-model-family");
       expect(fam.identity.model.lineage).toEqual(["test-model"]);
       expect(existsSync(join(familyDir, "structural.json"))).toBe(true);
+      expect(existsSync(join(familyDir, "instructions.md"))).toBe(true);
+      expect(existsSync(join(familyDir, "notes.md"))).toBe(true);
+      expect(fam.bindings.instructions).toBe("./instructions.md");
+      expect(fam.bindings.notes).toBe("./notes.md");
     } finally {
       rmSync(store, { recursive: true, force: true });
     }
@@ -272,6 +282,8 @@ describe("pullModel", () => {
       expect(result.family).toBe("qwen");
       expect(readFileSync(join(familyDir, "family.yaml"), "utf8")).toBe(existing);
       expect(existsSync(join(familyDir, "qwen3.8-27b", "qwen3.8-27b.yaml"))).toBe(true);
+      expect(existsSync(join(familyDir, "instructions.md"))).toBe(false);
+      expect(existsSync(join(familyDir, "notes.md"))).toBe(false);
     } finally {
       rmSync(store, { recursive: true, force: true });
     }

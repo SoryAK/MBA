@@ -101,10 +101,15 @@ and **`POST /models/pull`** (service route, same parameters) perform:
      quant) filled from the header;
    - non-derivable fields (`imatrix`, `client` flags, display `name`)
      emitted with explicit `# TODO` markers;
-   - `bindings` pointing at the scaffolded model-tier files.
+   - `bindings` pointing at the scaffolded model-tier files, including
+     `instructions.md` (the model reads this) and `notes.md` (operator-only,
+     never injected).
 6. **Scaffold** — model-tier `bcb.jsonl`/`tcb.jsonl`/`server_setup.json` as
-   `{}` placeholders; if `<family>/family.yaml` is absent, scaffold the
-   family tier too (`family.yaml` + empty binding files).
+   `{}` placeholders plus TODO `instructions.md` / `notes.md`; if
+   `<family>/family.yaml` is absent, scaffold the family tier too
+   (`family.yaml` + empty binding files + the same two markdown stubs).
+   Family markdown is the default; the model's files replace it. Live
+   injection of instructions is a later cut — this cut only stores the files.
 
 New modules in `@mba-ai/core` (`src/model/`):
 
@@ -138,8 +143,9 @@ model is used for real work.
   the copies are byte-identical today; a comment in each file points at the
   other.
 - **Drafts still need human review.** TODO fields (imatrix, client flags,
-  display name) mean a pulled model is bootable but not fully tuned until
-  reviewed. This is a feature (honesty) but a step the user must not skip.
+  display name, instructions.md, notes.md) mean a pulled model is bootable
+  but not fully tuned until reviewed. This is a feature (honesty) but a
+  step the user must not skip.
 - **Resume assumes a Range-capable server.** If the source ignores `Range`,
   the resume path degrades to a full re-download (detected via the
   response status: 200 instead of 206 → restart from zero).

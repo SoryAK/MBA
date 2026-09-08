@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import type { MbaModelProfile } from "../mba/types.js";
-import { draftAdapterYaml, draftFamilyYaml } from "./draft-adapter.js";
+import {
+  draftAdapterYaml,
+  draftFamilyYaml,
+  draftInstructionsMd,
+  draftNotesMd,
+} from "./draft-adapter.js";
 
 const profile: MbaModelProfile = {
   architecture: "qwen35",
@@ -123,6 +128,8 @@ describe("draftAdapterYaml", () => {
       bcb: "./bcb.jsonl",
       tcb: "./tcb.jsonl",
       server_setup: "./server_setup.json",
+      instructions: "./instructions.md",
+      notes: "./notes.md",
     });
   });
 
@@ -146,11 +153,34 @@ describe("draftFamilyYaml", () => {
       tcb: "./tcb.jsonl",
       structural: "./structural.json",
       server_setup: "./server_setup.json",
+      instructions: "./instructions.md",
+      notes: "./notes.md",
     });
   });
 
   it("title-cases hyphenated family slugs", () => {
     const doc = YAML.parse(draftFamilyYaml({ family: "llama-3" })) as Record<string, any>;
     expect(doc.metadata.name).toBe("Llama 3");
+  });
+});
+
+describe("draft markdown stubs", () => {
+  it("marks both shelves as TODO and keeps notes operator-only", () => {
+    const modelInst = draftInstructionsMd("model");
+    const familyInst = draftInstructionsMd("family");
+    const modelNotes = draftNotesMd("model");
+    const familyNotes = draftNotesMd("family");
+
+    expect(modelInst).toMatch(/TODO/);
+    expect(familyInst).toMatch(/TODO/);
+    expect(modelNotes).toMatch(/TODO/);
+    expect(familyNotes).toMatch(/TODO/);
+
+    expect(modelInst).toMatch(/model reads this/i);
+    expect(modelNotes).toMatch(/not sent to the model/i);
+    expect(familyNotes).toMatch(/not sent to the model/i);
+
+    expect(modelInst).toMatch(/replaces it/);
+    expect(familyInst).toMatch(/replaces this file/);
   });
 });

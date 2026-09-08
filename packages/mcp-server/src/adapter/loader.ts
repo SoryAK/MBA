@@ -47,6 +47,8 @@ export interface MbaAdapter {
     readonly tcb?: string;
     readonly structural?: string;
     readonly server_setup?: string;
+    readonly instructions?: string;
+    readonly notes?: string;
   };
 }
 
