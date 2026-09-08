@@ -2,7 +2,7 @@
  * Context Management types (ADR-0105).
  *
  * Four categories, five cuts: Write (replace, insert), Mark (set-mark),
- * Sweep (sweep), Compact (later). Callers name a closed intent.
+ * Sweep (sweep), Compact (compact / reasoning). Callers name a closed intent.
  */
 
 import type { ChatMessage } from "../chat-message.js";

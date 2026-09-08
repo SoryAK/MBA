@@ -4,7 +4,7 @@
 - **Date:** 2026-09-06
 - **Deciders:** project maintainer + agent
 - **Tags:** architecture, mba, ampi, cm, cgc, bcb, context
-- **Relates to:** ADR-0088 (AMPI power / termination), ADR-0101 (daemon-as-proxy + AMPI runner), ADR-0102 (catalog names recipes, not cuts), ADR-0104 (uncertainty BCB, deferred)
+- **Relates to:** ADR-0088 (AMPI power / termination), ADR-0101 (daemon-as-proxy + AMPI runner), ADR-0102 (catalog names recipes, not cuts), ADR-0104 (uncertainty BCB, deferred), ADR-0106 (State Management)
 
 ## Context and Problem Statement
 
@@ -22,7 +22,7 @@ That YAML is the system claiming AMPI does context-management work. Context garb
 
 - prune trailing duplicate tool-call pairs
 - drop exploration debris (wrong files / wrong reads) once a search phase ends
-- compact spent reasoning chains after the model has an answer
+- compact finished reasoning chains after the model has an answer
 - honor **marks** made during the work (“this result is scratch”) and **sweep** at a phase boundary
 
 AMPI cannot own all of that. AMPI is “do something now.” The conversation the model sees is a different plane.
@@ -102,7 +102,7 @@ Same shape on both planes. Different words so a CM cut is never an AMPI function
 | **Write** | `replace`, `insert` | Assist, Sanction |
 | **Mark** | `set-mark` (`scratch` \| `pin` \| `clear`) | Recover; Sanitize with `pin` |
 | **Sweep** | `sweep` (`duplicates` \| `scratch` \| `budget`; later `rollback`) | Sanitize, Recover |
-| **Compact** | `compact` (`reasoning`) | Sanitize spent / phase |
+| **Compact** | `compact` (`reasoning`) | Sanitize `reasoning` / `phase` |
 
 ```text
 AMPI (why)              CM (how)
@@ -116,12 +116,14 @@ A new AMPI card is a **mode** of one of the four functions, or we are adding a f
 
 #### AMPI modes
 
-- **`sanitize`** — `{ what: duplicates | scratch | spent | phase, pin?: true }`
+- **`sanitize`** — `{ what: duplicates | scratch | reasoning | phase, pin?: true }`
 - **`assist`** — `{ how: feed | clamp | redirect | lost }` (`lost` waits on ADR-0104)
 - **`sanction`** — `{ how: revoke }` — later; after Assist is real. Ladder mask/kill can stay the cheap form.
 - **`recover`** — `{ how: rollback | reset }` — needs `pin` first. v1 is context-only. Session/KV reset is the same function, later mode (model plane).
 
 Shipped `sweep-duplicates` is `sanitize` + `duplicates`. Keep the alias.
+
+Live ladder strings (ADR-0102: policy names AMPI only): `sanitize`, `sanitize/duplicates`, `sanitize/scratch`, `sanitize/reasoning`, `sanitize/phase`, `sanitize/pin`, plus optional `+pin` (e.g. `sanitize/phase+pin`). The daemon parses the string, then `runAmpi`. Compact still requires a TCB trip that names one of those recipes. The reasoning dial is read from the adapter at request time; off → no compact.
 
 #### CM cuts (five knives, four boxes)
 
@@ -129,7 +131,7 @@ Shipped `sweep-duplicates` is `sanitize` + `duplicates`. Keep the alias.
 - **`insert`** — add a message. Roles: `system`, `user`. Today’s `insert-system` is `insert` + `system`. Out of bounds: forging a tool call.
 - **`set-mark`** — tag only; does not delete.
 - **`sweep`** — drop by policy; always leave residue. Today’s `prune-duplicates` is `sweep` + `duplicates`.
-- **`compact`** — rewrite a span to a short residue (not a drop).
+- **`compact`** — rewrite a span to a short residue (not a drop). `reasoning` only when the model actually thinks *and* the server dial is on (`reasoningBudget` > 0 and `reasoningPreserve`). Unknown → try; compact no-ops if the transcript has no span.
 
 Do not merge Sweep into Compact. Do not merge Mark into Sweep. Write stays two cuts (replace vs insert).
 
@@ -159,7 +161,7 @@ CM edits can start from:
 2. **Phase end** — search finished, user asked the next question, or a recipe measure hit zero → AMPI sweep of marks → CGC.
 3. **Budget** — context is full or dirty → CM may compact without AMPI.
 
-“Query phase is done” is not a TCB trip. It is a phase boundary. Detecting that boundary is an open question; the ownership is not: AMPI decides *that* a sweep runs, CM/CGC decides *how* the cut is made.
+“Query phase is done” is not a TCB trip. It is a phase boundary. **How MBA knows** is State Management (ADR-0106): two sandboxes (query/discovery vs action) and a door. Ownership is unchanged: SM notices and gates; AMPI decides *that* a recipe runs; CM/CGC decides *how* the cut is made.
 
 ### Mark and sweep (later CGC)
 
@@ -167,7 +169,7 @@ During exploration or long reasoning, results and reasoning blocks may be **mark
 
 Hard line on residue:
 
-- Scratch can go: dead-end reads, duplicate retries, spent reasoning.
+- Scratch can go: dead-end reads, duplicate retries, finished reasoning.
 - Kept result stays.
 - A sweep always terminates and leaves a marker or compact residue so the model knows dirt was removed.
 
@@ -182,6 +184,7 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 - TCB detection and the escalation ladder stay in BCB.
 - Default-config kill behavior is unchanged (no AMPI tier unless a user writes one).
 - Uncertainty / inner-state breakers (ADR-0104) stay proposed and unimplemented until this CM/AMPI split is implemented far enough that trips have a clean landing place.
+- State Management (ADR-0106) stays proposed until `compact` / `reasoning` and `sanitize` / `phase` exist. SM is not a fifth runner.
 
 ## Consequences
 
@@ -197,12 +200,12 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 
 - Another named plane (CM) to keep distinct from AMPI in code and docs.
 - Two names for the first slice (`sweep-duplicates` alias vs `sanitize` + `sweep` / `duplicates`).
-- Phase-boundary detection is unspecified and easy to get wrong.
+- Phase-boundary detection is specified in ADR-0106 (SM) and easy to implement too early; do not build SM before compact.
 - Model-nominated marks can delete the useful file; system marks must win on conflict until we have evidence otherwise.
 
 ## Open questions (to nail as part of AMPI + CM work)
 
-1. **Phase boundary** — how MBA knows a search or reasoning phase ended (explicit recipe end, next user turn, model token, or all three).
+1. **Phase boundary** — answered by ADR-0106 (SM sandboxes + door). Build SM after compact and `sanitize` / `phase`.
 2. **Mark representation** — v1 is an in-message `mba.mark` (`scratch` | `pin`) on the tool pair, so it travels with the transcript. A side table can wait.
 3. **Who may mark** — system-only for v1 vs model nomination with system veto.
 4. **Recipe file format** — still deferred from ADR-0088 / 0101; when it lands, recipes name a CM cut, they do not embed ad hoc splices.
@@ -210,12 +213,13 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 ## Implementation order (this before ADR-0104)
 
 1. **Done.** First slice: `sanitize` / `duplicates` (alias `sweep-duplicates`) → `sweep` / `duplicates`. Engines exist (`runAmpi`, `applyCm` / `runCm`). TCB stop-text and hints go through CM Write.
-2. **In progress.** Marks are `mba.mark` on the tool pair. `set-mark` and `sweep` / `scratch` ship; `budget` waits on a window size.
-3. `compact` / `reasoning`; `sanitize` modes `spent` / `phase` / `pin`.
-4. `assist` / `clamp` then `feed`.
-5. `recover` / `rollback` (needs `pin` first).
-6. `sanction` after Assist is real.
-7. `assist` / `lost` with ADR-0104, not before.
+2. **Done.** Marks are `mba.mark` on the tool pair. `set-mark` and `sweep` / `scratch` ship. Pin is a keeper list (`listKeepers`); `budget` waits on a window size.
+3. **Done.** `compact` / `reasoning`; `sanitize` modes `reasoning` / `phase` / `pin` (`pin?: true` pins the trip before the mop).
+4. SM v1 (ADR-0106) — two sandboxes + door. Default off.
+5. `assist` / `clamp` then `feed`.
+6. `recover` / `rollback` (needs `pin` first).
+7. `sanction` after Assist is real.
+8. `assist` / `lost` with ADR-0104, not before.
 
 ## Relationship to other ADRs
 
@@ -223,3 +227,4 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 - **ADR-0101 Step 4:** The first shipped path is `sanitize` / `duplicates` (alias `sweep-duplicates` → `sweep` / `duplicates`). Neither name is `context-gc`.
 - **ADR-0102:** Policy names an AMPI function (or the `sweep-duplicates` alias), never a CM cut.
 - **ADR-0104:** Uncertainty BCB is a detector family. It must not be built until this plane exists far enough to receive a sweep.
+- **ADR-0106:** State Management is the sandbox / door. Intent folds into SM later (like CGC under CM). Do not build SM before this ADR’s compact + `sanitize` / `phase`.
