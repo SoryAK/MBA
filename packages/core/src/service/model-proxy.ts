@@ -3,7 +3,9 @@
  *
  * A thin man-in-the-middle for OpenAI-compatible model requests. The daemon
  * forwards the raw request body to the upstream model server and pipes the
- * response back verbatim — no stream/non-stream branching, no body mutation.
+ * response back verbatim — no stream/non-stream branching. TCB may mutate
+ * `messages[]`; after a real AMPI mop the proxy erases the live llama.cpp
+ * slot, then forwards the cleaned body.
  * The same byte-pipe works for a JSON completion and an SSE stream, because
  * the upstream's `content-type` and body are passed through untouched.
  *
@@ -49,10 +51,11 @@ import type { StatusCode } from "hono/utils/http-status";
 import type { DatabaseSync } from "node:sqlite";
 import { readRegistry, listUpstreams, type UpstreamEntry } from "./upstream-registry.js";
 import { readModelCatalog } from "./model-catalog.js";
-import { probeEntryHealth } from "./server-types.js";
+import { probeEntryHealth, getServerTypeOps } from "./server-types.js";
 import { intervene } from "./intervention.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 import type { ReasoningGate } from "../cm/reasoning.js";
+import { daemonLog } from "../mba/daemon-log.js";
 
 export interface ModelProxyOptions {
   /**
@@ -182,6 +185,7 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     // config is wired in, this is a no-op and the body forwards verbatim.
     // A kill short-circuits here — the upstream is never touched.
     let forwardBody = body;
+    let eraseSlot = false;
     if (opts.tcbConfig) {
       let modelForGate: string | undefined;
       try {
@@ -201,6 +205,7 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
         return result.response;
       }
       forwardBody = result.body;
+      eraseSlot = result.eraseSlot === true;
     }
 
     let model: string | undefined;
@@ -248,6 +253,7 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     // Walk candidates newest-first; forward to the first healthy one.
     for (const candidate of candidates) {
       if (await isHealthy(candidate)) {
+        if (eraseSlot) await eraseLiveSlot(candidate, fetchImpl);
         return forward(c, `http://127.0.0.1:${candidate.port}`, forwardBody);
       }
     }
@@ -262,4 +268,22 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
   });
 
   return app;
+}
+
+/**
+ * Wipe the live KV slot after a real AMPI mop, before the cleaned chat
+ * is forwarded. llama.cpp only. Failure must not block the request —
+ * prefix-cut on the new prompt is the fallback.
+ */
+async function eraseLiveSlot(entry: UpstreamEntry, fetchImpl: typeof fetch): Promise<void> {
+  if (entry.serverType !== "llama.cpp") return;
+  const ops = getServerTypeOps(entry.serverType);
+  if (!ops) return;
+  try {
+    await ops.slots(entry, { action: "erase" }, { fetchImpl });
+    daemonLog(`[proxy] erased slot 0 on ${entry.id} after AMPI mop`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    daemonLog(`[proxy] slot erase failed on ${entry.id}: ${msg}`);
+  }
 }

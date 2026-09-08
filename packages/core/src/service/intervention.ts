@@ -36,7 +36,16 @@ import type { ReasoningGate } from "../cm/reasoning.js";
  *   to return to the client.
  */
 export type InterventionResult =
-  | { readonly action: "forward"; readonly body: string }
+  | {
+      readonly action: "forward";
+      readonly body: string;
+      /**
+       * AMPI actually mopped the transcript (dropped or rewrote what the
+       * model sees). The proxy erases the live llama.cpp slot after it
+       * knows the port, then forwards. Marks-only (pin) does not set this.
+       */
+      readonly eraseSlot?: true;
+    }
   | { readonly action: "kill"; readonly response: Response };
 
 /**
@@ -116,19 +125,50 @@ export function intervene(
         const parsedRecipe = parseAmpiRecipe(escalation.recipe);
         const reasoning =
           typeof opts.reasoning === "function" ? opts.reasoning() : opts.reasoning;
+        const before = (parsed.messages as ChatMessage[]) ?? chatMessages;
         const rewritten = runAmpi(parsedRecipe.name, {
-          messages: (parsed.messages as ChatMessage[]) ?? chatMessages,
+          messages: before,
           trip: lastTrip,
           sanitize: parsedRecipe.sanitize,
           reasoning,
         });
         parsed.messages = rewritten.messages;
         outBody = JSON.stringify(parsed);
+        if (transcriptMopped(before, rewritten.messages)) {
+          return { action: "forward", body: outBody, eraseSlot: true };
+        }
       }
     }
   }
 
   return { action: "forward", body: outBody };
+}
+
+/**
+ * Did CM change what the model will read (length, content, tool calls,
+ * reasoning)? Marks-only (`mba.mark`) is not a mop — KV still matches.
+ */
+export function transcriptMopped(
+  before: readonly ChatMessage[],
+  after: readonly ChatMessage[],
+): boolean {
+  if (before.length !== after.length) return true;
+  for (let i = 0; i < before.length; i += 1) {
+    if (visiblePayload(before[i]!) !== visiblePayload(after[i]!)) return true;
+  }
+  return false;
+}
+
+function visiblePayload(message: ChatMessage): string {
+  return JSON.stringify({
+    role: message.role,
+    content: message.content,
+    tool_call_id: message.tool_call_id,
+    tool_calls: message.tool_calls,
+    name: message.name,
+    reasoning_content: message.reasoning_content,
+    reasoning: message.reasoning,
+  });
 }
 
 /** First system message content as a string ("" when absent or non-string). */

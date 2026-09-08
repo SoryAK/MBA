@@ -146,7 +146,7 @@ AMPI (sanitize | assist | sanction | recover)
         ▼
 CM (write | mark | sweep | compact)
         │
-        ▼  (later: after a real splice)
+        ▼  (after a real splice)
 llama.cpp row (save | restore | erase)
 ```
 
@@ -219,8 +219,8 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 1. **Done.** First slice: `sanitize` / `duplicates` (alias `sweep-duplicates`) → `sweep` / `duplicates`. Engines exist (`runAmpi`, `applyCm` / `runCm`). TCB stop-text and hints go through CM Write.
 2. **Done.** Marks are `mba.mark` on the tool pair. `set-mark` and `sweep` / `scratch` ship. Pin is a keeper list (`listKeepers`); `budget` waits on a window size.
 3. **Done.** `compact` / `reasoning`; `sanitize` modes `reasoning` / `phase` / `pin` (`pin?: true` pins the trip before the mop).
-4. **Done.** Model-plane slot control (ADR-0097 Phase 4): save / restore / erase / list. Sanitize still does not erase-after-mop; that is the next wire on this plane.
-5. SM v1 (ADR-0106) — two sandboxes + door. Default off.
+4. **Done.** Model-plane slot control (ADR-0097 Phase 4). Sanitize that actually changes the transcript erases the live llama.cpp slot after the port is known, then forwards. Marks-only (pin) does not erase. Ollama has no slots. Erase failure still forwards (prefix-cut is the fallback).
+5. **Parked.** SM v1 (ADR-0106) — local backlog (catch-up). Not the next build.
 6. `assist` / `clamp` then `feed`.
 7. `recover` / `rollback` (needs `pin` first).
 8. `sanction` after Assist is real.

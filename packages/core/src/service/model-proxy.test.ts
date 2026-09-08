@@ -43,9 +43,11 @@ function registryFetch(opts: {
   fetch: typeof fetch;
   healthCalls: number[];
   chatCalls: number[];
+  slotCalls: Array<{ method: string; url: string; body: string }>;
 } {
   const healthCalls: number[] = [];
   const chatCalls: number[] = [];
+  const slotCalls: Array<{ method: string; url: string; body: string }> = [];
   const portOf = (url: string): number => {
     const m = url.match(/127\.0\.0\.1:(\d+)/);
     return m ? Number(m[1]) : -1;
@@ -53,10 +55,21 @@ function registryFetch(opts: {
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const port = portOf(url);
-    if (url.includes("/health")) {
+    if (url.includes("/health") || url.includes("/api/tags")) {
       healthCalls.push(port);
       return new Response(opts.health[port] ? "ok" : "down", {
         status: opts.health[port] ? 200 : 503,
+      });
+    }
+    if (url.includes("/slots")) {
+      slotCalls.push({
+        method: (init?.method ?? "GET").toUpperCase(),
+        url,
+        body: typeof init?.body === "string" ? init.body : "",
+      });
+      return new Response(JSON.stringify({ n_erased: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
       });
     }
     if (url.includes("/v1/chat/completions")) {
@@ -82,7 +95,7 @@ function registryFetch(opts: {
     }
     return new Response("not found", { status: 404 });
   }) as unknown as typeof fetch;
-  return { fetch: fetchImpl, healthCalls, chatCalls };
+  return { fetch: fetchImpl, healthCalls, chatCalls, slotCalls };
 }
 
 /** A registry entry for a llama.cpp server on `port` serving `modelFile`. */
@@ -517,6 +530,155 @@ describe("model proxy — TCB intervention (ADR-0101 Step 2)", () => {
     const err = (await second.json()) as { error: { type: string } };
     expect(err.error.type).toBe("bcb_kill");
     // Only the first (nudge) request reached the upstream.
+    expect(chatCalls).toEqual([8080]);
+    db.close();
+  });
+});
+
+describe("model proxy — erase slot after AMPI mop", () => {
+  const MODEL_A = "/models/a/A.gguf";
+
+  const ampiConfig: ToolCircuitBreakerConfig = {
+    tools: {
+      read_file: {
+        directDuplication: {
+          enabled: true,
+          threshold: 2,
+          escalation: {
+            tiers: [
+              { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "sweep-duplicates" },
+            ],
+            counterMode: "monotonic",
+          },
+        },
+      },
+    },
+  };
+
+  function mopBody(model: string): string {
+    const args = JSON.stringify({ path: "notes.md" });
+    const pair = (id: string) => [
+      {
+        role: "assistant",
+        tool_calls: [
+          { id, type: "function", function: { name: "read_file", arguments: args } },
+        ],
+      },
+      { role: "tool", tool_call_id: id, content: `body-${id}` },
+    ];
+    return JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: "you are cline-ampi-slot" },
+        { role: "user", content: "read notes" },
+        ...pair("c1"),
+        ...pair("c2"),
+        ...pair("c3"),
+      ],
+    });
+  }
+
+  it("erases the live llama.cpp slot before forwarding a mopped chat", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    writeRegistry(paths.upstreamsPath, [
+      entry("llama-cpp-8080", MODEL_A, 8080, "2026-01-01T00:00:00.000Z"),
+    ]);
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const { fetch: fetchImpl, chatCalls, slotCalls } = registryFetch({ health: { 8080: true } });
+    const app = createMbaServiceApp({
+      paths,
+      fetch: fetchImpl,
+      tcbConfig: () => ampiConfig,
+      bcbDb: db,
+    });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body: mopBody(MODEL_A),
+    });
+    expect(res.status).toBe(200);
+    expect(slotCalls).toEqual([
+      {
+        method: "POST",
+        url: "http://127.0.0.1:8080/slots/0?action=erase",
+        body: "{}",
+      },
+    ]);
+    expect(chatCalls).toEqual([8080]);
+    db.close();
+  });
+
+  it("does not erase on a clean forward", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    writeRegistry(paths.upstreamsPath, [
+      entry("llama-cpp-8080", MODEL_A, 8080, "2026-01-01T00:00:00.000Z"),
+    ]);
+    const { fetch: fetchImpl, chatCalls, slotCalls } = registryFetch({ health: { 8080: true } });
+    const app = createMbaServiceApp({ paths, fetch: fetchImpl });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: MODEL_A, messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(slotCalls).toEqual([]);
+    expect(chatCalls).toEqual([8080]);
+  });
+
+  it("skips erase for ollama (no slots)", async () => {
+    const tag = "qwen3.8:27b";
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    writeRegistry(paths.upstreamsPath, [
+      {
+        id: "ollama-11434",
+        serverType: "ollama",
+        modelFile: tag,
+        port: 11434,
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const { fetch: fetchImpl, chatCalls, slotCalls } = registryFetch({ health: { 11434: true } });
+    const app = createMbaServiceApp({
+      paths,
+      fetch: fetchImpl,
+      tcbConfig: () => ampiConfig,
+      bcbDb: db,
+    });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body: mopBody(tag),
+    });
+    expect(res.status).toBe(200);
+    expect(slotCalls).toEqual([]);
+    expect(chatCalls).toEqual([11434]);
+    db.close();
+  });
+
+  it("still forwards if slot erase fails", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    writeRegistry(paths.upstreamsPath, [
+      entry("llama-cpp-8080", MODEL_A, 8080, "2026-01-01T00:00:00.000Z"),
+    ]);
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const { fetch: baseFetch, chatCalls } = registryFetch({ health: { 8080: true } });
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("/slots")) throw new Error("slot down");
+      return baseFetch(input, init);
+    }) as unknown as typeof fetch;
+    const app = createMbaServiceApp({
+      paths,
+      fetch: fetchImpl,
+      tcbConfig: () => ampiConfig,
+      bcbDb: db,
+    });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body: mopBody(MODEL_A),
+    });
+    expect(res.status).toBe(200);
     expect(chatCalls).toEqual([8080]);
     db.close();
   });
