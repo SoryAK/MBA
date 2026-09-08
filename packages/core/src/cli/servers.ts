@@ -4,7 +4,7 @@
 
 import { defaultSwitchPort, fail, serviceGet, servicePost } from "./client.js";
 import { groupFlagPairs, pairCliArgs } from "./flag-pairs.js";
-import { brand, dim, doneBox, heading, kv } from "./style.js";
+import { brand, dim, doneBox, heading, kv, shortenHome } from "./style.js";
 import {
   askPortInteractive,
   askYesNoInteractive,
@@ -14,6 +14,7 @@ import {
   type ModelEntry,
 } from "./interactive.js";
 import { resolveModelFile } from "./resolve-model.js";
+import { binaryMismatchWarning, type LlamaBackend, type GpuVendor } from "../service/llama-binaries.js";
 import type { BootResult, ServerEntry } from "./types.js";
 
 function cancelled(): void {
@@ -77,7 +78,26 @@ async function cmdServersList(baseUrl: string, plain: boolean, json = false): Pr
   }
 }
 
-export function printBootPreview(modelId: string, port: number, cliArgs: readonly string[]): void {
+interface ResolvePreview {
+  readonly cliArgs: string[];
+  readonly binary?: { path: string; backend: LlamaBackend };
+  readonly binaries?: ReadonlyArray<{ path: string; backend: LlamaBackend }>;
+  readonly recommended?: LlamaBackend;
+  readonly warning?: string;
+  readonly vendors?: readonly GpuVendor[];
+  readonly gpus?: readonly string[];
+}
+
+export function printBootPreview(
+  modelId: string,
+  port: number,
+  cliArgs: readonly string[],
+  extras?: {
+    binary?: { path: string; backend: string };
+    warning?: string;
+    gpus?: readonly string[];
+  },
+): void {
   const pairs = pairCliArgs(cliArgs);
   const groups = groupFlagPairs(pairs);
   const flagWidth = Math.min(
@@ -87,6 +107,17 @@ export function printBootPreview(modelId: string, port: number, cliArgs: readonl
   process.stdout.write(`${brand("boot")}\n`);
   process.stdout.write(`${kv("model", modelId, 5)}\n`);
   process.stdout.write(`${kv("port", String(port), 5)}\n`);
+  if (extras?.gpus && extras.gpus.length > 0) {
+    process.stdout.write(`${kv("gpu", extras.gpus.join(", "), 5)}\n`);
+  }
+  if (extras?.binary) {
+    process.stdout.write(
+      `${kv("bin", `${extras.binary.backend}  ${shortenHome(extras.binary.path)}`, 5)}\n`,
+    );
+  }
+  if (extras?.warning) {
+    process.stdout.write(`${kv("note", extras.warning, 5)}\n`);
+  }
   for (const group of groups) {
     process.stdout.write(`\n  ${heading(group.name)}\n`);
     for (const { flag, value } of group.pairs) {
@@ -96,29 +127,76 @@ export function printBootPreview(modelId: string, port: number, cliArgs: readonl
   process.stdout.write("\n");
 }
 
+function previewExtras(
+  recipe: ResolvePreview,
+  binaryPath: string | undefined,
+): {
+  binary?: { path: string; backend: string };
+  warning?: string;
+  gpus?: readonly string[];
+} {
+  const bin =
+    binaryPath !== undefined
+      ? recipe.binaries?.find((b) => b.path === binaryPath) ?? recipe.binary
+      : recipe.binary;
+  const vendors = new Set(recipe.vendors ?? []);
+  const warning = bin ? binaryMismatchWarning(bin.backend, vendors) : recipe.warning;
+  return {
+    binary: bin,
+    warning,
+    gpus: recipe.gpus,
+  };
+}
+
 async function confirmLlamaBoot(
   baseUrl: string,
   modelRef: string,
   port: number,
   assumeNo: boolean,
-): Promise<boolean> {
+): Promise<{ proceed: boolean; binaryPath?: string }> {
+  let recipe: ResolvePreview | undefined;
   try {
     const modelFile = await resolveModelFile(baseUrl, modelRef);
-    const recipe = await servicePost<{ cliArgs: string[] }>(baseUrl, "/servers/resolve", {
+    recipe = await servicePost<ResolvePreview>(baseUrl, "/servers/resolve", {
       modelFile,
     });
-    printBootPreview(modelRef, port, recipe.cliArgs);
   } catch {
     process.stdout.write("[mba] could not preview flags — proceeding to boot\n");
-    return true;
+    return { proceed: true };
   }
-  if (!process.stdin.isTTY || assumeNo) return true;
+
+  let binaryPath = recipe.binary?.path;
+
+  if (process.stdin.isTTY && !assumeNo && (recipe.binaries?.length ?? 0) > 1) {
+    const items = recipe.binaries!.map((b) => {
+      const firstRecommended =
+        recipe.recommended === b.backend &&
+        recipe.binaries!.find((x) => x.backend === recipe.recommended)?.path === b.path;
+      const tag = firstRecommended ? "  recommended" : "";
+      return {
+        label: `${b.backend.padEnd(8)}${shortenHome(b.path)}${tag}`,
+        value: b.path,
+      };
+    });
+    const picked = await pickLabeledInteractive("llama-server", items, {
+      selectedValue: binaryPath,
+    });
+    if (picked === null) {
+      cancelled();
+      return { proceed: false };
+    }
+    binaryPath = picked;
+  }
+
+  printBootPreview(modelRef, port, recipe.cliArgs, previewExtras(recipe, binaryPath));
+
+  if (!process.stdin.isTTY || assumeNo) return { proceed: true, binaryPath };
   const proceed = await askYesNoInteractive("boot with these flags?");
   if (proceed !== true) {
     cancelled();
-    return false;
+    return { proceed: false };
   }
-  return true;
+  return { proceed: true, binaryPath };
 }
 
 async function interactiveBoot(
@@ -143,8 +221,10 @@ async function interactiveBoot(
   }
 
   if (serverType === "llama.cpp") {
-    const ok = await confirmLlamaBoot(baseUrl, picked.id, port, assumeNo);
-    if (!ok) return;
+    const confirm = await confirmLlamaBoot(baseUrl, picked.id, port, assumeNo);
+    if (!confirm.proceed) return;
+    await cmdServersBoot(baseUrl, picked.id, port, serverType, confirm.binaryPath);
+    return;
   }
 
   await cmdServersBoot(baseUrl, picked.id, port, serverType);
@@ -155,6 +235,7 @@ async function cmdServersBoot(
   modelRef: string,
   port: number,
   serverType: "llama.cpp" | "ollama",
+  binaryPath?: string,
 ): Promise<BootResult> {
   if (serverType === "ollama") {
     process.stdout.write(`[mba] loading ${modelRef} into ollama (waits for load)…\n`);
@@ -174,10 +255,9 @@ async function cmdServersBoot(
   }
   const modelFile = await resolveModelFile(baseUrl, modelRef);
   process.stdout.write(`[mba] booting ${modelFile} on port ${port} (waits for warmup)…\n`);
-  const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", {
-    modelFile,
-    port,
-  });
+  const body: Record<string, unknown> = { modelFile, port };
+  if (binaryPath) body.binaryPath = binaryPath;
+  const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", body);
   process.stdout.write(
     doneBox("BOOTED", [
       ["id", entry.id],
@@ -359,8 +439,10 @@ export async function cmdServers(
         fail("usage: mba servers boot <model|path.gguf|tag> [port] [--type ollama]");
       }
       if (serverType === "llama.cpp") {
-        const ok = await confirmLlamaBoot(baseUrl, modelRef, port, assumeNo);
-        if (!ok) return;
+        const confirm = await confirmLlamaBoot(baseUrl, modelRef, port, assumeNo);
+        if (!confirm.proceed) return;
+        await cmdServersBoot(baseUrl, modelRef, port, serverType, confirm.binaryPath);
+        return;
       }
       await cmdServersBoot(baseUrl, modelRef, port, serverType);
       return;

@@ -18,8 +18,10 @@ import type { MachineInfo } from "./machine-info.js";
 import {
   estimateRecipeMemory,
   findMaxFittingCtxSize,
+  findMaxFittingGpuLayers,
   type GgufRecipeShape,
 } from "./gguf-memory-estimator.js";
+import { parseGgufMetadata } from "../model/gguf-metadata.js";
 
 export interface MachineOverlayResult {
   /** Clamped flags (a shallow merge with the input). */
@@ -51,6 +53,18 @@ function recipeFits(
   if (estimate.vramBytes > 0 && availableVram === undefined) return false;
   const fitsVram = availableVram === undefined || estimate.vramBytes <= availableVram;
   return fitsRam && fitsVram;
+}
+
+function modelBlockCount(modelFile: string): number | undefined {
+  try {
+    const meta = parseGgufMetadata(modelFile);
+    const arch = meta.fields["general.architecture"];
+    if (typeof arch !== "string" || arch.length === 0) return undefined;
+    const n = meta.fields[`${arch}.block_count`];
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -98,30 +112,51 @@ export function applyMachineOverlay(
     annotations.push(`parallel clamped from ${flags.parallel} to ${machine.cpuCores} (CPU cores)`);
   }
 
-  // --- ctxSize via memory estimator ---
-  // Apply non-ctxSize clamps first, then re-estimate. The original estimate
-  // may "fit" only because gpuLayers=100 shifts most memory to VRAM, but if
-  // we clamped gpuLayers to 0 because no GPU is present the memory moves back
-  // to RAM and may no longer fit.
+  // --- gpuLayers / ctxSize via memory estimator ---
+  // Apply non-memory clamps first, then fit VRAM (layers) before RAM (context).
+  // Shrinking ctx cannot fix weights that already overflow VRAM at -ngl 100.
   const originalRecipeShape = flagsToRecipeShape(modelFile, flags);
   const originalEstimate = estimateRecipeMemory(originalRecipeShape);
   const originalFits = recipeFits(originalEstimate, availableRam, availableVram);
 
-  const clampedBeforeCtx: ResolvedLlamaFlags = { ...flags, ...clamped };
-  const clampedRecipeShape = flagsToRecipeShape(modelFile, clampedBeforeCtx);
-  const clampedEstimateBeforeCtx = estimateRecipeMemory(clampedRecipeShape);
-  const clampedFitsBeforeCtx = recipeFits(clampedEstimateBeforeCtx, availableRam, availableVram);
+  const afterCpu: ResolvedLlamaFlags = { ...flags, ...clamped };
+  const afterCpuShape = flagsToRecipeShape(modelFile, afterCpu);
+  const afterCpuEstimate = estimateRecipeMemory(afterCpuShape);
 
-  if (originalEstimate === undefined || clampedEstimateBeforeCtx === undefined) {
-    annotations.push("could not estimate memory from GGUF metadata; ctxSize not clamped");
-  } else if (!clampedFitsBeforeCtx) {
-    const maxCtx = findMaxFittingCtxSize(clampedRecipeShape, availableRam, availableVram, flags.ctxSize);
-    if (maxCtx === undefined || maxCtx < 1) {
-      annotations.push("model does not fit in available RAM/VRAM even with ctxSize=1");
-    } else if (flags.ctxSize === undefined || maxCtx < flags.ctxSize) {
-      const original = flags.ctxSize ?? "default";
-      clamped.ctxSize = maxCtx;
-      annotations.push(`ctxSize clamped from ${original} to ${maxCtx} to fit RAM/VRAM`);
+  if (originalEstimate === undefined || afterCpuEstimate === undefined) {
+    annotations.push("could not estimate memory from GGUF metadata; ctxSize/gpuLayers not clamped");
+  } else {
+    if (
+      availableVram !== undefined &&
+      afterCpu.gpuLayers !== undefined &&
+      afterCpu.gpuLayers > 0 &&
+      !recipeFits(afterCpuEstimate, availableRam, availableVram)
+    ) {
+      const blocks = modelBlockCount(modelFile);
+      const ceiling = blocks !== undefined ? Math.min(afterCpu.gpuLayers, blocks) : afterCpu.gpuLayers;
+      const maxNgl = findMaxFittingGpuLayers(afterCpuShape, availableRam, availableVram, ceiling);
+      if (maxNgl === undefined) {
+        annotations.push("could not estimate GPU layers from GGUF metadata; gpuLayers not clamped");
+      } else if (maxNgl < afterCpu.gpuLayers) {
+        clamped.gpuLayers = maxNgl;
+        annotations.push(
+          `gpuLayers clamped from ${afterCpu.gpuLayers} to ${maxNgl} to fit VRAM`,
+        );
+      }
+    }
+
+    const afterNgl: ResolvedLlamaFlags = { ...flags, ...clamped };
+    const afterNglShape = flagsToRecipeShape(modelFile, afterNgl);
+    const afterNglEstimate = estimateRecipeMemory(afterNglShape);
+    if (afterNglEstimate !== undefined && !recipeFits(afterNglEstimate, availableRam, availableVram)) {
+      const maxCtx = findMaxFittingCtxSize(afterNglShape, availableRam, availableVram, flags.ctxSize);
+      if (maxCtx === undefined || maxCtx < 1) {
+        annotations.push("model does not fit in available RAM/VRAM even with ctxSize=1");
+      } else if (flags.ctxSize === undefined || maxCtx < flags.ctxSize) {
+        const original = flags.ctxSize ?? "default";
+        clamped.ctxSize = maxCtx;
+        annotations.push(`ctxSize clamped from ${original} to ${maxCtx} to fit RAM/VRAM`);
+      }
     }
   }
 
@@ -152,8 +187,8 @@ function flagsToRecipeShape(
     gpuLayers: flags.gpuLayers,
     batchSize: 2048,
     ubatchSize: 512,
-    cacheTypeK: "f16",
-    cacheTypeV: "f16",
+    cacheTypeK: "q8_0",
+    cacheTypeV: "q8_0",
     flashAttention: flags.flashAttn === "on",
   };
 }

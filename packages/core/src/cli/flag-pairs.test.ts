@@ -84,4 +84,26 @@ describe("printBootPreview", () => {
     expect(out).toContain("other");
     expect(out).not.toMatch(/--ctx-size\n\s+110000/);
   });
+
+  it("prints the llama-server backend and a mismatch note", () => {
+    process.env.NO_COLOR = "1";
+    let out = "";
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      out += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      printBootPreview("qwen3-coder-30b", 8080, ["--jinja"], {
+        binary: { path: "/opt/llama.cpp/build/bin/llama-server", backend: "hip" },
+        warning: "HIP build; no AMD GPU detected",
+        gpus: ["NVIDIA GeForce RTX 5090"],
+      });
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(out).toContain("hip");
+    expect(out).toContain("NVIDIA GeForce RTX 5090");
+    expect(out).toContain("HIP build; no AMD GPU detected");
+  });
 });

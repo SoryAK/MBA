@@ -349,6 +349,13 @@ describe("pickLabeledInteractive", () => {
     await expect(p).resolves.toBe("Q4_K_M");
   });
 
+  it("starts on selectedValue", async () => {
+    const p = pickLabeledInteractive("pick a quant", items, { selectedValue: "Q8_0" });
+    await tick();
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("Q8_0");
+  });
+
   it("navigates down and picks the second item's value", async () => {
     const p = pickLabeledInteractive("pick a quant", items);
     await tick();

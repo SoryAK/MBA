@@ -17,6 +17,7 @@ import type { ChildProcess } from "node:child_process";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMbaServiceApp } from "./server.js";
 import { defaultStorePaths } from "./config-store.js";
+import { readLlamaServerChoice } from "./llama-binaries.js";
 import { readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import type { LifecycleSeams } from "../mba/server-lifecycle.js";
 
@@ -277,7 +278,8 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     // cliArgs are the tuning flags only — the model file is a separate field
     // (deployment facts are excluded from the recipe's cliArgs).
     expect(body.cliArgs).not.toContain("-m");
-    expect(typeof body.warmupTokens).toBe("number");
+    expect(body.warmupTokens).toBeDefined();
+    expect(Array.isArray((body as { binaries?: unknown }).binaries)).toBe(true);
   });
 
   it("POST /servers/resolve appends extraArgs from server_setup.json (ADR-0100)", async () => {
@@ -382,6 +384,20 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(call.args).toContain("--slot-save-path");
     expect(call.args).toContain("--slots");
     expect(call.opts).toMatchObject({ detached: true });
+  });
+
+  it("POST /servers/boot remembers binaryPath as the last llama-server", async () => {
+    const { seams, spawnCalls } = bootSeams(424242);
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const binaryPath = "/opt/llama-cuda/build/bin/llama-server";
+    const res = await app.request("/servers/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile, port: 9123, binaryPath }),
+    });
+    expect(res.status).toBe(201);
+    expect(spawnCalls[0]!.binary).toBe(binaryPath);
+    expect(readLlamaServerChoice(paths)).toMatchObject({ path: binaryPath });
   });
 
   // --- GET /servers/logs ----------------------------------------------------
