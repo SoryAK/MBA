@@ -1,6 +1,6 @@
 # ADR 0106: State Management (SM)
 
-- **Status:** Proposed — mop exists (`compact` / `reasoning`, `sanitize` / `phase`). Model-plane slot save/restore/erase shipped (ADR-0097 Phase 4); sanitize still does not erase-after-mop. SM v1 waits on that hook (see [ADR-0105](0105-context-management-and-ampi.md) order)
+- **Status:** Proposed — parked in the local backlog after erase-after-mop. Catch-up before building SM v1 (see [ADR-0105](0105-context-management-and-ampi.md) order)
 - **Date:** 2026-09-08
 - **Deciders:** project maintainer + agent
 - **Tags:** architecture, mba, sm, ampi, cm, sandbox, phase
@@ -88,8 +88,8 @@ Lives in the ADR-0105 sequence. Do not skip:
 1. **Done.** CM `compact` / `reasoning`
 2. **Done.** Pin is a keeper list (`listKeepers`)
 3. **Done.** AMPI `sanitize` / `reasoning` then `sanitize` / `phase` (and `pin`)
-4. **Done.** llama.cpp slot save / restore / erase (ADR-0097 Phase 4). Sanitize erase-after-mop still to wire.
-5. **Then** SM v1 (two sandboxes + door)
+4. **Done.** llama.cpp slot save / restore / erase (ADR-0097 Phase 4). Sanitize erase-after-mop is wired.
+5. **Parked.** SM v1 (two sandboxes + door) — local backlog, catch-up.
 6. Assist → Recover → Sanction → ADR-0104
 
 ## Consequences

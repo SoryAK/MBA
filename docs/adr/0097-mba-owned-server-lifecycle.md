@@ -83,8 +83,8 @@ dispatch on `serverType`:
 - ollama: 400 — no slots.
 
 AMPI still only names the recipe. CM still only splices `messages[]`. This
-row is the model-plane button. Trip mop (prefix-cut on the next prompt, erase
-as fallback) is a later hook on this surface, not a fifth runner.
+row is the model-plane button. After a real sanitize splice the proxy erases
+the live slot (default 0) once the upstream port is known, then forwards.
 
 **Service routes** (`server.ts`): `GET /servers` (list + health + resolved),
 `POST /servers/boot` (201 on success, 409 port-busy, 404 unknown model, 500
