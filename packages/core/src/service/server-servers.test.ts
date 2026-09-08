@@ -367,11 +367,12 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
       pid: 424242,
       modelFile,
       serverType: "llama.cpp",
+      fork: "upstream",
     });
     // The registry now holds the booted server.
     const reg = readRegistry(paths.upstreamsPath);
     expect(reg).toHaveLength(1);
-    expect(reg[0]).toMatchObject({ id: "llama-cpp-9123", port: 9123, pid: 424242 });
+    expect(reg[0]).toMatchObject({ id: "llama-cpp-9123", port: 9123, pid: 424242, fork: "upstream" });
     // Deployment facts were prepended; the tuning recipe follows.
     const call = spawnCalls[0]!;
     expect(call.args).toContain("-m");
@@ -379,6 +380,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(call.args).toContain("--port");
     expect(call.args[call.args.indexOf("--port") + 1]).toBe("9123");
     expect(call.args).toContain("--slot-save-path");
+    expect(call.args).toContain("--slots");
     expect(call.opts).toMatchObject({ detached: true });
   });
 
@@ -732,5 +734,142 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(body.servers[0]).toMatchObject({ id: "ollama-11434", healthy: true, resolved: true });
     expect(urls.some((u) => u.includes("/api/tags"))).toBe(true);
     expect(urls.some((u) => u.includes("/health"))).toBe(false);
+  });
+
+  // --- POST/GET /servers/slots (ADR-0097 Phase 4) ---------------------------
+
+  it("POST /servers/slots erase talks to llama-server /slots on the entry port", async () => {
+    const entry: UpstreamEntry = {
+      id: "llama-cpp-8080",
+      serverType: "llama.cpp",
+      modelFile,
+      port: 8080,
+      fork: "upstream",
+      pid: 1,
+      startedAt: "2026-09-08T02:00:00.000Z",
+    };
+    writeRegistry(paths.upstreamsPath, [entry]);
+    const calls: Array<{ method: string; url: string; body: string }> = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const body = typeof init?.body === "string" ? init.body : "";
+      calls.push({ method, url, body });
+      if (url.includes("/slots")) {
+        return new Response(JSON.stringify({ n_erased: 4 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as unknown as typeof fetch;
+    const app = createMbaServiceApp({
+      paths,
+      adapterDir,
+      lifecycleSeams: { fetchImpl },
+    });
+    const res = await app.request("/servers/slots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "llama-cpp-8080", action: "erase" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { action: string; slotId: number; dir: string };
+    expect(body).toMatchObject({ action: "erase", slotId: 0 });
+    expect(body.dir).toContain("/kv/upstream/slots");
+    expect(calls[0]).toMatchObject({
+      method: "POST",
+      url: "http://127.0.0.1:8080/slots/0?action=erase",
+      body: "{}",
+    });
+  });
+
+  it("POST /servers/slots save requires a basename filename", async () => {
+    const entry: UpstreamEntry = {
+      id: "llama-cpp-8080",
+      serverType: "llama.cpp",
+      modelFile,
+      port: 8080,
+      pid: 1,
+      startedAt: "2026-09-08T02:00:00.000Z",
+    };
+    writeRegistry(paths.upstreamsPath, [entry]);
+    const app = createMbaServiceApp({
+      paths,
+      adapterDir,
+      lifecycleSeams: {
+        fetchImpl: (async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
+      },
+    });
+    const missing = await app.request("/servers/slots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "llama-cpp-8080", action: "save" }),
+    });
+    expect(missing.status).toBe(400);
+    const traversal = await app.request("/servers/slots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "llama-cpp-8080", action: "save", filename: "../x.bin" }),
+    });
+    expect(traversal.status).toBe(400);
+  });
+
+  it("POST /servers/slots is 400 for ollama (no slots)", async () => {
+    const entry: UpstreamEntry = {
+      id: "ollama-11434",
+      serverType: "ollama",
+      modelFile: "qwen3.8:27b",
+      port: 11434,
+      startedAt: "2026-09-08T02:00:00.000Z",
+    };
+    writeRegistry(paths.upstreamsPath, [entry]);
+    const app = createMbaServiceApp({ paths, adapterDir });
+    const res = await app.request("/servers/slots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "ollama-11434", action: "erase" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/no slots/i);
+  });
+
+  it("GET /servers/slots lists llama-server slots", async () => {
+    const entry: UpstreamEntry = {
+      id: "llama-cpp-8080",
+      serverType: "llama.cpp",
+      modelFile,
+      port: 8080,
+      pid: 1,
+      startedAt: "2026-09-08T02:00:00.000Z",
+    };
+    writeRegistry(paths.upstreamsPath, [entry]);
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/slots") || url.includes("/slots?")) {
+        return new Response(JSON.stringify([{ id: 0, is_processing: false }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as unknown as typeof fetch;
+    const app = createMbaServiceApp({ paths, adapterDir, fetch: fetchImpl });
+    const res = await app.request("/servers/slots?id=llama-cpp-8080");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; slots: unknown };
+    expect(body.id).toBe("llama-cpp-8080");
+    expect(body.slots).toEqual([{ id: 0, is_processing: false }]);
+  });
+
+  it("POST /servers/slots returns 404 for an unknown id", async () => {
+    const app = createMbaServiceApp({ paths, adapterDir });
+    const res = await app.request("/servers/slots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "llama-cpp-9999", action: "erase" }),
+    });
+    expect(res.status).toBe(404);
   });
 });

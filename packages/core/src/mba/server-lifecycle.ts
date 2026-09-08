@@ -314,10 +314,12 @@ export async function sendWarmupRequest(
 /**
  * Spawn llama-server with the boot options, wait for health, run warmup.
  *
- * Deployment facts (`--host`, `--port`, `--slot-save-path`, `-m <model>`) are
- * prepended here; `opts.flags` carries only the tuning recipe. The server is
- * spawned `detached` so it owns its own process group (G1), and the boot
- * resolves only after warmup completes (Perf #2).
+ * Deployment facts (`--host`, `--port`, `--slot-save-path`, `--slots`,
+ * `-m <model>`) are prepended here; `opts.flags` carries only the tuning
+ * recipe. `--slots` keeps GET/POST `/slots` on so MBA can save/restore/erase
+ * KV in the G3 folder. The server is spawned `detached` so it owns its own
+ * process group (G1), and the boot resolves only after warmup completes
+ * (Perf #2).
  *
  * @returns ServerState with the CHILD pid, port, boot time, and flags.
  * @throws {Error} if spawn fails, health check times out, or warmup fails
@@ -350,6 +352,7 @@ export async function bootLlamaServer(
     String(opts.port),
     "--slot-save-path",
     slotPath,
+    "--slots",
     "-m",
     opts.modelPath,
     ...opts.flags,

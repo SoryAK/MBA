@@ -5,7 +5,7 @@
 
 const GROUPS = "models m servers server s machine status help completion migrate-paths estimate-memory";
 const MODEL_SUB = "list show set open pull search edit";
-const SERVER_SUB = "list boot stop logs";
+const SERVER_SUB = "list boot stop logs slots";
 const MACHINE_SUB = "enforce warn off";
 
 function bashScript(): string {
@@ -64,7 +64,7 @@ _mba() {
   local -a groups modelsubs serversubs
   groups=(models m servers server s machine status help completion migrate-paths estimate-memory)
   modelsubs=(list show set open pull search edit)
-  serversubs=(list boot stop logs)
+  serversubs=(list boot stop logs slots)
   case $CURRENT in
     2) _describe 'command' groups ;;
     *)

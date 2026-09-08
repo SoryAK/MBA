@@ -250,6 +250,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
     expect(args).toContain("127.0.0.1");
     expect(args).toContain("--port");
     expect(args).toContain("9123");
+    expect(args).toContain("--slots");
   });
 
   it("on health timeout, kills the CHILD group — never the daemon", async () => {

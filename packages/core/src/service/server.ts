@@ -93,6 +93,13 @@ import { bootServer, resolveBootRecipe } from "./server-boot.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
 import type { MachineInfo } from "./machine-info.js";
 import { getLogBuffer, type LifecycleSeams } from "../mba/index.js";
+import {
+  SlotFilenameError,
+  SlotOpError,
+  SlotUnsupportedError,
+  slotDirForEntry,
+  type SlotAction,
+} from "../mba/slot-control.js";
 
 export interface MbaServiceAppOptions {
   readonly paths?: MbaStorePaths;
@@ -463,6 +470,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         serverType: e.serverType,
         modelFile: e.modelFile,
         port: e.port,
+        fork: e.fork,
         pid: e.pid,
         startedAt: e.startedAt,
         healthy: health.get(e.id) ?? false,
@@ -642,6 +650,98 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     }
     writeRegistry(paths.upstreamsPath, removeById(registry, entry.id));
     return c.json({ stopped: entry.id });
+  });
+
+  // Slot / KV control (ADR-0097 Phase 4). llama.cpp only. Filenames stay
+  // inside the G3 dir this server was booted with.
+  app.get("/servers/slots", async (c) => {
+    const id = c.req.query("id");
+    if (!id) {
+      return c.json({ error: "query param 'id' is required" }, 400);
+    }
+    const registry = readRegistry(paths.upstreamsPath);
+    const entry = registry.find((e) => e.id === id);
+    if (!entry) {
+      return c.json({ error: `no registered server with id ${id}` }, 404);
+    }
+    const ops = getServerTypeOps(entry.serverType);
+    if (!ops) {
+      return c.json({ error: `unknown server type ${entry.serverType}` }, 500);
+    }
+    const fetchImpl = opts.lifecycleSeams?.fetchImpl ?? opts.fetch ?? fetch;
+    try {
+      const slots = await ops.listSlots(entry, fetchImpl);
+      return c.json({ id: entry.id, dir: slotDirForEntry(entry), slots });
+    } catch (err) {
+      if (err instanceof SlotUnsupportedError) {
+        return c.json({ error: err.message }, 400);
+      }
+      return c.json({ error: err instanceof Error ? err.message : "list slots failed" }, 502);
+    }
+  });
+
+  app.post("/servers/slots", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as {
+      id?: unknown;
+      action?: unknown;
+      slotId?: unknown;
+      filename?: unknown;
+    };
+    if (typeof input.id !== "string" || input.id.length === 0) {
+      return c.json({ error: "body.id is required" }, 400);
+    }
+    if (input.action !== "save" && input.action !== "restore" && input.action !== "erase") {
+      return c.json({ error: "body.action must be 'save', 'restore', or 'erase'" }, 400);
+    }
+    const action: SlotAction = input.action;
+    if (
+      input.slotId !== undefined &&
+      (typeof input.slotId !== "number" || !Number.isInteger(input.slotId) || input.slotId < 0)
+    ) {
+      return c.json({ error: "body.slotId must be a non-negative integer" }, 400);
+    }
+    if (
+      input.filename !== undefined &&
+      (typeof input.filename !== "string" || input.filename.length === 0)
+    ) {
+      return c.json({ error: "body.filename must be a non-empty string" }, 400);
+    }
+    const registry = readRegistry(paths.upstreamsPath);
+    const entry = registry.find((e) => e.id === input.id);
+    if (!entry) {
+      return c.json({ error: `no registered server with id ${input.id}` }, 404);
+    }
+    const ops = getServerTypeOps(entry.serverType);
+    if (!ops) {
+      return c.json({ error: `unknown server type ${entry.serverType}` }, 500);
+    }
+    const fetchImpl = opts.lifecycleSeams?.fetchImpl ?? opts.fetch ?? fetch;
+    try {
+      const result = await ops.slots(
+        entry,
+        {
+          action,
+          slotId: typeof input.slotId === "number" ? input.slotId : undefined,
+          filename: typeof input.filename === "string" ? input.filename : undefined,
+        },
+        { ...opts.lifecycleSeams, fetchImpl },
+      );
+      return c.json(result);
+    } catch (err) {
+      if (err instanceof SlotUnsupportedError || err instanceof SlotFilenameError) {
+        return c.json({ error: err.message }, 400);
+      }
+      if (err instanceof SlotOpError) {
+        return c.json({ error: err.message }, 502);
+      }
+      return c.json({ error: err instanceof Error ? err.message : "slot op failed" }, 500);
+    }
   });
 
   return app;
