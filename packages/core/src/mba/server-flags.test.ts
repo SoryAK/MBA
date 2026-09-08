@@ -200,6 +200,7 @@ describe("buildLlamaServerFlags", () => {
     expect(flags).not.toContain("--host");
     expect(flags).not.toContain("--port");
     expect(flags).not.toContain("--slot-save-path");
+    expect(flags).not.toContain("--slots");
     expect(flags).not.toContain("-m");
   });
 
@@ -300,5 +301,11 @@ describe("extraArgs (open-ended llama.cpp flags)", () => {
         extraArgs: { "ctx-size": 50000 },
       }),
     ).toThrow(/ctx-size/);
+    expect(() =>
+      buildLlamaServerFlags({
+        ...LLAMA_CPP_DEFAULTS,
+        extraArgs: { "no-slots": true },
+      }),
+    ).toThrow(/no-slots/);
   });
 });

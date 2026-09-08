@@ -39,6 +39,11 @@ export interface UpstreamEntry {
   /** TCP port the server listens on (127.0.0.1). */
   readonly port: number;
   /**
+   * llama.cpp fork used at boot (`upstream` | `llama.cpp`). Needed after boot
+   * to re-derive the G3 KV dir (`kv/<fork>/slots`). Absent on ollama.
+   */
+  readonly fork?: "upstream" | "llama.cpp";
+  /**
    * PID of the server process. Present for process-per-model types
    * (llama.cpp — the G1 owned group); absent for API-managed types
    * (ollama — the daemon owns the process, we only load/unload the model).
@@ -66,6 +71,7 @@ function isUpstreamEntry(value: unknown): value is UpstreamEntry {
     typeof v.serverType === "string" &&
     typeof v.modelFile === "string" &&
     typeof v.port === "number" &&
+    (v.fork === undefined || v.fork === "upstream" || v.fork === "llama.cpp") &&
     (v.pid === undefined || typeof v.pid === "number") &&
     typeof v.startedAt === "string"
   );

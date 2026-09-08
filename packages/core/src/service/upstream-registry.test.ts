@@ -51,7 +51,7 @@ describe("upstream registry (ADR-0097 Phase 1)", () => {
     });
 
     it("round-trips entries through writeRegistry", () => {
-      const e = entry({ id: "llama-cpp-8080", modelFile: QWEN, port: 8080, pid: 111, startedAt: T1 });
+      const e = entry({ id: "llama-cpp-8080", modelFile: QWEN, port: 8080, pid: 111, startedAt: T1, fork: "upstream" });
       writeRegistry(path, [e]);
       expect(readRegistry(path)).toEqual([e]);
     });

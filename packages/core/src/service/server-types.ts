@@ -1,6 +1,6 @@
 /**
- * Server-type table (ADR-0097 Phase 3): the `serverType → { boot, stop,
- * health }` switchboard.
+ * Server-type table (ADR-0097 Phase 3 + Phase 4 slots): the
+ * `serverType → { boot, stop, health, slots, listSlots }` switchboard.
  *
  * Phase 2 hardwired the lifecycle to one engine (llama.cpp: spawn a detached
  * process, group-kill it, poll /health). Phase 3 makes the daemon dispatch on
@@ -12,9 +12,12 @@
  *
  *   llama.cpp  boot: spawn detached + health + warmup   stop: group-kill
  *               health: GET /health on the model port   pid: owned
+ *               slots: POST /slots/{id}?action=save|restore|erase
+ *                      GET  /slots  (list). Files stay in G3 kv/<fork>/slots.
  *   ollama     boot: GET /api/tags → POST /api/generate (keep_alive long)
  *               stop: POST /api/generate (keep_alive 0)
  *               health: GET /api/tags on the daemon     pid: none
+ *               slots: unsupported (no KV slots)
  *
  * Ollama has no dedicated load/unload endpoint (verified on 0.32.x): a model
  * is loaded by any inference request and `keep_alive` controls how long it
@@ -30,7 +33,13 @@
 import {
   bootLlamaServer,
   stopLlamaServer,
+  callLlamaSlot,
+  listLlamaSlots,
+  slotDirForEntry,
+  SlotUnsupportedError,
   type LifecycleSeams,
+  type SlotOpInput,
+  type SlotOpResult,
 } from "../mba/index.js";
 import type { UpstreamEntry } from "./upstream-registry.js";
 
@@ -82,6 +91,13 @@ export interface ServerTypeOps {
   stop(entry: UpstreamEntry, seams?: LifecycleSeams): Promise<void>;
   /** Health probe for one entry (advisory — never throws). */
   health(entry: UpstreamEntry, fetchImpl: typeof fetch): Promise<boolean>;
+  /**
+   * Whole-slot KV mutation (save / restore / erase). llama.cpp talks to
+   * `/slots`; ollama throws `SlotUnsupportedError`.
+   */
+  slots(entry: UpstreamEntry, req: SlotOpInput, seams?: LifecycleSeams): Promise<SlotOpResult>;
+  /** Live slot snapshot. ollama throws `SlotUnsupportedError`. */
+  listSlots(entry: UpstreamEntry, fetchImpl: typeof fetch): Promise<unknown>;
 }
 
 /**
@@ -108,6 +124,7 @@ const llamaCppOps: ServerTypeOps = {
       serverType: "llama.cpp",
       modelFile: input.modelFile,
       port: input.port,
+      fork: input.fork ?? "upstream",
       pid: state.pid,
       startedAt: new Date().toISOString(),
     };
@@ -115,6 +132,20 @@ const llamaCppOps: ServerTypeOps = {
   async stop(entry, seams) {
     if (entry.pid === undefined) throw new Error(`llama.cpp entry ${entry.id} has no pid`);
     await stopLlamaServer(entry.pid, seams);
+  },
+  async slots(entry, req, seams) {
+    const fetchImpl = seams?.fetchImpl ?? fetch;
+    const out = await callLlamaSlot(entry.port, req, fetchImpl);
+    return {
+      action: req.action,
+      slotId: out.slotId,
+      filename: out.filename,
+      dir: slotDirForEntry(entry),
+      upstream: out.upstream,
+    };
+  },
+  async listSlots(entry, fetchImpl) {
+    return listLlamaSlots(entry.port, fetchImpl);
   },
   async health(entry, fetchImpl) {
     try {
@@ -206,6 +237,12 @@ const ollamaOps: ServerTypeOps = {
     if (!res.ok) {
       throw new Error(`ollama unload failed: status ${res.status}`);
     }
+  },
+  async slots() {
+    throw new SlotUnsupportedError("ollama");
+  },
+  async listSlots() {
+    throw new SlotUnsupportedError("ollama");
   },
   async health(entry, fetchImpl) {
     const host = ollamaHost(entry);
