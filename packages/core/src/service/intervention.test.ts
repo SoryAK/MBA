@@ -201,6 +201,7 @@ describe("intervene (ADR-0101 Step 2)", () => {
       const last = parsed.messages[parsed.messages.length - 1]!;
       expect(last.role).toBe("user");
       expect(String(last.content)).toContain("[[mba:");
+      expect(res.eraseSlot).toBe(true);
     }
   });
 
@@ -255,6 +256,7 @@ describe("intervene (ADR-0101 Step 2)", () => {
       const last = parsed.messages[parsed.messages.length - 1]!;
       expect(last.role).toBe("user");
       expect(String(last.content)).toContain("[[mba:");
+      expect(res.eraseSlot).toBe(true);
     }
   });
 
@@ -333,6 +335,7 @@ describe("intervene (ADR-0101 Step 2)", () => {
       };
       const last = parsed.messages[parsed.messages.length - 1]!;
       expect(String(last.content)).toBe(`${COMPACT_REASONING_RESIDUE}\nuse notes.md`);
+      expect(res.eraseSlot).toBe(true);
     }
   });
 
@@ -389,6 +392,7 @@ describe("intervene (ADR-0101 Step 2)", () => {
         messages: Array<{ content?: unknown }>;
       };
       expect(String(parsed.messages[parsed.messages.length - 1]!.content)).toBe(think);
+      expect(res.eraseSlot).toBeUndefined();
     }
   });
 });
