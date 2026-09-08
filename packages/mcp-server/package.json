@@ -44,7 +44,7 @@
     "node": ">=20"
   },
   "author": "SoryAK",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"
   }
