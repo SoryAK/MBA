@@ -105,9 +105,9 @@ and **`POST /models/pull`** (service route, same parameters) perform:
      `instructions.md` (the model reads this) and `notes.md` (operator-only,
      never injected).
 6. **Scaffold** — model-tier `bcb.jsonl`/`tcb.jsonl`/`server_setup.json` as
-   `{}` placeholders plus TODO `instructions.md` / `notes.md`; if
+   `{}` placeholders plus empty `instructions.md` / `notes.md`; if
    `<family>/family.yaml` is absent, scaffold the family tier too
-   (`family.yaml` + empty binding files + the same two markdown stubs).
+   (`family.yaml` + empty binding files + the same two empty markdown files).
    Family markdown is the default; the model's files replace it. Live
    injection of instructions is a later cut — this cut only stores the files.
 
@@ -143,9 +143,8 @@ model is used for real work.
   the copies are byte-identical today; a comment in each file points at the
   other.
 - **Drafts still need human review.** TODO fields (imatrix, client flags,
-  display name, instructions.md, notes.md) mean a pulled model is bootable
-  but not fully tuned until reviewed. This is a feature (honesty) but a
-  step the user must not skip.
+  display name) mean a pulled model is bootable but not fully tuned until
+  reviewed. `instructions.md` / `notes.md` are left blank on purpose.
 - **Resume assumes a Range-capable server.** If the source ignores `Range`,
   the resume path degrades to a full re-download (detected via the
   response status: 200 instead of 206 → restart from zero).
