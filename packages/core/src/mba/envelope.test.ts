@@ -65,4 +65,9 @@ describe("wrapStagedCard", () => {
     const wrapped = wrapStagedCard("copilot", "# card");
     expect(wrapped).toContain('applyTo: "**"');
   });
+
+  it("strips trailing whitespace without leaving a blank run at the end", () => {
+    const wrapped = wrapStagedCard("cline", "# card\n\n  \n");
+    expect(wrapped).toBe(`${MBA_STAGE_MARKER}\n\n# card\n`);
+  });
 });
