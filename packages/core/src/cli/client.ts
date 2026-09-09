@@ -17,6 +17,10 @@ export function fail(message: string): never {
   process.exit(2);
 }
 
+/** CLI copy when discovery finds no live daemon. */
+export const SERVICE_DOWN =
+  "MBA service not discovered — daemon is down. Start the MBA service or set MBA_SERVICE_URL";
+
 export function resolveServiceUrl(): string | null {
   const envUrl = process.env.MBA_SERVICE_URL;
   if (envUrl && envUrl.length > 0) return envUrl;

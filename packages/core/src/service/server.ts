@@ -90,6 +90,19 @@ import {
   writeRegistry,
 } from "./upstream-registry.js";
 import { bootServer, resolveBootRecipe } from "./server-boot.js";
+import {
+  gpuVendors,
+  ignoreLlamaServer,
+  inspectLlamaBackend,
+  llamaServerCatalogView,
+  nicknameLlamaServer,
+  readLlamaServerChoice,
+  refreshLlamaServerCatalog,
+  restoreLlamaServer,
+  selectLlamaServer,
+  useLlamaServer,
+  writeLlamaServerChoice,
+} from "./llama-binaries.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
 import type { MachineInfo } from "./machine-info.js";
 import { getLogBuffer, type LifecycleSeams } from "../mba/index.js";
@@ -481,6 +494,46 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     return c.json({ servers });
   });
 
+  app.get("/servers/binaries", (c) => {
+    return c.json(llamaServerCatalogView(paths));
+  });
+
+  app.post("/servers/binaries", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { action?: unknown; path?: unknown; nickname?: unknown };
+    const path = typeof input.path === "string" ? input.path : "";
+    try {
+      if (input.action === "rescan") {
+        refreshLlamaServerCatalog(paths);
+      } else if (input.action === "nickname") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        if (typeof input.nickname !== "string") return c.json({ error: "body.nickname is required" }, 400);
+        nicknameLlamaServer(paths, path, input.nickname);
+      } else if (input.action === "remove") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        ignoreLlamaServer(paths, path);
+      } else if (input.action === "restore") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        restoreLlamaServer(paths, path);
+      } else if (input.action === "use") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        useLlamaServer(paths, path);
+      } else {
+        return c.json({ error: "body.action must be nickname, remove, restore, use, or rescan" }, 400);
+      }
+      return c.json(llamaServerCatalogView(paths));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.includes("not in catalog") || message.includes("not removed") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
   // GET /servers/logs?id=<id>&lines=<n> — the captured ring buffer for one
   // booted server (Feature 2). The daemon pipes each owned llama-server's
   // stdout/stderr into a per-port ring buffer; this route reads it. `lines`
@@ -527,12 +580,31 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       return c.json({ error: "body.modelFile is required" }, 400);
     }
     try {
-      const recipe = resolveBootRecipe(input.modelFile, opts.adapterDir ?? "");
+      const recipe = resolveBootRecipe(
+        input.modelFile,
+        opts.adapterDir ?? "",
+        opts.machineInfo,
+        machineOverlay(),
+      );
+      const selection = selectLlamaServer({
+        lastPath: readLlamaServerChoice(paths)?.path,
+        machineInfo: opts.machineInfo,
+        paths,
+      });
       return c.json({
         modelId: recipe.modelId,
         modelFile: recipe.modelFile,
         cliArgs: recipe.cliArgs,
         warmupTokens: recipe.warmupTokens,
+        binary: selection.selected,
+        binaries: selection.catalog,
+        recommended: selection.recommended,
+        pinned: selection.pinned,
+        warning: selection.warning,
+        vendors: [...gpuVendors(opts.machineInfo)],
+        gpus: (opts.machineInfo?.gpus ?? [])
+          .map((g) => g.name)
+          .filter((n): n is string => typeof n === "string" && n.length > 0),
       });
     } catch (err) {
       return c.json(
@@ -555,6 +627,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       modelRef?: unknown;
       port?: unknown;
       fork?: unknown;
+      binaryPath?: unknown;
     };
     const serverType: ServerType =
       input.serverType === "ollama" ? "ollama" : "llama.cpp";
@@ -584,6 +657,15 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     ) {
       return c.json({ error: "body.fork must be 'upstream' or 'llama.cpp'" }, 400);
     }
+    const selection = selectLlamaServer({
+      lastPath: readLlamaServerChoice(paths)?.path,
+      machineInfo: opts.machineInfo,
+      paths,
+    });
+    const binaryPath =
+      typeof input.binaryPath === "string" && input.binaryPath.length > 0
+        ? input.binaryPath
+        : selection.selected?.path;
     const result = await bootServer({
       serverType,
       modelFile: input.modelFile as string | undefined,
@@ -592,6 +674,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
       adapterDir: opts.adapterDir ?? "",
       registryPath: paths.upstreamsPath,
+      binaryPath,
       machineInfo: opts.machineInfo,
       machineOverlay: machineOverlay(),
       seams: opts.lifecycleSeams,
@@ -604,6 +687,12 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
             ? 404
             : 500;
       return c.json({ error: result.error }, status);
+    }
+    if (typeof binaryPath === "string" && binaryPath.length > 0) {
+      writeLlamaServerChoice(paths, {
+        path: binaryPath,
+        backend: inspectLlamaBackend(binaryPath),
+      });
     }
     // Persist the entry (merge, never clobber).
     const registry = readRegistry(paths.upstreamsPath);

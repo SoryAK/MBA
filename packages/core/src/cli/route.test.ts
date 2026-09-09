@@ -66,6 +66,16 @@ describe("parseMbaArgv", () => {
       action: "open",
       args: ["qwen", "yaml"],
     });
+    expect(parseMbaArgv(["models", "path", "qwen", "yaml"]).route).toEqual({
+      cmd: "models",
+      action: "open",
+      args: ["qwen", "yaml"],
+    });
+    expect(parseMbaArgv(["models", "open", "qwen", "yaml"]).route).toEqual({
+      cmd: "models",
+      action: "open",
+      args: ["qwen", "yaml"],
+    });
     expect(parseMbaArgv(["pull", "search"]).route).toEqual({
       cmd: "models",
       action: "pull",

@@ -1,12 +1,13 @@
 /**
- * Server plane (ADR-0097): list / boot / stop / logs / slots.
+ * Server plane (ADR-0097): list / boot / stop / logs / slots / builds.
  */
 
 import { defaultSwitchPort, fail, serviceGet, servicePost } from "./client.js";
 import { groupFlagPairs, pairCliArgs } from "./flag-pairs.js";
-import { brand, dim, doneBox, heading, kv } from "./style.js";
+import { brand, dim, doneBox, heading, kv, shortenHome } from "./style.js";
 import {
   askPortInteractive,
+  askTextInteractive,
   askYesNoInteractive,
   pickLabeledInteractive,
   pickModelInteractive,
@@ -14,6 +15,7 @@ import {
   type ModelEntry,
 } from "./interactive.js";
 import { resolveModelFile } from "./resolve-model.js";
+import { binaryMismatchWarning, type LlamaBackend, type GpuVendor } from "../service/llama-binaries.js";
 import type { BootResult, ServerEntry } from "./types.js";
 
 function cancelled(): void {
@@ -77,7 +79,78 @@ async function cmdServersList(baseUrl: string, plain: boolean, json = false): Pr
   }
 }
 
-export function printBootPreview(modelId: string, port: number, cliArgs: readonly string[]): void {
+interface LlamaBinaryRow {
+  readonly path: string;
+  readonly backend: LlamaBackend;
+  readonly nickname?: string;
+}
+
+interface ResolvePreview {
+  readonly cliArgs: string[];
+  readonly binary?: LlamaBinaryRow;
+  readonly binaries?: ReadonlyArray<LlamaBinaryRow>;
+  readonly recommended?: LlamaBackend;
+  readonly pinned?: boolean;
+  readonly warning?: string;
+  readonly vendors?: readonly GpuVendor[];
+  readonly gpus?: readonly string[];
+}
+
+export function llamaNickColumnWidth(rows: readonly LlamaBinaryRow[]): number {
+  let width = 12;
+  for (const b of rows) {
+    const nick = (b.nickname ?? "").trim();
+    const len = nick.length > 0 ? nick.length : 1;
+    if (len > width) width = len;
+  }
+  return width;
+}
+
+export function formatLlamaServerLabel(
+  b: LlamaBinaryRow,
+  opts?: { recommended?: boolean; removed?: boolean; used?: boolean; nickWidth?: number },
+): string {
+  const nick = (b.nickname ?? "").trim();
+  const name = nick.length > 0 ? nick : "—";
+  const width = Math.max(opts?.nickWidth ?? 12, name.length);
+  const tag = opts?.removed ? "  removed" : opts?.used ? "  default" : opts?.recommended ? "  recommended" : "";
+  return `${b.backend.padEnd(8)}${name.padEnd(width)}  ${shortenHome(b.path)}${tag}`;
+}
+
+function llamaServerPreview(
+  b: LlamaBinaryRow,
+  opts?: { recommended?: boolean; removed?: boolean; used?: boolean },
+): Array<readonly [string, string]> {
+  const rows: Array<readonly [string, string]> = [
+    ["backend", b.backend],
+    ["nick", (b.nickname ?? "").trim() || "—"],
+    ["path", shortenHome(b.path)],
+  ];
+  if (opts?.used) rows.push(["boot", "default"]);
+  if (opts?.removed) rows.push(["state", "removed"]);
+  if (opts?.recommended) rows.push(["pick", "recommended"]);
+  return rows;
+}
+
+export function shouldAskLlamaBinary(
+  binCount: number,
+  pinned: boolean | undefined,
+  tty: boolean,
+  assumeNo: boolean,
+): boolean {
+  return tty && !assumeNo && binCount > 1 && !pinned;
+}
+
+export function printBootPreview(
+  modelId: string,
+  port: number,
+  cliArgs: readonly string[],
+  extras?: {
+    binary?: { path: string; backend: string; nickname?: string };
+    warning?: string;
+    gpus?: readonly string[];
+  },
+): void {
   const pairs = pairCliArgs(cliArgs);
   const groups = groupFlagPairs(pairs);
   const flagWidth = Math.min(
@@ -87,6 +160,19 @@ export function printBootPreview(modelId: string, port: number, cliArgs: readonl
   process.stdout.write(`${brand("boot")}\n`);
   process.stdout.write(`${kv("model", modelId, 5)}\n`);
   process.stdout.write(`${kv("port", String(port), 5)}\n`);
+  if (extras?.gpus && extras.gpus.length > 0) {
+    process.stdout.write(`${kv("gpu", extras.gpus.join(", "), 5)}\n`);
+  }
+  if (extras?.binary) {
+    const nick = extras.binary.nickname?.trim();
+    const shown = nick
+      ? `${extras.binary.backend}  ${nick}  ${shortenHome(extras.binary.path)}`
+      : `${extras.binary.backend}  ${shortenHome(extras.binary.path)}`;
+    process.stdout.write(`${kv("bin", shown, 5)}\n`);
+  }
+  if (extras?.warning) {
+    process.stdout.write(`${kv("note", extras.warning, 5)}\n`);
+  }
   for (const group of groups) {
     process.stdout.write(`\n  ${heading(group.name)}\n`);
     for (const { flag, value } of group.pairs) {
@@ -96,29 +182,77 @@ export function printBootPreview(modelId: string, port: number, cliArgs: readonl
   process.stdout.write("\n");
 }
 
+function previewExtras(
+  recipe: ResolvePreview,
+  binaryPath: string | undefined,
+): {
+  binary?: { path: string; backend: string; nickname?: string };
+  warning?: string;
+  gpus?: readonly string[];
+} {
+  const bin =
+    binaryPath !== undefined
+      ? recipe.binaries?.find((b) => b.path === binaryPath) ?? recipe.binary
+      : recipe.binary;
+  const vendors = new Set(recipe.vendors ?? []);
+  const warning = bin ? binaryMismatchWarning(bin.backend, vendors) : recipe.warning;
+  return {
+    binary: bin,
+    warning,
+    gpus: recipe.gpus,
+  };
+}
+
 async function confirmLlamaBoot(
   baseUrl: string,
   modelRef: string,
   port: number,
   assumeNo: boolean,
-): Promise<boolean> {
+): Promise<{ proceed: boolean; binaryPath?: string }> {
+  let recipe: ResolvePreview | undefined;
   try {
     const modelFile = await resolveModelFile(baseUrl, modelRef);
-    const recipe = await servicePost<{ cliArgs: string[] }>(baseUrl, "/servers/resolve", {
+    recipe = await servicePost<ResolvePreview>(baseUrl, "/servers/resolve", {
       modelFile,
     });
-    printBootPreview(modelRef, port, recipe.cliArgs);
   } catch {
     process.stdout.write("[mba] could not preview flags — proceeding to boot\n");
-    return true;
+    return { proceed: true };
   }
-  if (!process.stdin.isTTY || assumeNo) return true;
+
+  let binaryPath = recipe.binary?.path;
+
+  if (shouldAskLlamaBinary(recipe.binaries?.length ?? 0, recipe.pinned, process.stdin.isTTY, assumeNo)) {
+    const nickWidth = llamaNickColumnWidth(recipe.binaries!);
+    const items = recipe.binaries!.map((b) => {
+      const firstRecommended =
+        recipe.recommended === b.backend &&
+        recipe.binaries!.find((x) => x.backend === recipe.recommended)?.path === b.path;
+      return {
+        label: formatLlamaServerLabel(b, { recommended: firstRecommended, nickWidth }),
+        value: b.path,
+        preview: llamaServerPreview(b, { recommended: firstRecommended }),
+      };
+    });
+    const picked = await pickLabeledInteractive("llama-server", items, {
+      selectedValue: binaryPath,
+    });
+    if (picked === null) {
+      cancelled();
+      return { proceed: false };
+    }
+    binaryPath = picked;
+  }
+
+  printBootPreview(modelRef, port, recipe.cliArgs, previewExtras(recipe, binaryPath));
+
+  if (!process.stdin.isTTY || assumeNo) return { proceed: true, binaryPath };
   const proceed = await askYesNoInteractive("boot with these flags?");
   if (proceed !== true) {
     cancelled();
-    return false;
+    return { proceed: false };
   }
-  return true;
+  return { proceed: true, binaryPath };
 }
 
 async function interactiveBoot(
@@ -143,8 +277,10 @@ async function interactiveBoot(
   }
 
   if (serverType === "llama.cpp") {
-    const ok = await confirmLlamaBoot(baseUrl, picked.id, port, assumeNo);
-    if (!ok) return;
+    const confirm = await confirmLlamaBoot(baseUrl, picked.id, port, assumeNo);
+    if (!confirm.proceed) return;
+    await cmdServersBoot(baseUrl, picked.id, port, serverType, confirm.binaryPath);
+    return;
   }
 
   await cmdServersBoot(baseUrl, picked.id, port, serverType);
@@ -155,6 +291,7 @@ async function cmdServersBoot(
   modelRef: string,
   port: number,
   serverType: "llama.cpp" | "ollama",
+  binaryPath?: string,
 ): Promise<BootResult> {
   if (serverType === "ollama") {
     process.stdout.write(`[mba] loading ${modelRef} into ollama (waits for load)…\n`);
@@ -174,10 +311,9 @@ async function cmdServersBoot(
   }
   const modelFile = await resolveModelFile(baseUrl, modelRef);
   process.stdout.write(`[mba] booting ${modelFile} on port ${port} (waits for warmup)…\n`);
-  const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", {
-    modelFile,
-    port,
-  });
+  const body: Record<string, unknown> = { modelFile, port };
+  if (binaryPath) body.binaryPath = binaryPath;
+  const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", body);
   process.stdout.write(
     doneBox("BOOTED", [
       ["id", entry.id],
@@ -248,13 +384,22 @@ async function pickServerId(baseUrl: string, title: string): Promise<string | nu
     process.stdout.write("[mba] no servers registered\n");
     return null;
   }
-  return pickLabeledInteractive(
+  const picked = await pickLabeledInteractive(
     title,
     servers.map((s) => ({
-      label: `${s.id}  :${s.port}${s.healthy ? "" : "  down"}`,
+      label: s.id,
       value: s.id,
+      preview: [
+        ["id", s.id],
+        ["port", String(s.port)],
+        ["pid", s.pid !== undefined ? String(s.pid) : "—"],
+        ["health", s.healthy ? "ok" : "down"],
+        ["model", s.modelFile],
+      ],
     })),
   );
+  if (picked === null) cancelled();
+  return picked;
 }
 
 async function cmdServersLogs(
@@ -297,21 +442,176 @@ async function cmdServersLogs(
   }
 }
 
+async function fetchLlamaBinaries(baseUrl: string): Promise<{
+  binaries: LlamaBinaryRow[];
+  ignored: LlamaBinaryRow[];
+  selected?: string;
+}> {
+  try {
+    return await serviceGet<{ binaries: LlamaBinaryRow[]; ignored: LlamaBinaryRow[]; selected?: string }>(
+      baseUrl,
+      "/servers/binaries",
+    );
+  } catch {
+    return { binaries: [], ignored: [] };
+  }
+}
+
+async function applyBinaryAction(
+  baseUrl: string,
+  path: string,
+  removed: boolean,
+  currentNickname = "",
+): Promise<void> {
+  const actions = removed
+    ? [
+        { label: "restore", value: "restore", preview: [["do", "put this build back in the picker"] as const] },
+        { label: "nickname", value: "nickname", preview: [["do", "name that survives rescan"] as const] },
+      ]
+    : [
+        { label: "use", value: "use", preview: [["do", "boot with this binary by default"] as const] },
+        { label: "nickname", value: "nickname", preview: [["do", "name that survives rescan"] as const] },
+        { label: "remove", value: "remove", preview: [["do", "hide from the boot picker"] as const] },
+      ];
+  const action = await pickLabeledInteractive("build", actions);
+  if (action === null) {
+    cancelled();
+    return;
+  }
+  if (action === "nickname") {
+    const name = await askTextInteractive("nickname", currentNickname);
+    if (name === null) {
+      cancelled();
+      return;
+    }
+    await servicePost(baseUrl, "/servers/binaries", { action: "nickname", path, nickname: name });
+    process.stdout.write(`[mba] nickname ${name.trim().length === 0 ? "cleared" : "saved"}\n`);
+    return;
+  }
+  await servicePost(baseUrl, "/servers/binaries", { action, path });
+  const done =
+    action === "use"
+      ? "set as boot default"
+      : action === "remove"
+        ? "removed from picker"
+        : "restored to picker";
+  process.stdout.write(`[mba] ${done}\n`);
+}
+
+function printBinariesTable(binaries: LlamaBinaryRow[], ignored: LlamaBinaryRow[], selected?: string): void {
+  if (binaries.length === 0 && ignored.length === 0) {
+    process.stdout.write("[mba] no llama-server builds in the catalog — start the daemon to scan\n");
+    return;
+  }
+  const nickWidth = llamaNickColumnWidth([...binaries, ...ignored]);
+  for (const b of binaries) {
+    process.stdout.write(`${formatLlamaServerLabel(b, { used: b.path === selected, nickWidth })}\n`);
+  }
+  for (const b of ignored) {
+    process.stdout.write(`${formatLlamaServerLabel(b, { removed: true, nickWidth })}\n`);
+  }
+}
+
+async function cmdServersBinaries(baseUrl: string, args: readonly string[], json: boolean): Promise<void> {
+  const [action, path, ...rest] = args;
+  if (action === undefined) {
+    const catalog = await serviceGet<{
+      binaries: LlamaBinaryRow[];
+      ignored: LlamaBinaryRow[];
+      selected?: string;
+    }>(baseUrl, "/servers/binaries");
+    if (json) {
+      process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
+      return;
+    }
+    if (process.stdin.isTTY) {
+      await binariesMenu(baseUrl);
+      return;
+    }
+    printBinariesTable(catalog.binaries, catalog.ignored, catalog.selected);
+    return;
+  }
+  if (action === "rescan") {
+    const catalog = await servicePost<{
+      binaries: LlamaBinaryRow[];
+      ignored: LlamaBinaryRow[];
+      selected?: string;
+    }>(baseUrl, "/servers/binaries", { action: "rescan" });
+    if (json) {
+      process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
+      return;
+    }
+    printBinariesTable(catalog.binaries, catalog.ignored, catalog.selected);
+    return;
+  }
+  if (!path) {
+    fail("usage: mba servers binaries [use <path>|nickname <path> <name>|remove <path>|restore <path>|rescan]");
+  }
+  if (action === "nickname") {
+    const nickname = rest.join(" ");
+    await servicePost(baseUrl, "/servers/binaries", { action: "nickname", path, nickname });
+    process.stdout.write(`[mba] nickname ${nickname.trim().length === 0 ? "cleared" : "saved"}\n`);
+    return;
+  }
+  if (action === "use" || action === "remove" || action === "restore") {
+    await servicePost(baseUrl, "/servers/binaries", { action, path });
+    const done =
+      action === "use" ? "set as boot default" : action === "remove" ? "removed from picker" : "restored to picker";
+    process.stdout.write(`[mba] ${done}\n`);
+    return;
+  }
+  fail("usage: mba servers binaries [use <path>|nickname <path> <name>|remove <path>|restore <path>|rescan]");
+}
+
+async function binariesMenu(baseUrl: string): Promise<void> {
+  for (;;) {
+    const catalog = await fetchLlamaBinaries(baseUrl);
+    const nickWidth = llamaNickColumnWidth([...catalog.binaries, ...catalog.ignored]);
+    const items = [
+      ...catalog.binaries.map((b) => ({
+        label: formatLlamaServerLabel(b, { used: b.path === catalog.selected, nickWidth }),
+        value: b.path,
+        preview: llamaServerPreview(b, { used: b.path === catalog.selected }),
+      })),
+      ...catalog.ignored.map((b) => ({
+        label: formatLlamaServerLabel(b, { removed: true, nickWidth }),
+        value: b.path,
+        preview: llamaServerPreview(b, { removed: true }),
+      })),
+    ];
+    if (items.length === 0) {
+      process.stdout.write("[mba] no llama-server builds in the catalog — start the daemon to scan\n");
+      return;
+    }
+    const path = await pickLabeledInteractive("builds", items);
+    if (path === null) return;
+    const row = [...catalog.binaries, ...catalog.ignored].find((b) => b.path === path);
+    const removed = catalog.ignored.some((b) => b.path === path);
+    await applyBinaryAction(baseUrl, path, removed, row?.nickname ?? "");
+  }
+}
+
 async function serversMenu(
   baseUrl: string,
   json: boolean,
   assumeNo: boolean,
 ): Promise<void> {
-  const pick = await pickLabeledInteractive("servers", [
-    { label: "list", value: "list" },
-    { label: "boot", value: "boot" },
-    { label: "stop", value: "stop" },
-  ]);
-  if (pick === null) {
-    cancelled();
-    return;
+  for (;;) {
+    const pick = await pickLabeledInteractive("servers", [
+      { label: "list", value: "list", preview: [["do", "running servers — stop or logs"]] },
+      { label: "boot", value: "boot", preview: [["do", "start a model server"]] },
+      { label: "stop", value: "stop", preview: [["do", "stop a registered server"]] },
+      { label: "logs", value: "logs", preview: [["do", "captured llama.cpp output"]] },
+      { label: "slots", value: "slots", preview: [["do", "KV list / erase / save / restore"]] },
+      { label: "builds", value: "builds", preview: [["do", "llama-server catalog"]] },
+    ]);
+    if (pick === null) return;
+    if (pick === "builds") {
+      await binariesMenu(baseUrl);
+      continue;
+    }
+    await cmdServers(baseUrl, [pick], json, assumeNo);
   }
-  await cmdServers(baseUrl, [pick], json, assumeNo);
 }
 
 export async function cmdServers(
@@ -332,6 +632,12 @@ export async function cmdServers(
     }
     case "list": {
       await cmdServersList(baseUrl, args.includes("--plain"), json);
+      return;
+    }
+    case "binaries":
+    case "binary":
+    case "builds": {
+      await cmdServersBinaries(baseUrl, args, json);
       return;
     }
     case "boot": {
@@ -359,8 +665,10 @@ export async function cmdServers(
         fail("usage: mba servers boot <model|path.gguf|tag> [port] [--type ollama]");
       }
       if (serverType === "llama.cpp") {
-        const ok = await confirmLlamaBoot(baseUrl, modelRef, port, assumeNo);
-        if (!ok) return;
+        const confirm = await confirmLlamaBoot(baseUrl, modelRef, port, assumeNo);
+        if (!confirm.proceed) return;
+        await cmdServersBoot(baseUrl, modelRef, port, serverType, confirm.binaryPath);
+        return;
       }
       await cmdServersBoot(baseUrl, modelRef, port, serverType);
       return;
@@ -371,10 +679,7 @@ export async function cmdServers(
       if (!id) {
         if (!process.stdin.isTTY) fail("usage: mba servers stop <id>");
         const picked = await pickServerId(baseUrl, "stop");
-        if (picked === null) {
-          cancelled();
-          return;
-        }
+        if (picked === null) return;
         id = picked;
       }
       await cmdServersStop(baseUrl, id);
@@ -398,10 +703,7 @@ export async function cmdServers(
       if (!id) {
         if (!process.stdin.isTTY) fail("usage: mba servers logs <id> [--lines N] [--follow]");
         const picked = await pickServerId(baseUrl, "logs");
-        if (picked === null) {
-          cancelled();
-          return;
-        }
+        if (picked === null) return;
         id = picked;
       }
       await cmdServersLogs(baseUrl, id, lines, follow);
@@ -415,10 +717,7 @@ export async function cmdServers(
           fail("usage: mba servers slots <id> [erase|save <file>|restore <file>] [slotId]");
         }
         const picked = await pickServerId(baseUrl, "slots");
-        if (picked === null) {
-          cancelled();
-          return;
-        }
+        if (picked === null) return;
         id = picked;
       }
       await cmdServersSlots(baseUrl, id, action, rest, json);
@@ -426,12 +725,13 @@ export async function cmdServers(
     }
     default:
       fail(
-        "usage: mba servers <list|boot|stop|logs|slots>\n" +
+        "usage: mba servers <list|boot|stop|logs|slots|binaries|builds>\n" +
           "  list [--plain]       list registered servers (interactive on a TTY; --plain forces the table)\n" +
           "  boot <ref> [port]    boot a model server (port defaults to 8080) [--type ollama]\n" +
           "  stop <id>            stop a registered server (by id)\n" +
           "  logs <id>            show a server's captured log lines [--lines N] [--follow]\n" +
-          "  slots <id>           list llama.cpp slots; erase|save <file>|restore <file> [slotId]",
+          "  slots <id>           list llama.cpp slots; erase|save <file>|restore <file> [slotId]\n" +
+          "  binaries|builds      nickname / use / remove llama-server builds (TTY picker)",
       );
   }
 }

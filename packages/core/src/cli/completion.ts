@@ -4,8 +4,8 @@
  */
 
 const GROUPS = "models m servers server s machine status help completion migrate-paths estimate-memory";
-const MODEL_SUB = "list show set open pull search edit";
-const SERVER_SUB = "list boot stop logs slots";
+const MODEL_SUB = "list show set open path pull search edit";
+const SERVER_SUB = "list boot stop logs slots binaries builds";
 const MACHINE_SUB = "enforce warn off";
 
 function bashScript(): string {
@@ -28,7 +28,7 @@ _mba() {
         local ids
         ids=$(mba models list --json 2>/dev/null | command sed -n 's/.*"id": "\\([^"]*\\)".*/\\1/p')
         COMPREPLY=( $(compgen -W "${MODEL_SUB} \$ids" -- "\$cur") )
-      elif [[ "\$prev" == "show" || "\$prev" == "set" || "\$prev" == "open" || "\$prev" == "edit" ]]; then
+        elif [[ "\$prev" == "show" || "\$prev" == "set" || "\$prev" == "open" || "\$prev" == "path" || "\$prev" == "edit" ]]; then
         local ids
         ids=$(mba models list --json 2>/dev/null | command sed -n 's/.*"id": "\\([^"]*\\)".*/\\1/p')
         COMPREPLY=( $(compgen -W "\$ids" -- "\$cur") )
@@ -63,8 +63,8 @@ function zshScript(): string {
 _mba() {
   local -a groups modelsubs serversubs
   groups=(models m servers server s machine status help completion migrate-paths estimate-memory)
-  modelsubs=(list show set open pull search edit)
-  serversubs=(list boot stop logs slots)
+  modelsubs=(list show set open path pull search edit)
+  serversubs=(list boot stop logs slots binaries builds)
   case $CURRENT in
     2) _describe 'command' groups ;;
     *)
