@@ -53,7 +53,7 @@
     "resolve-server-recipe": "tsx src/service/resolve-server-recipe.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.0",
+    "@hono/node-server": "^2.1.1",
     "hono": "^4.6.0",
     "yaml": "^2.7.0"
   },
