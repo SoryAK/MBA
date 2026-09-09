@@ -64,7 +64,7 @@
     "vitest": "^3.0.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "author": "SoryAK",
   "license": "Apache-2.0",
