@@ -10,7 +10,20 @@
  * normalized to integers; semver-looking strings are compared tuple-wise.
  */
 
-const RANGE_RE = /^(>=|<|~|\^)\s*(.+)$/;
+type RangeOp = ">=" | "<" | "~" | "^";
+
+/** Parse `>= 1.2` / `<b3659` without a regex (CodeQL js/polynomial-redos). */
+function parseRange(range: string): { readonly op: RangeOp; readonly bound: string } | undefined {
+  const trimmed = range.trim();
+  const ops: readonly RangeOp[] = [">=", "<", "~", "^"];
+  for (const op of ops) {
+    if (!trimmed.startsWith(op)) continue;
+    const bound = trimmed.slice(op.length).trimStart();
+    if (bound.length === 0) return undefined;
+    return { op, bound };
+  }
+  return undefined;
+}
 
 function normalizeLlamaBuild(version: string): number | undefined {
   const trimmed = version.trim();
@@ -75,9 +88,7 @@ export function satisfiesVersionRange(
   actualVersion: string | undefined,
 ): boolean {
   if (!actualVersion) return false;
-  const match = RANGE_RE.exec(range.trim());
+  const match = parseRange(range);
   if (!match) return true; // unparseable = wildcard per ADR-0084
-  const op = match[1]!;
-  const bound = match[2]!;
-  return satisfiesOp(runtime, op, actualVersion, bound);
+  return satisfiesOp(runtime, match.op, actualVersion, match.bound);
 }
