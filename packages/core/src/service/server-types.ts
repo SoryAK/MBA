@@ -8,9 +8,10 @@
  * not a rewrite. Ollama is the proof engine: it is a single long-running
  * daemon that loads/unloads models in-place over HTTP, so its lifecycle shape
  * is genuinely different — no per-model process, no owned PID, no G1
- * group-kill, no warmup.
+ * group-kill. llama.cpp `--warmup` / `--no-warmup` live in the recipe flags;
+ * MBA does not POST /completion after health.
  *
- *   llama.cpp  boot: spawn detached + health + warmup   stop: group-kill
+ *   llama.cpp  boot: spawn detached + health            stop: group-kill
  *               health: GET /health on the model port   pid: owned
  *               slots: POST /slots/{id}?action=save|restore|erase
  *                      GET  /slots  (list). Files stay in G3 kv/<fork>/slots.
@@ -79,8 +80,6 @@ export interface TypeBootInput {
   readonly binaryPath?: string;
   /** llama.cpp: tuning CLI args (from the boot recipe). */
   readonly cliArgs?: string[];
-  /** llama.cpp: warmup generation length (tokens). */
-  readonly warmupTokens?: number;
 }
 
 /** The lifecycle capability block for one server type. */
@@ -115,7 +114,6 @@ const llamaCppOps: ServerTypeOps = {
         port: input.port,
         flags: input.cliArgs ?? [],
         fork: input.fork ?? "upstream",
-        warmupTokens: input.warmupTokens ?? 350,
       },
       seams,
     );

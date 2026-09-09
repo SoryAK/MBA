@@ -6,7 +6,7 @@
  * file a human can `tail`. This module mirrors every trace line to a real
  * file — `~/.local/share/mba/logs/mba-daemon.log`, alongside the per-port
  * `llama-server-<port>.log` files — so the whole boot sequence (recipe →
- * port check → spawn → health polls → warmup → outcome) is inspectable.
+ * port check → spawn → health polls → outcome) is inspectable.
  *
  * Gated by `MBA_TRACE` (default ON while boot debugging is active; set
  * `MBA_TRACE=off` to silence). Writes are synchronous and low-frequency

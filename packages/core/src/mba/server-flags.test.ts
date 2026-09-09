@@ -215,6 +215,14 @@ describe("buildLlamaServerFlags", () => {
     });
     expect(disabled).not.toContain("--reasoning-preserve");
   });
+
+  it("emits llama.cpp --warmup when warmupTokens > 0 and --no-warmup at 0", () => {
+    expect(buildLlamaServerFlags(LLAMA_CPP_DEFAULTS)).toContain("--warmup");
+    expect(buildLlamaServerFlags(LLAMA_CPP_DEFAULTS)).not.toContain("--no-warmup");
+    const skipped = buildLlamaServerFlags({ ...LLAMA_CPP_DEFAULTS, warmupTokens: 0 });
+    expect(skipped).toContain("--no-warmup");
+    expect(skipped).not.toContain("--warmup");
+  });
 });
 
 describe("extraArgs (open-ended llama.cpp flags)", () => {
@@ -307,5 +315,11 @@ describe("extraArgs (open-ended llama.cpp flags)", () => {
         extraArgs: { "no-slots": true },
       }),
     ).toThrow(/no-slots/);
+    expect(() =>
+      buildLlamaServerFlags({
+        ...LLAMA_CPP_DEFAULTS,
+        extraArgs: { warmup: true },
+      }),
+    ).toThrow(/warmup/);
   });
 });
