@@ -132,6 +132,8 @@ export function resolveRecipe(
   if (machineInfo !== undefined && machineOverlay !== "off") {
     overlay = applyMachineOverlay(flags, modelFile, machineInfo);
     if (machineOverlay === "enforce") {
+      // Apply ctxSize and gpuLayers clamps. Boot still refuses if the
+      // clamped recipe cannot fit (warn/off do not apply these flags).
       effectiveFlags = overlay.flags;
       fitsMachine = overlay.clampedFits;
     } else {

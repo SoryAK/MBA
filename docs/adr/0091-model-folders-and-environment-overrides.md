@@ -191,7 +191,7 @@ bindings:
    `notes.md` is operator-only and is never injected. Family file is the
    default; a model file replaces it (not concatenated). They are not
    placed in `environments/` — those folders stay the four JSON/JSONL
-   binding types. Pull writes TODO stubs; live injection is a later cut.
+   binding types. Pull writes empty files; live injection is a later cut.
 
 ### Merge ladder
 

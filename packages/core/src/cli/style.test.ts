@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { homedir } from "node:os";
 import {
   brand,
   clipLine,
   doneBox,
   option,
   paint,
+  previewBox,
+  shortenHome,
   visibleLen,
   BOLD,
   CYAN,
@@ -48,11 +51,48 @@ describe("cli style", () => {
     expect(box).toContain("BOOTED");
     expect(box).toContain("qwen");
     expect(box).toContain("╭");
+    const lens = box.split("\n").map(visibleLen);
+    expect(new Set(lens).size).toBe(1);
+  });
+
+  it("keeps the right edge aligned when a value is longer than the terminal", () => {
+    process.env.NO_COLOR = "1";
+    const box = doneBox("PULLED", [["weights", "x".repeat(10_000)]]);
+    const lines = box.split("\n");
+    expect(new Set(lines.map(visibleLen)).size).toBe(1);
+    expect(lines[2] ?? "").toMatch(/…│$/);
+    expect(lines[0]?.startsWith(" ╭")).toBe(true);
+    expect(lines[0]?.endsWith("╮")).toBe(true);
+  });
+
+  it("shortens $HOME to ~", () => {
+    expect(shortenHome(`${homedir()}/.local/share/mba`)).toBe("~/.local/share/mba");
+    expect(shortenHome("/opt/mba")).toBe("/opt/mba");
   });
 
   it("clips painted lines by visible width", () => {
     process.env.NO_COLOR = "1";
     const line = option(true, "qwen-very-long-id", "family extra");
     expect(visibleLen(clipLine(line, 12))).toBeLessThanOrEqual(12);
+  });
+
+  it("renders a two-pane preview box with a straight right edge", () => {
+    process.env.NO_COLOR = "1";
+    const box = previewBox({
+      title: "search",
+      count: "2/5",
+      left: [" ▸ ● unsloth/Qwen3", "   ○ Qwen/Qwen2.5"],
+      preview: [
+        ["repo", "unsloth/Qwen3-Coder-30B"],
+        ["↓", "12,345"],
+        ["♥", "89"],
+      ],
+    });
+    expect(new Set(box.map(visibleLen)).size).toBe(1);
+    expect(box[0]).toMatch(/^ ╭─+╮$/);
+    expect(box.some((l) => l.includes("┬"))).toBe(true);
+    expect(box.some((l) => l.includes("unsloth/Qwen3"))).toBe(true);
+    expect(box.some((l) => l.includes("12,345"))).toBe(true);
+    expect(box.at(-1)).toMatch(/╯$/);
   });
 });
