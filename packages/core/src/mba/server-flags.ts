@@ -72,6 +72,8 @@ export const MANAGED_LLAMA_FLAGS: ReadonlySet<string> = new Set([
   "flash-attn",
   "ctk",
   "ctv",
+  "warmup",
+  "no-warmup",
   "spec-type",
   "spec-draft-n-max",
 ]);
@@ -251,6 +253,10 @@ export function buildLlamaServerFlags(flags: ResolvedLlamaFlags): string[] {
   // KV cache quantization: always q8_0 (boot script parity).
   args.push("-ctk", "q8_0");
   args.push("-ctv", "q8_0");
+  // llama.cpp's own empty-run warmup during load (not an MBA POST /completion).
+  // >0 → --warmup; 0 → --no-warmup. The token count is not forwarded.
+  if (flags.warmupTokens > 0) args.push("--warmup");
+  else args.push("--no-warmup");
 
   // Only add spec flags if specType is not "none"
   if (flags.specType !== "none") {

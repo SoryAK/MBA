@@ -107,7 +107,7 @@ export interface BootRecipe {
   readonly modelFile: string;
   /** Tuning CLI args (from `buildLlamaServerFlags`) — deployment facts excluded. */
   readonly cliArgs: string[];
-  /** Post-boot warm-up generation length (tokens). */
+  /** llama.cpp `--warmup` on/off (`0` → `--no-warmup`; count is not sent). */
   readonly warmupTokens: number;
   /** Machine-overlay clamping notes (empty if no machine info was supplied). */
   readonly annotations: readonly string[];
@@ -212,8 +212,9 @@ export type BootServerResult =
  * registry entry for it is cleaned up before booting. Q1 duplicate-model
  * rule (Phase 3): a model file already served by a registered entry is
  * refused (`duplicate-model`) — one server per model; stop the existing
- * one first. The boot resolves only after health + warmup (Perf #2); a
- * failed boot is reported as `boot-failed` and leaves no registry entry.
+ * one first. The boot resolves when /health is ok (llama.cpp warmup, if
+ * passed, is llama.cpp's load flag, not an MBA POST). A failed boot is
+ * reported as `boot-failed` and leaves no registry entry.
  */
 export async function bootServer(input: BootServerInput): Promise<BootServerResult> {
   const serverType = input.serverType ?? "llama.cpp";
@@ -362,8 +363,8 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
     };
   }
 
-  // Dispatch to the type's boot (health + warmup for llama.cpp; load for
-  // ollama). A failure reports `boot-failed` and leaves no registry entry.
+  // Dispatch to the type's boot (health for llama.cpp; load for ollama).
+  // A failure reports `boot-failed` and leaves no registry entry.
   try {
     const entry = await ops.boot(
       {
@@ -374,7 +375,6 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
         fork,
         binaryPath,
         cliArgs: recipe?.cliArgs,
-        warmupTokens: recipe?.warmupTokens,
       },
       input.seams,
     );

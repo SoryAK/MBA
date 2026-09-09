@@ -44,7 +44,7 @@ async function restartServer(
       await servicePost<{ stopped: string }>(baseUrl, "/servers/stop", { id: target.id });
     }
   }
-  process.stdout.write(`[mba] rebooting ${modelId} on port ${port} (waits for warmup)…\n`);
+  process.stdout.write(`[mba] rebooting ${modelId} on port ${port} (waits for health)…\n`);
   const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", { modelFile: file, port });
   process.stdout.write(
     doneBox("BOOTED", [

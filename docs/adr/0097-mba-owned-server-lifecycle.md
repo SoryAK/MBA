@@ -41,9 +41,9 @@ folder, perf #2 waits for warmup"*):
 4. **G3 — model-specific KV folder.** The slot-save path is derived from the
    model file: `<dirname(modelFile)>/kv/<fork>/slots`, so each model's KV
    cache lives next to its weights.
-5. **Perf #2 — boot blocks until warm.** `POST /servers/boot` does not return
-   until the server is both healthy *and* has completed a warmup request, so a
-   successful boot means "ready to serve," not "process started."
+5. **Perf #2 — boot blocks until /health.** `POST /servers/boot` does not
+   return until llama.cpp reports healthy. Warmup, when the recipe asks for
+   it, is llama.cpp `--warmup` during load — not an MBA `POST /completion`.
 
 ## Decision
 
@@ -60,8 +60,8 @@ model). This gives the daemon a live, queryable view of what is running.
 `mba/server-lifecycle.ts` provide:
 
 - `bootLlamaServer` — spawns `llama-server` `detached: true` (G1), builds flags
-  via `server-flags.ts`, waits for health then warmup (perf #2), and records
-  the owned process group.
+  via `server-flags.ts` (including `--warmup` / `--no-warmup` from
+  `warmupTokens`), waits for /health, and records the owned process group.
 - `stopLlamaServer` / `killProcessGroup` — SIGTERM the group, probe up to
   10×200ms, then SIGKILL (G1).
 - `bootServer` — the service-level orchestrator: G2 port-busy check → resolve
@@ -110,8 +110,9 @@ the barrel (`mba/index.ts`) is trimmed to the surviving lifecycle exports.
 - **Standalone framework goal met (ADR-0092).** The lifecycle no longer depends
   on a the original project shell script; MBA can boot/stop servers with nothing but the
   binary path and the model file.
-- **Boot means ready.** Because boot blocks until warmup (perf #2), callers
+- **Boot means ready.** Because boot blocks until /health (perf #2), callers
   (CLI, switch executor, MCP) can treat a 201 as "safe to send traffic."
+  llama.cpp warmup, if requested, already ran as part of load.
 - **Multiple concurrent servers.** G2's per-port policy (refuse busy, allow new)
   sets up Phase 3's multi-instance story without conflating "same port" with
   "same model."

@@ -319,7 +319,7 @@ async function cmdServersBoot(
     return entry;
   }
   const modelFile = await resolveModelFile(baseUrl, modelRef);
-  process.stdout.write(`[mba] booting ${modelFile} on port ${port} (waits for warmup)…\n`);
+  process.stdout.write(`[mba] booting ${modelFile} on port ${port} (waits for health)…\n`);
   const body: Record<string, unknown> = { modelFile, port };
   if (binaryPath) body.binaryPath = binaryPath;
   const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", body);

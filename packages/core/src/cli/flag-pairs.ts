@@ -31,6 +31,7 @@ const GROUP_FLAGS: ReadonlyArray<{ readonly name: string; readonly flags: readon
     ],
   },
   { name: "reasoning", flags: ["--reasoning-budget", "--reasoning-preserve"] },
+  { name: "warmup", flags: ["--warmup", "--no-warmup"] },
 ];
 
 export function pairCliArgs(args: readonly string[]): FlagPair[] {
