@@ -12,13 +12,14 @@ Or preview in the browser (no extension):
 npx likec4 serve docs/architecture
 ```
 
-Then open the URL it prints (usually `http://localhost:5173`). Views: `/view/index`, `/view/house`, `/view/pull`, `/view/boot`, `/view/connect`.
+Then open the URL it prints (usually `http://localhost:5173`). Views: `/view/index`, `/view/house`, `/view/pairing`, `/view/pull`, `/view/boot`, `/view/connect`.
 
 | View | Story |
 | --- | --- |
 | `index` | Landscape |
 | `house` / `pull` | Store: pull, scaffold, the two cards |
-| `boot` | Resolve adapter (paired client env when connected) → spawn llama-server |
-| `clients-landscape` / `connect` | Harness + project + proxy. `mba connect` pairs a token and stages `instructions.md`. Operator may add a client (name + envelope). |
+| `boot` | Paired client env (else Copilot/VS Code) → spawn llama-server |
+| `pairing` | `sessions.json` (token hash) and `clients.json` (added envelopes) |
+| `clients-landscape` / `connect` | Stage card, mint token, proxy requires Bearer. Add a client is name + envelope. |
 
-One `instructions.md` in the store. Environment (`harness` + `ide`) only changes the **filename/path** when staging exists. `notes.md` never leaves the house.
+One `instructions.md` in the store. Environment folders overlay **dials**, not the card. Staging copies the winning card into a harness file (built-in table or `clients.json`). `notes.md` never leaves the house.
