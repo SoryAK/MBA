@@ -74,4 +74,3 @@ After CLI changes, rebuild this package so a linked `mba` picks them up.
 ## Docs
 
 - [Repo README](../../README.md) — operator pitch, run, onboarding, CLI
-- [`docs/adr/`](../../docs/adr/) — architecture decision records
