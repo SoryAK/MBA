@@ -30,6 +30,18 @@ describe("probeLoadedModel", () => {
     expect(loaded).toBe("qwen3-coder-30b");
   });
 
+  it("strips trailing slashes on the upstream URL before probing", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe("http://127.0.0.1:8080/v1/models");
+      return new Response(JSON.stringify({ data: [{ id: "qwen3-coder-30b" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const loaded = await probeLoadedModel("http://127.0.0.1:8080///", fetchMock);
+    expect(loaded).toBe("qwen3-coder-30b");
+  });
+
   it("returns null when the upstream is unreachable", async () => {
     const fetchMock = vi.fn(async () => {
       throw new Error("ECONNREFUSED");
