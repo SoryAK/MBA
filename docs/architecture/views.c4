@@ -1,10 +1,10 @@
 views {
   view index {
     title "MBA landscape"
-    description "Three stories: store the house, boot the server, talk through a harness."
+    description "Three stories: store the house, boot the server, connect a client."
     include operator, host, harness, llama, project, mba
     include mba.*
-    exclude mba.store.*
+    exclude mba.store.*, mba.state.*
     autoLayout LeftRight
   }
 
@@ -15,10 +15,17 @@ views {
     include -> mba.store
   }
 
+  view pairing of mba.state {
+    title "3 — Pairing state"
+    description "Token hash and operator-defined envelopes. Empty sessions = door open. Not the model house."
+    include *
+    include -> mba.state
+  }
+
   view clients-landscape {
     title "3 — Harness, project, proxy"
-    description "MBA is not the client. Environment (harness + ide) picks the envelope filename."
-    include harness, project, project.*, mba.proxy, mba.service, llama, mba.mcp
+    description "MBA is not the client. Built-in or added name picks the envelope. Pairing token is the lock."
+    include operator, mba.cli, harness, project, project.*, mba.proxy, mba.service, llama, mba.state, mba.state.*
     autoLayout LeftRight
   }
 
@@ -44,30 +51,38 @@ views {
 
   dynamic view boot {
     title "2 — Boot the model"
-    description "Resolve the house into llama.cpp flags using the paired client's environment, then spawn. Slot-save-path is already on disk from pull."
+    description "Paired client supplies harness+ide+runtime. No pairing → Copilot + VS Code + llama.cpp. Env folders overlay dials, not instructions.md."
     variant sequence
 
     operator -> mba.cli "mba s boot <id>"
     mba.cli -> mba.service "POST boot"
-    mba.service -> mba.resolver "family then model then env folder (paired client)"
-    mba.resolver -> mba.store "read yaml, bcb, tcb, server_setup"
+    mba.service -> mba.state.sessions "newest pairing for this model"
+    mba.service -> mba.resolver "family, model, then env folder"
+    mba.resolver -> mba.store "yaml, bcb, tcb, server_setup"
     mba.service -> llama "spawn llama-server (ctx, GPU, slot-save-path)"
     mba.service -> mba.store.kv "use existing slot dirs"
   }
 
   dynamic view connect {
     title "3 — Connect a client"
-    description "Harness builds the prompt from the project. MBA pairs a token, stages the model card, then proxies the HTTP call."
+    description "Stage the card, mint a token once, store the hash. Chat through the proxy must present that Bearer for the paired model."
     variant sequence
 
+    opt "sixth editor" {
+      operator -> mba.cli "mba clients add --envelope"
+      mba.cli -> mba.state.clients "name + path"
+    }
     operator -> mba.cli "mba connect"
     mba.cli -> mba.service "POST /connect"
-    mba.service -> mba.resolver "winning instructions.md"
+    mba.service -> mba.state.clients "envelope if added"
+    mba.service -> mba.resolver "winning instructions.md (family then model)"
     mba.service -> project.envelope "copy into harness slot"
+    mba.service -> mba.state.sessions "store SHA-256, return token once"
     harness -> project.card "reads project CLAUDE.md"
     harness -> project.envelope "same pipe as CLAUDE.md"
-    harness -> mba.proxy "POST /v1/chat/completions (Bearer token)"
-    mba.proxy -> llama "forward"
+    harness -> mba.proxy "POST /v1/chat/completions (Bearer)"
+    mba.proxy -> mba.state.sessions "hash Bearer, match model"
+    mba.proxy -> llama "forward (strip Authorization)"
     opt "sanitize actually changed what the model sees" {
       mba.proxy -> llama "POST /slots/0?action=erase"
     }

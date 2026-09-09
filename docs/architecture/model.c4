@@ -1,6 +1,6 @@
 model {
   operator = actor "Operator" {
-    description "You. Pull, boot, fill cards, read notes."
+    description "You. Pull, boot, connect a client, fill cards, read notes."
   }
 
   host = system "Download host" {
@@ -9,7 +9,7 @@ model {
   }
 
   harness = app "Harness" {
-    description "Cursor, Copilot, Cline, Claude Code. Not MBA. Reads the project and talks HTTP to the model endpoint."
+    description "Cursor, Copilot, Cline, Claude Code, Continue, or a name you added. Not MBA. Reads the project and talks HTTP to the MBA proxy."
     style { color sky }
   }
 
@@ -28,7 +28,8 @@ model {
     }
     envelope = file "Staged model card" {
       description """
-        Live copy of the winning instructions.md. Filename from harness+ide.
+        Live copy of the winning instructions.md. Path from the built-in
+        harness table or from an added client (name + envelope).
         The project's own CLAUDE.md stays the project's. notes.md never lands here.
       """
     }
@@ -39,19 +40,19 @@ model {
     technology "Node"
 
     cli = app "mba CLI" {
-      description "mba models pull, mba s boot, status."
+      description "mba models, mba s boot, mba connect, mba clients add."
     }
     service = service "Service" {
-      description "Daemon on 127.0.0.1. Owns pull, boot, registry, proxy."
+      description "Daemon on 127.0.0.1. Owns pull, boot, pairing, registry, proxy."
     }
     resolver = component "Resolver" {
-      description "Family then model, then environment folder. Last-specific wins."
+      description "Family then model, then environment folder (harness+ide+runtime). Last-specific wins. Env folders overlay dials, not instructions.md."
     }
     mcp = service "MCP server" {
       description "Control plane for hosts. Not on the per-request chat path."
     }
     proxy = service "Proxy" {
-      description "Chat HTTP in, llama-server out. Sanitize mop and slot erase live here."
+      description "Chat HTTP in, llama-server out. Pairing check, sanitize mop, and slot erase live here."
     }
     store = store "Model store" {
       description "The house for one model. Source of truth."
@@ -69,20 +70,33 @@ model {
         description "kv/upstream/slots and kv/llama.cpp/slots. Boot-ready empty dirs on pull."
       }
     }
+    state = store "Daemon state" {
+      description "Local pairing and added clients. Not the model house."
+
+      sessions = file "sessions.json" {
+        description "Paired model + harness + project. SHA-256 of the token. Empty file = chat open."
+      }
+      clients = file "clients.json" {
+        description "Operator-defined name + envelope path. The five built-in harnesses live in code. No disk scan."
+      }
+    }
   }
 
   operator -> mba.cli "runs commands"
   mba.cli -> mba.service "HTTP to the daemon"
+  mba.cli -> mba.state.clients "mba clients add"
   mba.service -> mba.resolver "resolve adapter"
   mba.resolver -> mba.store "read YAML and bindings"
   mba.service -[writes]-> mba.store "pull writes the house"
-  mba.service -> llama "spawn + flags + slot-save-path"
+  mba.service -> mba.state.sessions "read/write pairing (hash at rest)"
+  mba.service -> llama "spawn + flags from paired env"
   mba.mcp -> mba.service "control plane"
-  harness -> mba.proxy "chat completions"
+  harness -> mba.proxy "chat completions (Bearer)"
+  mba.proxy -> mba.state.sessions "match hashed token + model"
   mba.proxy -> llama "forward (and mop / erase slot)"
   harness -> project.card "injects project playbook"
-  mba.service -> project.envelope "stage card (env picks filename)" {
-    description "Same instructions.md. Envelope from harness+ide."
+  mba.service -> project.envelope "stage card" {
+    description "Same instructions.md. Envelope from built-in table or clients.json."
   }
   mba.service -> host "download GGUF"
 }
