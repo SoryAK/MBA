@@ -87,6 +87,7 @@ interface LlamaBinaryRow {
 
 interface ResolvePreview {
   readonly cliArgs: string[];
+  readonly env?: { harness: string; ide: string; serverRuntime: string };
   readonly binary?: LlamaBinaryRow;
   readonly binaries?: ReadonlyArray<LlamaBinaryRow>;
   readonly recommended?: LlamaBackend;
@@ -149,6 +150,7 @@ export function printBootPreview(
     binary?: { path: string; backend: string; nickname?: string };
     warning?: string;
     gpus?: readonly string[];
+    env?: { harness: string; ide: string; serverRuntime: string };
   },
 ): void {
   const pairs = pairCliArgs(cliArgs);
@@ -160,6 +162,11 @@ export function printBootPreview(
   process.stdout.write(`${brand("boot")}\n`);
   process.stdout.write(`${kv("model", modelId, 5)}\n`);
   process.stdout.write(`${kv("port", String(port), 5)}\n`);
+  if (extras?.env) {
+    process.stdout.write(
+      `${kv("env", `${extras.env.harness}+${extras.env.ide}+${extras.env.serverRuntime}`, 5)}\n`,
+    );
+  }
   if (extras?.gpus && extras.gpus.length > 0) {
     process.stdout.write(`${kv("gpu", extras.gpus.join(", "), 5)}\n`);
   }
@@ -189,6 +196,7 @@ function previewExtras(
   binary?: { path: string; backend: string; nickname?: string };
   warning?: string;
   gpus?: readonly string[];
+  env?: { harness: string; ide: string; serverRuntime: string };
 } {
   const bin =
     binaryPath !== undefined
@@ -200,6 +208,7 @@ function previewExtras(
     binary: bin,
     warning,
     gpus: recipe.gpus,
+    env: recipe.env,
   };
 }
 

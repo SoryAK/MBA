@@ -70,7 +70,7 @@ mba status
 
 `mba models pull` downloads the GGUF (resume + sha256). HuggingFace repos take the digest from LFS metadata; other sources need `--sha256`. After verify it parses the header locally, writes a TODO-marked adapter (and a family tier if that family is new), empty BCB/TCB/`server_setup` bindings, and empty `instructions.md` (the model reads this later) plus `notes.md` (you read this; never injected). A failed verify deletes the partial and leaves no scaffold.
 
-`mba s boot` resolves that adapter tree into llama.cpp flags — the same chain as the preview — then boots. `mba models search` is the interactive HuggingFace path into the same pull.
+`mba s boot` resolves that adapter tree into llama.cpp flags — the same chain as the preview — then boots. `mba models search` is the interactive HuggingFace path into the same pull. `mba models stage` copies a non-empty winning `instructions.md` into a file the harness already injects (`CLAUDE.local.md`, Cursor rules, …). `mba connect` does that and mints a Bearer token; once any session exists, chat through the MBA proxy requires it. `notes.md` stays in the store.
 
 ## CLI
 
@@ -79,6 +79,8 @@ mba status
 ```sh
 mba models               # pick and edit dials
 mba models show qwen
+mba models stage qwen --harness cursor
+mba connect qwen --harness cursor
 mba servers              # list / boot / stop (TTY)
 mba s logs <id>
 mba machine              # enforce | warn | off

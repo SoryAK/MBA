@@ -17,6 +17,8 @@ import {
 import { listHfGgufs, searchHfModels } from "../model/hf-resolve.js";
 import { handleRestartPrompt, parseValue } from "./restart.js";
 import type { ModelConfig, SetResult } from "./types.js";
+import { KNOWN_HARNESSES } from "../mba/envelope.js";
+import { harnessPickerRows } from "./harness-choices.js";
 
 function printConfig(cfg: ModelConfig): void {
   process.stdout.write(`${brand("show")}  ${paint(cfg.modelId, BOLD)}\n`);
@@ -141,10 +143,12 @@ export async function cmdModelsMenu(baseUrl: string, assumeNo: boolean): Promise
   for (;;) {
     const pick = await pickLabeledInteractive("models", [
       { label: "edit", value: "edit", preview: [["do", "pick a model and change dials"]] },
+      { label: "stage", value: "stage", preview: [["do", "copy instructions.md into the project"]] },
       { label: "search", value: "search", preview: [["do", "HuggingFace search → pull"]] },
     ]);
     if (pick === null) return;
     if (pick === "edit") await cmdModelsPick(baseUrl, assumeNo);
+    else if (pick === "stage") await cmdModelsStage(baseUrl, [], false);
     else await cmdModelsSearch(baseUrl);
   }
 }
@@ -363,4 +367,194 @@ export async function dispatchModelsPull(
   }
   if (!url || !id) fail(PULL_USAGE);
   await cmdModelsPull(baseUrl, url, id, sha256, family);
+}
+
+const STAGE_USAGE =
+  "usage: mba models stage [id] [--harness <name>] [--ide <name>] [--project <dir>]";
+
+interface StageResult {
+  readonly modelId: string;
+  readonly action: "wrote" | "removed" | "skipped";
+  readonly reason?: string;
+  readonly envelope: string;
+  readonly dest: string;
+  readonly source?: string;
+}
+
+function takeFlag(args: readonly string[], i: number, usage: string = STAGE_USAGE): string {
+  const value = args[i];
+  if (!value || value.startsWith("-")) fail(usage);
+  return value;
+}
+
+export async function cmdModelsStage(
+  baseUrl: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<void> {
+  let id: string | undefined;
+  let harness: string | undefined = process.env.MBA_HARNESS;
+  let ide: string | undefined = process.env.MBA_IDE;
+  let project: string | undefined = process.env.MBA_WORKSPACE_ROOT;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--harness") harness = takeFlag(args, ++i);
+    else if (a === "--ide") ide = takeFlag(args, ++i);
+    else if (a === "--project") project = takeFlag(args, ++i);
+    else if (a.startsWith("-")) fail(`unknown flag for stage: ${a}\n${STAGE_USAGE}`);
+    else if (!id) id = a;
+    else fail(STAGE_USAGE);
+  }
+
+  if (!id) {
+    if (!process.stdin.isTTY) fail(STAGE_USAGE);
+    const models = await listModels(baseUrl);
+    if (models.length === 0) {
+      process.stdout.write("[mba] no models in the adapter tree\n");
+      return;
+    }
+    const picked = await pickModelInteractive(models);
+    if (picked === null) {
+      process.stdout.write("[mba] cancelled\n");
+      return;
+    }
+    id = picked.id;
+  }
+
+  if (!harness) {
+    if (!process.stdin.isTTY) {
+      fail(`${STAGE_USAGE}\n  harness: ${KNOWN_HARNESSES.join(", ")} (or an added client)`);
+    }
+    const picked = await pickLabeledInteractive("harness", harnessPickerRows());
+    if (picked === null) {
+      process.stdout.write("[mba] cancelled\n");
+      return;
+    }
+    harness = picked;
+  }
+
+  const projectRoot = project && project.length > 0 ? project : process.cwd();
+  const body: Record<string, string> = { id, projectRoot, harness };
+  if (ide && ide.length > 0) body.ide = ide;
+
+  const result = await servicePost<StageResult>(baseUrl, "/models/stage", body);
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  if (result.action === "wrote") {
+    process.stdout.write(`[mba] staged ${result.modelId} → ${result.envelope}\n`);
+    return;
+  }
+  if (result.action === "removed") {
+    process.stdout.write(
+      `[mba] removed ${result.envelope} — ${result.reason ?? "no card"}\n`,
+    );
+    return;
+  }
+  process.stdout.write(
+    `[mba] skipped staging ${result.modelId} — ${result.reason ?? "no card"}\n`,
+  );
+}
+
+const CONNECT_USAGE =
+  "usage: mba connect [id] [--harness <name>] [--ide <name>] [--project <dir>]\n       mba connect --revoke [id]";
+
+interface ConnectResult {
+  readonly token: string;
+  readonly modelId: string;
+  readonly harness: string;
+  readonly projectRoot: string;
+  readonly stage:
+    | { readonly action: string; readonly reason?: string; readonly envelope?: string; readonly dest?: string }
+    | { readonly action: "conflict"; readonly error: string };
+}
+
+export async function cmdModelsConnect(
+  baseUrl: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<void> {
+  let revoke = false;
+  let id: string | undefined;
+  let harness: string | undefined = process.env.MBA_HARNESS;
+  let ide: string | undefined = process.env.MBA_IDE;
+  let project: string | undefined = process.env.MBA_WORKSPACE_ROOT;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--revoke") revoke = true;
+    else if (a === "--harness") harness = takeFlag(args, ++i, CONNECT_USAGE);
+    else if (a === "--ide") ide = takeFlag(args, ++i, CONNECT_USAGE);
+    else if (a === "--project") project = takeFlag(args, ++i, CONNECT_USAGE);
+    else if (a.startsWith("-")) fail(`unknown flag for connect: ${a}\n${CONNECT_USAGE}`);
+    else if (!id) id = a;
+    else fail(CONNECT_USAGE);
+  }
+
+  if (revoke) {
+    const body: Record<string, string> = {};
+    if (id) body.id = id;
+    if (harness) body.harness = harness;
+    if (project) body.projectRoot = project;
+    const result = await servicePost<{ pairing: { active: boolean; count: number } }>(
+      baseUrl,
+      "/connect/revoke",
+      body,
+    );
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(
+      result.pairing.active
+        ? `[mba] revoked — ${result.pairing.count} session(s) still paired\n`
+        : "[mba] pairing off — chat is open again\n",
+    );
+    return;
+  }
+
+  if (!id) {
+    if (!process.stdin.isTTY) fail(CONNECT_USAGE);
+    const models = await listModels(baseUrl);
+    if (models.length === 0) {
+      process.stdout.write("[mba] no models in the adapter tree\n");
+      return;
+    }
+    const picked = await pickModelInteractive(models);
+    if (picked === null) {
+      process.stdout.write("[mba] cancelled\n");
+      return;
+    }
+    id = picked.id;
+  }
+
+  if (!harness) {
+    if (!process.stdin.isTTY) {
+      fail(`${CONNECT_USAGE}\n  harness: ${KNOWN_HARNESSES.join(", ")} (or an added client)`);
+    }
+    const picked = await pickLabeledInteractive("harness", harnessPickerRows());
+    if (picked === null) {
+      process.stdout.write("[mba] cancelled\n");
+      return;
+    }
+    harness = picked;
+  }
+
+  const projectRoot = project && project.length > 0 ? project : process.cwd();
+  const body: Record<string, string> = { id, projectRoot, harness };
+  if (ide && ide.length > 0) body.ide = ide;
+
+  const result = await servicePost<ConnectResult>(baseUrl, "/connect", body);
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`[mba] connected ${result.modelId} as ${result.harness}\n`);
+  process.stdout.write(`[mba] token  ${result.token}\n`);
+  process.stdout.write(`[mba] point the client at ${baseUrl}/v1  (Authorization: Bearer <token>)\n`);
+  if ("envelope" in result.stage && result.stage.action === "wrote") {
+    process.stdout.write(`[mba] staged → ${result.stage.envelope}\n`);
+  } else if ("error" in result.stage) {
+    process.stdout.write(`[mba] card not overwritten — ${result.stage.error}\n`);
+  }
 }

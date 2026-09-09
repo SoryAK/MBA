@@ -8,7 +8,7 @@ describe("parseMbaArgv", () => {
     expect(parseMbaArgv(["-h"]).route).toEqual({ cmd: "help", topic: "overview" });
     expect(parseMbaArgv(["--help"]).route).toEqual({ cmd: "help", topic: "overview" });
     expect(parseMbaArgv(["models", "--help"]).route).toEqual({ cmd: "help", topic: "models" });
-    expect(parseMbaArgv(["help", "servers"]).route).toEqual({ cmd: "help", topic: "servers" });
+    expect(parseMbaArgv(["help", "clients"]).route).toEqual({ cmd: "help", topic: "clients" });
   });
 
   it("strips --yes into assumeNo", () => {
@@ -47,6 +47,16 @@ describe("parseMbaArgv", () => {
       cmd: "models",
       action: "pull",
       args: ["owner/repo", "--id", "qwen"],
+    });
+    expect(parseMbaArgv(["models", "stage", "qwen", "--harness", "cursor"]).route).toEqual({
+      cmd: "models",
+      action: "stage",
+      args: ["qwen", "--harness", "cursor"],
+    });
+    expect(parseMbaArgv(["connect", "qwen", "--harness", "cursor"]).route).toEqual({
+      cmd: "models",
+      action: "connect",
+      args: ["qwen", "--harness", "cursor"],
     });
   });
 
@@ -123,6 +133,14 @@ describe("parseMbaArgv", () => {
     expect(parseMbaArgv(["s", "boot", "qwen", "8080"]).route).toEqual({
       cmd: "servers",
       args: ["boot", "qwen", "8080"],
+    });
+    expect(parseMbaArgv(["c", "list"]).route).toEqual({
+      cmd: "clients",
+      args: ["list"],
+    });
+    expect(parseMbaArgv(["clients", "revoke", "--all"]).route).toEqual({
+      cmd: "clients",
+      args: ["revoke", "--all"],
     });
   });
 

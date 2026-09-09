@@ -191,7 +191,9 @@ bindings:
    `notes.md` is operator-only and is never injected. Family file is the
    default; a model file replaces it (not concatenated). They are not
    placed in `environments/` — those folders stay the four JSON/JSONL
-   binding types. Pull writes empty files; live injection is a later cut.
+   binding types. Pull writes empty files. `mba models stage` copies a non-empty
+   winning card into the project as a harness-readable envelope (filename from
+   `harness` + `ide`). `notes.md` never leaves the store.
 
 ### Merge ladder
 
