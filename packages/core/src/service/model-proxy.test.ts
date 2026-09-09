@@ -8,6 +8,7 @@ import { defaultStorePaths } from "./config-store.js";
 import { writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { hashToken, mintToken, writeSessions } from "./sessions.js";
 import { openBcbDb } from "../bcb/kill-state.js";
+import { listModelEvents, openModelHistoryDb } from "./model-history.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 
 const UPSTREAM = "http://127.0.0.1:8081";
@@ -482,7 +483,7 @@ describe("model proxy — TCB intervention (ADR-0101 Step 2)", () => {
     };
   }
 
-  function setup(opts: { smallFile: string; db: DatabaseSync }) {
+  function setup(opts: { smallFile: string; db: DatabaseSync; historyDb?: DatabaseSync }) {
     const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
     writeRegistry(paths.upstreamsPath, [
       entry("llama-cpp-8080", MODEL_A, 8080, "2026-01-01T00:00:00.000Z"),
@@ -493,8 +494,9 @@ describe("model proxy — TCB intervention (ADR-0101 Step 2)", () => {
       fetch: fetchImpl,
       tcbConfig: () => killConfig,
       bcbDb: opts.db,
+      historyDb: opts.historyDb,
     });
-    return { app, chatCalls };
+    return { app, chatCalls, paths };
   }
 
   it("forwards a clean request verbatim (no tool calls)", async () => {
@@ -560,6 +562,34 @@ describe("model proxy — TCB intervention (ADR-0101 Step 2)", () => {
     expect(err.error.type).toBe("bcb_kill");
     // Only the first (nudge) request reached the upstream.
     expect(chatCalls).toEqual([8080]);
+    db.close();
+  });
+
+  it("keeps tool and trip rows in history after kill-state resets", async () => {
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const historyDir = mkdtempSync(join(tmpdir(), "mba-hist-"));
+    const historyDb = openModelHistoryDb(join(historyDir, "mba-model-history.db"));
+    const smallFile = join(mkdtempSync(join(tmpdir(), "mba-file-")), "small.txt");
+    writeFileSync(smallFile, "a\nb\nc");
+    const { app } = setup({ smallFile, db, historyDb });
+
+    const body = JSON.stringify(eofBody(smallFile));
+    await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body,
+    });
+    await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body,
+    });
+
+    const rows = listModelEvents(historyDb, MODEL_A);
+    expect(rows.some((r) => r.kind === "tool" && r.tool === "read_file")).toBe(true);
+    expect(rows.some((r) => r.kind === "trip" && r.rule === "eofOverflow")).toBe(true);
+    expect(rows.some((r) => r.kind === "trip" && r.tier === "kill")).toBe(true);
+    historyDb.close();
     db.close();
   });
 });
