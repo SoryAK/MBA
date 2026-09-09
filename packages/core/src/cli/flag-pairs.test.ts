@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { groupFlagPairs, pairCliArgs } from "./flag-pairs.js";
-import { printBootPreview } from "./servers.js";
+import { printBootPreview, formatLlamaServerLabel, shouldAskLlamaBinary } from "./servers.js";
 
 describe("pairCliArgs", () => {
   it("pairs a flag with the following value", () => {
@@ -83,5 +83,69 @@ describe("printBootPreview", () => {
     expect(out).toContain("compute");
     expect(out).toContain("other");
     expect(out).not.toMatch(/--ctx-size\n\s+110000/);
+  });
+
+  it("prints the llama-server backend and a mismatch note", () => {
+    process.env.NO_COLOR = "1";
+    let out = "";
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      out += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      printBootPreview("qwen3-coder-30b", 8080, ["--jinja"], {
+        binary: { path: "/opt/llama.cpp/build/bin/llama-server", backend: "hip" },
+        warning: "HIP build; no AMD GPU detected",
+        gpus: ["NVIDIA GeForce RTX 5090"],
+      });
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(out).toContain("hip");
+    expect(out).toContain("NVIDIA GeForce RTX 5090");
+    expect(out).toContain("HIP build; no AMD GPU detected");
+  });
+
+  it("puts a nickname in the boot bin line and the picker label", () => {
+    process.env.NO_COLOR = "1";
+    let out = "";
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      out += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      printBootPreview("qwen3-coder-30b", 8080, ["--jinja"], {
+        binary: {
+          path: "/home/x/llama.cpp/build/bin/llama-server",
+          backend: "hip",
+          nickname: "unsloth",
+        },
+      });
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(out).toContain("unsloth");
+    expect(formatLlamaServerLabel({ path: "/opt/a/llama-server", backend: "cuda", nickname: "rtx" })).toContain(
+      "rtx",
+    );
+    expect(formatLlamaServerLabel({ path: "/opt/a/llama-server", backend: "cuda" })).toContain("—");
+    expect(formatLlamaServerLabel({ path: "/opt/a/llama-server", backend: "vulkan" }, { removed: true })).toContain(
+      "removed",
+    );
+    expect(formatLlamaServerLabel({ path: "/opt/a/llama-server", backend: "cuda" }, { used: true })).toContain(
+      "default",
+    );
+    expect(
+      formatLlamaServerLabel({
+        path: "/home/x/llama-cuda/build/bin/llama-server",
+        backend: "cuda",
+        nickname: "cuda_bigUncSmurf",
+      }),
+    ).toContain("cuda_bigUncSmurf  ");
+    expect(shouldAskLlamaBinary(3, false, true, false)).toBe(true);
+    expect(shouldAskLlamaBinary(3, true, true, false)).toBe(false);
+    expect(shouldAskLlamaBinary(1, false, true, false)).toBe(false);
   });
 });

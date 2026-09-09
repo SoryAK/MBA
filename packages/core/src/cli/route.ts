@@ -48,7 +48,7 @@ function parseModels(rest: readonly string[]): MbaRoute {
   if (sub === "list") return { cmd: "models", action: "list", args: tail };
   if (sub === "show") return { cmd: "models", action: "show", args: tail };
   if (sub === "set") return { cmd: "models", action: "set", args: tail };
-  if (sub === "open") return { cmd: "models", action: "open", args: tail };
+  if (sub === "open" || sub === "path") return { cmd: "models", action: "open", args: tail };
   if (sub === "search") return { cmd: "models", action: "search", args: tail };
   if (sub === "pull") return { cmd: "models", action: "pull", args: tail };
   if (sub === "edit") return { cmd: "models", action: "edit", args: tail };

@@ -1,0 +1,34 @@
+specification {
+  element actor {
+    notation "Person"
+    style { shape person }
+  }
+  element system {
+    style { shape rectangle }
+  }
+  element app {
+    notation "CLI / UI"
+    style { shape browser }
+  }
+  element service {
+    notation "Process"
+    style { shape component }
+  }
+  element component {
+    style { shape component }
+  }
+  element store {
+    notation "On disk"
+    style { shape storage; color indigo }
+  }
+  element file {
+    notation "File"
+    style { shape storage }
+  }
+
+  relationship writes { color amber; line dashed }
+  relationship http { color primary }
+  relationship proposed { color amber; line dotted }
+
+  tag proposed
+}
