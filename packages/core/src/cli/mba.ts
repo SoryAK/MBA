@@ -6,7 +6,7 @@
  * Old flat verbs (config / set / open / pull / machine-overlay) are aliases.
  */
 
-import { fail, resolveServiceUrl } from "./client.js";
+import { fail, resolveServiceUrl, SERVICE_DOWN } from "./client.js";
 import { cmdCompletion } from "./completion.js";
 import { cmdEstimateMemory } from "./estimate-memory.js";
 import { usageFor } from "./help.js";
@@ -16,6 +16,7 @@ import { cmdMigratePaths } from "./migrate.js";
 import {
   cmdModelsEdit,
   cmdModelsList,
+  cmdModelsMenu,
   cmdModelsOpen,
   cmdModelsPick,
   cmdModelsSearch,
@@ -42,9 +43,7 @@ async function main(argv: readonly string[]): Promise<void> {
     }
     const baseUrl = resolveServiceUrl();
     if (!baseUrl) {
-      fail(
-        "MBA service not discovered — start it (npm run dev -w @mba-ai/core) or set MBA_SERVICE_URL",
-      );
+      fail(SERVICE_DOWN);
     }
     try {
       await cmdHome(baseUrl, skipRestart);
@@ -75,9 +74,7 @@ async function main(argv: readonly string[]): Promise<void> {
 
   const baseUrl = resolveServiceUrl();
   if (!baseUrl) {
-    fail(
-      "MBA service not discovered — start it (npm run dev -w @mba-ai/core) or set MBA_SERVICE_URL",
-    );
+    fail(SERVICE_DOWN);
   }
 
   try {
@@ -93,6 +90,10 @@ async function main(argv: readonly string[]): Promise<void> {
           case "pick":
             if (json) {
               await cmdModelsList(baseUrl, true);
+              return;
+            }
+            if (process.stdin.isTTY) {
+              await cmdModelsMenu(baseUrl, skipRestart);
               return;
             }
             await cmdModelsPick(baseUrl, skipRestart);

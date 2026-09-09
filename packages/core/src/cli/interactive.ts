@@ -1,16 +1,11 @@
 /**
  * Raw-mode interactive input primitives for the `mba` CLI (ADR-0096).
  *
- * Three small, self-contained keypress handlers — no fzf, no readline
- * prompts, just stdin raw mode + ANSI redraw:
- *   - pickModelInteractive — arrow-key menu over models, type-to-filter,
- *     Esc cancels (null)
- *   - pickFieldInteractive — arrow-key menu over dials, type-to-filter,
- *     a trailing "quit" row
- *   - askValueInteractive  — single-line value prompt with a constraint hint
+ * Menus share one chrome: a bordered list on the left and a kv preview on
+ * the right (search, home, models, servers, machine, builds). One-line
+ * prompts (value, port, yes/no, text) stay a single row.
  *
- * These own the "how" of interactive input; `mba.ts` owns the flow (which
- * prompt comes next, what to do with the answer).
+ * These own the "how" of interactive input; `mba.ts` owns the flow.
  *
  * Paint matches Prismor's wizard: cyan ▸, green ● / dim ○, bold selection.
  */
@@ -23,6 +18,8 @@ import {
   dim,
   option,
   paint,
+  previewBox,
+  shortenHome,
   BOLD,
   CYAN,
   RED,
@@ -70,6 +67,55 @@ function createMenuFrame(): {
 
 function clearLine(): void {
   process.stdout.write("\r\x1b[K");
+}
+
+const PREVIEW_LIST_WINDOW = 8;
+
+function sliceWindow<T>(
+  items: readonly T[],
+  cursor: number,
+  size: number,
+): { items: T[]; start: number } {
+  if (items.length <= size) return { items: [...items], start: 0 };
+  const start = Math.min(
+    Math.max(0, cursor - Math.floor((size - 1) / 2)),
+    items.length - size,
+  );
+  return { items: items.slice(start, start + size), start };
+}
+
+export interface PreviewPickItem {
+  readonly label: string;
+  readonly value: string;
+  readonly preview: ReadonlyArray<readonly [string, string]>;
+}
+
+function matchesQuery(it: PreviewPickItem, q: string): boolean {
+  const n = q.toLowerCase();
+  if (it.label.toLowerCase().includes(n) || it.value.toLowerCase().includes(n)) return true;
+  return it.preview.some(([, v]) => v.toLowerCase().includes(n));
+}
+
+function previewPickLines(
+  title: string,
+  filter: string,
+  allCount: number,
+  list: readonly PreviewPickItem[],
+  cursor: number,
+): string[] {
+  const win = sliceWindow(list, cursor, PREVIEW_LIST_WINDOW);
+  const left =
+    win.items.length === 0
+      ? [dim("  (no matches)")]
+      : win.items.map((it, i) => option(win.start + i === cursor, it.label));
+  const current = list[cursor];
+  return previewBox({
+    title,
+    detail: filter ? `filter: ${filter}` : undefined,
+    count: `${list.length}/${allCount}`,
+    left,
+    preview: current?.preview ?? [],
+  });
 }
 
 // --- Shared types (mirror the service's model-config surface) ---------------
@@ -126,100 +172,20 @@ function tokenizeKeys(chunk: string): string[] {
 // --- Interactive model picker (no fzf — readline keypress) -------------------
 
 export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry | null> {
-  return new Promise<ModelEntry | null>((resolve, reject) => {
-    const stdin = process.stdin;
-    const frame = createMenuFrame();
-    let query = "";
-    let cursor = 0;
-
-    const filtered = () =>
-      models.filter(
-        (m) =>
-          m.id.toLowerCase().includes(query.toLowerCase()) ||
-          m.name.toLowerCase().includes(query.toLowerCase()),
-      );
-
-    const render = () => {
-      const list = filtered();
-      const lines = [
-        `${brand("models")}  ${dim(query ? `filter: ${query}` : `${models.length} models · type to filter · esc cancel`)}`,
-      ];
-      if (list.length === 0) {
-        lines.push(dim("  (no matches)"));
-      } else {
-        for (const [i, m] of list.entries()) {
-          const extra = `${m.family ? `(${m.family})` : ""}${m.loaded ? "  loaded" : ""}`.trim();
-          lines.push(option(i === cursor, m.id, extra));
-        }
-      }
-      frame.draw(lines);
-    };
-
-    const finish = (ok: () => void) => {
-      endInteractive(stdin, onData);
-      frame.close({ erase: true });
-      ok();
-    };
-
-    const done = (m: ModelEntry | null) => {
-      finish(() => resolve(m));
-    };
-
-    const handleKey = (key: string): boolean => {
-      const list = filtered();
-      if (key === "\x1b[A") {
-        if (list.length === 0) return false;
-        cursor = (cursor - 1 + list.length) % list.length;
-        render();
-        return false;
-      } else if (key === "\x1b[B") {
-        if (list.length === 0) return false;
-        cursor = (cursor + 1) % list.length;
-        render();
-        return false;
-      } else if (key === "\r" || key === "\n") {
-        const pick = list[cursor];
-        if (pick) done(pick);
-        return Boolean(pick);
-      } else if (key === "\x1b") {
-        if (query.length > 0) {
-          query = "";
-          cursor = 0;
-          render();
-          return false;
-        }
-        done(null);
-        return true;
-      } else if (key === "\x7f" || key === "\b") {
-        query = query.slice(0, -1);
-        cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
-        render();
-        return false;
-      } else if (key === "\x03") {
-        finish(() => reject(new Error("cancelled")));
-        return true;
-      } else if (key.length === 1 && !key.startsWith("\x1b")) {
-        query += key;
-        cursor = 0;
-        render();
-        return false;
-      }
-      return false;
-    };
-
-    const onData = (buf: Buffer) => {
-      // A single data event may carry multiple characters (e.g. a pasted
-      // value or a fast terminal flush); process each one in order.
-      for (const key of tokenizeKeys(buf.toString("utf8"))) {
-        if (handleKey(key)) return;
-      }
-    };
-
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.on("data", onData);
-    render();
-  });
+  return pickPreviewInteractive(
+    "models",
+    models.map((m) => ({
+      label: m.id,
+      value: m.id,
+      preview: [
+        ["id", m.id],
+        ["name", m.name],
+        ["family", m.family ?? "—"],
+        ["loaded", m.loaded ? "yes" : "no"],
+        ["file", m.modelFile ? shortenHome(m.modelFile) : "—"],
+      ],
+    })),
+  ).then((id) => (id === null ? null : (models.find((m) => m.id === id) ?? null)));
 }
 
 // --- Interactive field picker + value prompt ---------------------------------
@@ -242,22 +208,25 @@ export function pickFieldInteractive(fields: ModelDial[]): Promise<ModelDial | n
       return query.length > 0 ? matches : [...matches, null];
     };
 
-    const rowText = (f: ModelDial | null, selected: boolean): string => {
-      if (f === null) return option(selected, "quit");
-      const current = f.current === null ? "(unset)" : String(f.current);
-      const restart = f.restartRequired ? "  restart" : "";
-      const hint = f.hint ? `  ${f.hint}` : "";
-      return option(selected, f.field.padEnd(16), `${current}${restart}${hint}`);
+    const rowItem = (f: ModelDial | null): PreviewPickItem => {
+      if (f === null) {
+        return { label: "quit", value: "quit", preview: [["do", "leave this model"]] };
+      }
+      const preview: Array<readonly [string, string]> = [
+        ["field", f.field],
+        ["file", f.file],
+        ["value", f.current === null ? "(unset)" : String(f.current)],
+        ["restart", f.restartRequired ? "needed" : "no"],
+      ];
+      if (f.hint) preview.push(["hint", f.hint]);
+      if (f.machineHint) preview.push(["machine", f.machineHint]);
+      return { label: f.field, value: f.field, preview };
     };
 
     const render = () => {
       const list = filtered();
-      const lines = [
-        `${brand("edit")}  ${dim(query ? `filter: ${query}` : "type to filter · q/esc quit")}`,
-      ];
-      if (list.length === 0) lines.push(dim("  (no matches)"));
-      else list.forEach((f, i) => lines.push(rowText(f, i === cursor)));
-      frame.draw(lines);
+      const items = list.map(rowItem);
+      frame.draw(previewPickLines(brand("edit"), query, fields.length + 1, items, cursor));
     };
 
     const finish = (ok: () => void) => {
@@ -519,8 +488,26 @@ export function searchHfInteractive(
     const resultsFrame = createMenuFrame();
     let phase: "input" | "searching" | "results" = "input";
     let query = "";
+    let resultFilter = "";
     let results: Array<{ id: string; downloads?: number; likes?: number }> = [];
     let cursor = 0;
+
+    const asItems = (): PreviewPickItem[] =>
+      results.map((r) => ({
+        label: r.id,
+        value: r.id,
+        preview: [
+          ["repo", r.id],
+          ["↓", r.downloads !== undefined ? r.downloads.toLocaleString() : "—"],
+          ["♥", r.likes !== undefined ? r.likes.toLocaleString() : "—"],
+        ],
+      }));
+
+    const filteredItems = (): PreviewPickItem[] => {
+      const items = asItems();
+      if (!resultFilter) return items;
+      return items.filter((it) => matchesQuery(it, resultFilter));
+    };
 
     const cleanup = () => {
       endInteractive(stdin, onData);
@@ -545,23 +532,10 @@ export function searchHfInteractive(
     };
 
     const renderResults = () => {
-      const lines = [
-        `${brand("search")}  ${dim(`${results.length} for '${query}' · ↑↓ pick · enter · esc`)}`,
-      ];
-      if (results.length === 0) {
-        lines.push(dim("  (no matches)"));
-      } else {
-        for (const [i, r] of results.entries()) {
-          const extra = [
-            r.downloads !== undefined ? `↓${r.downloads}` : "",
-            r.likes !== undefined ? `♥${r.likes}` : "",
-          ]
-            .filter(Boolean)
-            .join("  ");
-          lines.push(option(i === cursor, r.id, extra));
-        }
-      }
-      resultsFrame.draw(lines);
+      const list = filteredItems();
+      resultsFrame.draw(
+        previewPickLines(brand("search"), resultFilter, results.length, list, cursor),
+      );
     };
 
     const startSearch = async () => {
@@ -579,6 +553,7 @@ export function searchHfInteractive(
       }
       phase = "results";
       cursor = 0;
+      resultFilter = "";
       renderResults();
     };
 
@@ -606,24 +581,39 @@ export function searchHfInteractive(
           // Ignore keys while the search is in flight.
           continue;
         } else if (phase === "results") {
+          const list = filteredItems();
           if (key === "\x1b[A") {
-            if (results.length === 0) continue;
-            cursor = (cursor - 1 + results.length) % results.length;
+            if (list.length === 0) continue;
+            cursor = (cursor - 1 + list.length) % list.length;
             renderResults();
           } else if (key === "\x1b[B") {
-            if (results.length === 0) continue;
-            cursor = (cursor + 1) % results.length;
+            if (list.length === 0) continue;
+            cursor = (cursor + 1) % list.length;
             renderResults();
           } else if (key === "\r" || key === "\n") {
-            const pick = results[cursor];
-            if (pick) done(pick.id);
+            const pick = list[cursor];
+            if (pick) done(pick.value);
             return;
           } else if (key === "\x1b") {
+            if (resultFilter.length > 0) {
+              resultFilter = "";
+              cursor = 0;
+              renderResults();
+              continue;
+            }
             done(null);
             return;
+          } else if (key === "\x7f" || key === "\b") {
+            resultFilter = resultFilter.slice(0, -1);
+            cursor = Math.min(cursor, Math.max(0, filteredItems().length - 1));
+            renderResults();
           } else if (key === "\x03") {
             cancel();
             return;
+          } else if (key.length === 1 && !key.startsWith("\x1b")) {
+            resultFilter += key;
+            cursor = 0;
+            renderResults();
           }
         }
       }
@@ -637,12 +627,37 @@ export function searchHfInteractive(
 }
 
 /**
- * Arrow-key menu over labeled items. Enter resolves the picked item's `value`;
- * Esc resolves null. Used for the quant picker in the `mba pull search` flow.
+ * Arrow-key menu over labeled items. Same two-pane chrome as search:
+ * list on the left, a short preview on the right. Optional `preview` rows
+ * per item; otherwise the label is shown. First Esc clears an active filter.
  */
 export function pickLabeledInteractive(
   title: string,
-  items: Array<{ label: string; value: string }>,
+  items: Array<{
+    label: string;
+    value: string;
+    preview?: ReadonlyArray<readonly [string, string]>;
+  }>,
+  opts?: { selectedValue?: string },
+): Promise<string | null> {
+  return pickPreviewInteractive(
+    title,
+    items.map((it) => ({
+      label: it.label,
+      value: it.value,
+      preview: it.preview ?? [["do", it.label]],
+    })),
+    opts,
+  );
+}
+
+/**
+ * Arrow-key menu with an fzf-style list + preview pane. Type-to-filter;
+ * first Esc clears the filter. Enter resolves `value`; Esc resolves null.
+ */
+export function pickPreviewInteractive(
+  title: string,
+  items: readonly PreviewPickItem[],
   opts?: { selectedValue?: string },
 ): Promise<string | null> {
   return new Promise<string | null>((resolve, reject) => {
@@ -651,13 +666,21 @@ export function pickLabeledInteractive(
     const selectedAt = opts?.selectedValue
       ? items.findIndex((it) => it.value === opts.selectedValue)
       : 0;
+    let query = "";
     let cursor = selectedAt >= 0 ? selectedAt : 0;
 
+    const filtered = () => (query ? items.filter((it) => matchesQuery(it, query)) : items);
+
+    const resetCursor = () => {
+      if (!query && selectedAt >= 0) {
+        cursor = selectedAt;
+        return;
+      }
+      cursor = 0;
+    };
+
     const render = () => {
-      const lines = [`${brand(title)}  ${dim("↑↓ pick · enter · esc")}`];
-      if (items.length === 0) lines.push(dim("  (none)"));
-      else items.forEach((it, i) => lines.push(option(i === cursor, it.label)));
-      frame.draw(lines);
+      frame.draw(previewPickLines(brand(title), query, items.length, filtered(), cursor));
     };
 
     const finish = (ok: () => void) => {
@@ -668,24 +691,41 @@ export function pickLabeledInteractive(
 
     const onData = (buf: Buffer) => {
       for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        const list = filtered();
         if (key === "\x1b[A") {
-          if (items.length === 0) continue;
-          cursor = (cursor - 1 + items.length) % items.length;
+          if (list.length === 0) continue;
+          cursor = (cursor - 1 + list.length) % list.length;
           render();
         } else if (key === "\x1b[B") {
-          if (items.length === 0) continue;
-          cursor = (cursor + 1) % items.length;
+          if (list.length === 0) continue;
+          cursor = (cursor + 1) % list.length;
           render();
         } else if (key === "\r" || key === "\n") {
-          const pick = items[cursor];
-          if (pick) finish(() => resolve(pick.value));
+          const pick = list[cursor];
+          if (!pick) continue;
+          finish(() => resolve(pick.value));
           return;
         } else if (key === "\x1b") {
+          if (query.length > 0) {
+            query = "";
+            resetCursor();
+            render();
+            continue;
+          }
           finish(() => resolve(null));
           return;
+        } else if (key === "\x7f" || key === "\b") {
+          query = query.slice(0, -1);
+          if (!query && selectedAt >= 0) cursor = selectedAt;
+          else cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
+          render();
         } else if (key === "\x03") {
           finish(() => reject(new Error("cancelled")));
           return;
+        } else if (key.length === 1 && !key.startsWith("\x1b")) {
+          query += key;
+          cursor = 0;
+          render();
         }
       }
     };
@@ -797,34 +837,37 @@ export function pickServerInteractive(
 
     const actionRows = (): readonly ["stop", "logs", "back"] => ["stop", "logs", "back"];
 
-    const serverRow = (s: ServerRow, selectedRow: boolean): string => {
-      const pid = s.pid !== undefined ? String(s.pid) : "-";
-      const health = s.healthy ? "ok" : "down";
-      return option(selectedRow, s.id.padEnd(18), `${s.port}  ${pid}  ${health}  ${s.modelFile}`);
-    };
-
     const render = () => {
       if (stage === "list") {
         const list = filtered();
-        const lines = [
-          `${brand("servers")}  ${dim(`${servers.length} running · ${query ? `filter: ${query}` : "type to filter"} · esc quit`)}`,
-        ];
-        if (list.length === 0) lines.push(dim("  (no matches)"));
-        else list.forEach((s, i) => lines.push(serverRow(s, i === cursor)));
-        frame.draw(lines);
+        const items: PreviewPickItem[] = list.map((s) => ({
+          label: s.id,
+          value: s.id,
+          preview: [
+            ["id", s.id],
+            ["port", String(s.port)],
+            ["pid", s.pid !== undefined ? String(s.pid) : "—"],
+            ["health", s.healthy ? "ok" : "down"],
+            ["model", s.modelFile],
+          ],
+        }));
+        frame.draw(previewPickLines(brand("servers"), query, servers.length, items, cursor));
       } else {
         const rows = actionRows();
-        const lines = [`${brand("actions")}  ${dim(`${selected?.id} · port ${selected?.port}`)}`];
-        for (const [i, a] of rows.entries()) {
-          const label =
+        const items: PreviewPickItem[] = rows.map((a) => ({
+          label: a,
+          value: a,
+          preview:
             a === "stop"
-              ? `stop ${selected?.id}`
+              ? [
+                  ["do", `stop ${selected?.id ?? ""}`],
+                  ["port", String(selected?.port ?? "")],
+                ]
               : a === "logs"
-                ? `logs ${selected?.id}`
-                : "back";
-          lines.push(option(i === cursor, label));
-        }
-        frame.draw(lines);
+                ? [["do", `follow logs for ${selected?.id ?? ""}`]]
+                : [["do", "back to the server list"]],
+        }));
+        frame.draw(previewPickLines(brand("actions"), "", rows.length, items, cursor));
       }
     };
 

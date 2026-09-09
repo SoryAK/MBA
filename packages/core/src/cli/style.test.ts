@@ -6,6 +6,7 @@ import {
   doneBox,
   option,
   paint,
+  previewBox,
   shortenHome,
   visibleLen,
   BOLD,
@@ -73,5 +74,25 @@ describe("cli style", () => {
     process.env.NO_COLOR = "1";
     const line = option(true, "qwen-very-long-id", "family extra");
     expect(visibleLen(clipLine(line, 12))).toBeLessThanOrEqual(12);
+  });
+
+  it("renders a two-pane preview box with a straight right edge", () => {
+    process.env.NO_COLOR = "1";
+    const box = previewBox({
+      title: "search",
+      count: "2/5",
+      left: [" ▸ ● unsloth/Qwen3", "   ○ Qwen/Qwen2.5"],
+      preview: [
+        ["repo", "unsloth/Qwen3-Coder-30B"],
+        ["↓", "12,345"],
+        ["♥", "89"],
+      ],
+    });
+    expect(new Set(box.map(visibleLen)).size).toBe(1);
+    expect(box[0]).toMatch(/^ ╭─+╮$/);
+    expect(box.some((l) => l.includes("┬"))).toBe(true);
+    expect(box.some((l) => l.includes("unsloth/Qwen3"))).toBe(true);
+    expect(box.some((l) => l.includes("12,345"))).toBe(true);
+    expect(box.at(-1)).toMatch(/╯$/);
   });
 });
