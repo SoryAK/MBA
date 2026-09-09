@@ -611,8 +611,8 @@ function findBinaryIndex(rows: readonly LlamaServerBinary[], path: string): numb
 
 /**
  * HTTP boot may only spawn a path the operator already listed. Ignored
- * catalog rows are refused. An empty catalog still allows a first-boot
- * `llama-server` path (PATH / `MBA_LLAMA_SERVER_BIN`) so the scan can catch up.
+ * catalog rows are refused. First boot without `binaryPath` still uses
+ * PATH / `MBA_LLAMA_SERVER_BIN` via `selectLlamaServer`.
  */
 export function llamaBootBinaryError(paths: MbaStorePaths, binaryPath: string): string | undefined {
   if (!BIN_NAMES.has(basename(binaryPath))) {
@@ -622,9 +622,7 @@ export function llamaBootBinaryError(paths: MbaStorePaths, binaryPath: string): 
   if (findBinaryIndex(file?.ignored ?? [], binaryPath) >= 0) {
     return "body.binaryPath is ignored — restore it in the catalog first";
   }
-  const live = file?.entries ?? [];
-  if (live.length === 0) return undefined;
-  if (findBinaryIndex(live, binaryPath) < 0) {
+  if (findBinaryIndex(file?.entries ?? [], binaryPath) < 0) {
     return "body.binaryPath must be a live catalog llama-server";
   }
   return undefined;

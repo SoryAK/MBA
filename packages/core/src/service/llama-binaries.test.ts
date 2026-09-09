@@ -415,11 +415,13 @@ describe("llama-server catalog persistence", () => {
 });
 
 describe("llamaBootBinaryError", () => {
-  it("allows a first-boot llama-server path when the catalog is empty", () => {
+  it("rejects a llama-server path when the catalog is empty", () => {
     const dir = mkdtempSync(join(tmpdir(), "mba-llama-boot-"));
     try {
       const paths = defaultStorePaths(dir);
-      expect(llamaBootBinaryError(paths, "/opt/llama-cuda/build/bin/llama-server")).toBeUndefined();
+      expect(llamaBootBinaryError(paths, "/opt/llama-cuda/build/bin/llama-server")).toBe(
+        "body.binaryPath must be a live catalog llama-server",
+      );
       expect(llamaBootBinaryError(paths, "/bin/sh")).toBe("body.binaryPath must be a llama-server binary");
     } finally {
       rmSync(dir, { recursive: true, force: true });
