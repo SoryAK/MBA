@@ -58,6 +58,11 @@ export interface MbaStorePaths {
   readonly sessionsPath: string;
   /** Operator-defined clients (name + envelope). */
   readonly clientsPath: string;
+  /**
+   * Per-model tool/trip history SQLite file. Separate from
+   * `bcb-kill-state.db` (live fuse vs append-only ledger).
+   */
+  readonly modelHistoryPath: string;
   /** Unix-domain-socket path the service listens on (ADR-0101 Step 1). */
   readonly udsPath: string;
 }
@@ -101,6 +106,7 @@ export function defaultStorePaths(baseDir: string = defaultStateDir()): MbaStore
     upstreamsPath: join(baseDir, "mba", "upstreams.json"),
     sessionsPath: join(baseDir, "mba", "sessions.json"),
     clientsPath: join(baseDir, "mba", "clients.json"),
+    modelHistoryPath: join(baseDir, "mba-model-history.db"),
     udsPath: join(baseDir, "mba", "mba.sock"),
   };
 }

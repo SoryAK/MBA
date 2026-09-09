@@ -24,6 +24,7 @@ function fakePaths(): MbaStorePaths {
     udsPath: join(baseDir, "mba", "mba.sock"),
     sessionsPath: join(baseDir, "mba", "sessions.json"),
     clientsPath: join(baseDir, "mba", "clients.json"),
+    modelHistoryPath: join(baseDir, "mba-model-history.db"),
   };
 }
 
