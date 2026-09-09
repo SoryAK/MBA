@@ -39,7 +39,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream";
 import { mkdir, writeFile } from "node:fs/promises";
 import { slotSavePath } from "../mba/server-lifecycle.js";
@@ -168,6 +168,26 @@ export class PullValidationError extends Error {}
 export class PullConflictError extends Error {}
 /** Downloaded content does not match the expected digest → HTTP 422. */
 export class PullVerifyError extends Error {}
+
+/** Family and model folder names — one store segment, no `..` or separators. */
+const STORE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function assertSafeStoreSegment(kind: "id" | "family", value: string): void {
+  if (!STORE_SEGMENT.test(value)) {
+    throw new PullValidationError(
+      `${kind} must be a single path segment (letters, digits, '.', '_', '-')`,
+    );
+  }
+}
+
+function assertInsideStore(storeRoot: string, target: string): void {
+  const root = resolve(storeRoot);
+  const resolved = resolve(target);
+  const rel = relative(root, resolved);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new PullValidationError("id and family must stay inside the model store");
+  }
+}
 
 function resolveStoreRoot(storeRoot?: string): string {
   if (storeRoot && storeRoot.length > 0) return storeRoot;
@@ -318,6 +338,9 @@ export async function sha256OfFile(path: string): Promise<string> {
 export async function pullModel(opts: PullModelOptions): Promise<PullModelResult> {
   const { id } = opts;
   if (!id || id.length === 0) throw new PullValidationError("pull requires --id");
+  const family = opts.family && opts.family.length > 0 ? opts.family : id;
+  assertSafeStoreSegment("id", id);
+  assertSafeStoreSegment("family", family);
 
   // Resolve the download URL + digest (ADR-0099).
   // - A repo shorthand (owner/repo[:file-or-quant]) is always resolved via
@@ -349,13 +372,18 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
   }
   if (!url || url.length === 0) throw new PullValidationError("pull requires a download url");
 
-  const family = opts.family && opts.family.length > 0 ? opts.family : id;
   const storeRoot = resolveStoreRoot(opts.storeRoot);
   const familyDir = join(storeRoot, family);
   const modelDir = join(familyDir, id);
 
   const fileName = basename(new URL(url).pathname) || "model.gguf";
+  if (fileName === "." || fileName === ".." || fileName.includes("/") || fileName.includes("\\")) {
+    throw new PullValidationError("download url must end in a file name inside the model folder");
+  }
   const dest = join(modelDir, fileName);
+  assertInsideStore(storeRoot, familyDir);
+  assertInsideStore(storeRoot, modelDir);
+  assertInsideStore(storeRoot, dest);
 
   const dirPlan = planModelDir(modelDir, fileName, id);
   if (dirPlan === "conflict") {
