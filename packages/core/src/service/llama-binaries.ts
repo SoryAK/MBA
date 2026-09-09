@@ -22,7 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir as osHomedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import type { MachineInfo } from "./machine-info.js";
 import type { MbaStorePaths } from "./config-store.js";
 
@@ -607,6 +607,25 @@ function emptyCatalog(): LlamaServerCatalogFile {
 
 function findBinaryIndex(rows: readonly LlamaServerBinary[], path: string): number {
   return rows.findIndex((b) => samePath(b.path, path));
+}
+
+/**
+ * HTTP boot may only spawn a path the operator already listed. Ignored
+ * catalog rows are refused. First boot without `binaryPath` still uses
+ * PATH / `MBA_LLAMA_SERVER_BIN` via `selectLlamaServer`.
+ */
+export function llamaBootBinaryError(paths: MbaStorePaths, binaryPath: string): string | undefined {
+  if (!BIN_NAMES.has(basename(binaryPath))) {
+    return "body.binaryPath must be a llama-server binary";
+  }
+  const file = readLlamaServerCatalog(paths);
+  if (findBinaryIndex(file?.ignored ?? [], binaryPath) >= 0) {
+    return "body.binaryPath is ignored — restore it in the catalog first";
+  }
+  if (findBinaryIndex(file?.entries ?? [], binaryPath) < 0) {
+    return "body.binaryPath must be a live catalog llama-server";
+  }
+  return undefined;
 }
 
 export function nicknameLlamaServer(

@@ -122,13 +122,8 @@ describe("estimateRecipeMemory", () => {
   });
 
   it("returns undefined when required architecture fields are missing", () => {
-    const minimal = createMinimalGgufFile(dir, {
-      blockCount: 32,
-      hiddenSize: 4096,
-      headCount: 32,
-      headCountKv: 8,
-    });
-    // Remove head_count_kv from the metadata by truncating or writing a different file.
+    // Header only — missing head_count_kv. Do not pad to 1 GB; this case
+    // never consults file size and that write times out on CI.
     const broken = join(dir, "broken.gguf");
     const brokenMeta = [
       { key: "general.architecture", type: "string" as const, value: "llama" },
@@ -150,10 +145,7 @@ describe("estimateRecipeMemory", () => {
         offset += writeKvString(buf, offset, entry.key, entry.value);
       }
     }
-    const fileSize = 1024 * 1024 * 1024;
-    const final = Buffer.alloc(fileSize);
-    buf.copy(final, 0, 0, offset);
-    writeFileSync(broken, final);
+    writeFileSync(broken, buf.subarray(0, offset));
 
     expect(estimateRecipeMemory(recipe(broken))).toBeUndefined();
   });
