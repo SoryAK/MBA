@@ -294,8 +294,10 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
 
   it("resolves after /health without POSTing /completion", async () => {
     const { spawnImpl } = spawnSeam(424242);
+    let completionCalled = false;
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
+      if (u.endsWith("/completion")) completionCalled = true;
       if (u.endsWith("/health")) return { ok: true, status: 200 };
       return { ok: false, status: 404 };
     }) as unknown as typeof fetch;
@@ -311,7 +313,7 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
       { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
 
-    expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith("/completion"))).toBe(false);
+    expect(completionCalled).toBe(false);
     expect(state.pid).toBe(424242);
   });
 
