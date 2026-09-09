@@ -1,7 +1,7 @@
 /**
  * Contract tests for server-lifecycle orchestration (Step 4).
  *
- * Tests focus on the pure fetch-based logic (health check, warmup).
+ * Tests focus on the pure fetch-based logic (health check).
  * Process spawning/management is tested via integration on boot.
  */
 
@@ -13,7 +13,6 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import {
   waitForHealth,
-  sendWarmupRequest,
   bootLlamaServer,
   stopLlamaServer,
   killProcessGroup,
@@ -123,7 +122,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         port: 8080,
         flags: ["--ctx-size", "1000"],
         fork: "upstream",
-        warmupTokens: 0,
       },
         { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
@@ -151,7 +149,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         port: 8080,
         flags: [],
         fork: "upstream",
-        warmupTokens: 0,
       },
         { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
@@ -177,7 +174,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         port: 8080,
         flags: [],
         fork: "upstream",
-        warmupTokens: 0,
       },
       seams,
     );
@@ -214,7 +210,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         port: 8080,
         flags: [],
         fork: "upstream",
-        warmupTokens: 0,
       },
       seams,
     );
@@ -240,7 +235,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         port: 9123,
         flags: ["--ctx-size", "1000"],
         fork: "upstream",
-        warmupTokens: 0,
       },
         { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
@@ -280,7 +274,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
           port: 8080,
           flags: [],
           fork: "upstream",
-          warmupTokens: 0,
         },
         {
           spawnImpl: spawnImpl as never,
@@ -299,16 +292,11 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
     expect(killImpl).not.toHaveBeenCalledWith("SIGTERM"); // no-arg kill (old bug)
   });
 
-  it("waits for warmup to complete before resolving (Perf #2)", async () => {
+  it("resolves after /health without POSTing /completion", async () => {
     const { spawnImpl } = spawnSeam(424242);
-    let warmupCalled = false;
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
       if (u.endsWith("/health")) return { ok: true, status: 200 };
-      if (u.endsWith("/completion")) {
-        warmupCalled = true;
-        return { ok: true, status: 200 };
-      }
       return { ok: false, status: 404 };
     }) as unknown as typeof fetch;
 
@@ -319,12 +307,11 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         port: 8080,
         flags: [],
         fork: "upstream",
-        warmupTokens: 350,
       },
       { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill, mkdirImpl: vi.fn() },
     );
 
-    expect(warmupCalled).toBe(true);
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith("/completion"))).toBe(false);
     expect(state.pid).toBe(424242);
   });
 
@@ -352,7 +339,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
         port: 8080,
         flags: [],
         fork: "upstream",
-        warmupTokens: 0,
       },
       {
         spawnImpl: spawnImpl as never,
@@ -391,7 +377,6 @@ describe("bootLlamaServer (process-group ownership, ADR-0097 Phase 2)", () => {
           port: 8080,
           flags: [],
           fork: "upstream",
-          warmupTokens: 0,
         },
         { spawnImpl: spawnImpl as never, fetchImpl, killImpl: aliveChildKill },
       );
@@ -727,52 +712,5 @@ describe("waitForHealth", () => {
 
     expect(calls).toBe(2);
     expect(killImpl).toHaveBeenCalledWith(424242, 0);
-  });
-});
-
-describe("sendWarmupRequest", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("POSTs to /completion with n_predict", async () => {
-    const mockFetch = vi.fn(async (_url: string, init?: { body?: string }) => ({ ok: true, status: 200 }));
-    globalThis.fetch = mockFetch as any;
-
-    await sendWarmupRequest(8080, 350);
-
-    expect(mockFetch).toHaveBeenCalledWith(
-      "http://127.0.0.1:8080/completion",
-      expect.objectContaining({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    const callArgs = mockFetch.mock.calls[0]!;
-    const body = JSON.parse(callArgs[1]!.body!);
-    expect(body.n_predict).toBe(350);
-  });
-
-  it("throws on non-200 response", async () => {
-    const mockFetch = vi.fn(async () => ({
-      ok: false,
-      status: 500,
-      statusText: "Internal Server Error",
-    }));
-    globalThis.fetch = mockFetch as any;
-
-    await expect(sendWarmupRequest(8080, 350)).rejects.toThrow(/failed.*500/);
-  });
-
-  it("includes the prompt in the request body", async () => {
-    const mockFetch = vi.fn(async (_url: string, init?: { body?: string }) => ({ ok: true }));
-    globalThis.fetch = mockFetch as any;
-
-    await sendWarmupRequest(8080, 42);
-
-    const callArgs = mockFetch.mock.calls[0]!;
-    const body = JSON.parse(callArgs[1]!.body!);
-    expect(body).toHaveProperty("prompt");
-    expect(body).toHaveProperty("n_predict", 42);
   });
 });

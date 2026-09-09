@@ -4,8 +4,7 @@
  * Lifts the knowledge from scripts/llama-server-up.sh into TypeScript.
  * Responsibilities:
  *  - Boot llama-server with validated flags
- *  - Poll /health endpoint with deadline
- *  - Execute post-boot GPU warmup pass
+ *  - Poll /health endpoint with deadline (llama.cpp warmup is inside load)
  *  - Stop llama-server gracefully
  *  - Track boot state (PID, port, timestamp, flags, model)
  *
@@ -32,8 +31,6 @@ export interface ServerBootOptions {
   readonly flags: string[];
   /** Fork variant: "upstream" or "llama.cpp". */
   readonly fork: "upstream" | "llama.cpp";
-  /** Tokens to generate during post-boot warmup pass. */
-  readonly warmupTokens: number;
 }
 
 export interface ServerState {
@@ -282,47 +279,18 @@ export async function waitForHealth(
 }
 
 /**
- * Send a warmup request to the server (POST /completion).
- * Generates `tokens` to pre-fill the GPU.
- *
- * @throws {Error} if the warmup POST fails
- */
-export async function sendWarmupRequest(
-  port: number,
-  tokens: number,
-  seams?: LifecycleSeams,
-): Promise<void> {
-  const { fetchImpl } = resolveSeams(seams);
-  const url = `http://127.0.0.1:${port}/completion`;
-  const payload = {
-    prompt: "test",
-    n_predict: tokens,
-  };
-
-  const resp = await fetchImpl(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(60000), // 60s for warmup
-  });
-
-  if (!resp.ok) {
-    throw new Error(`warmup POST to ${url} failed: ${resp.status} ${resp.statusText}`);
-  }
-}
-
-/**
- * Spawn llama-server with the boot options, wait for health, run warmup.
+ * Spawn llama-server with the boot options and wait for /health.
  *
  * Deployment facts (`--host`, `--port`, `--slot-save-path`, `--slots`,
  * `-m <model>`) are prepended here; `opts.flags` carries only the tuning
- * recipe. `--slots` keeps GET/POST `/slots` on so MBA can save/restore/erase
- * KV in the G3 folder. The server is spawned `detached` so it owns its own
- * process group (G1), and the boot resolves only after warmup completes
- * (Perf #2).
+ * recipe, including llama.cpp `--warmup` / `--no-warmup`. `--slots` keeps
+ * GET/POST `/slots` on so MBA can save/restore/erase KV in the G3 folder.
+ * The server is spawned `detached` so it owns its own process group (G1).
+ * Boot resolves when /health is ok — llama.cpp's own warmup (if passed) is
+ * part of load, not an MBA POST /completion.
  *
  * @returns ServerState with the CHILD pid, port, boot time, and flags.
- * @throws {Error} if spawn fails, health check times out, or warmup fails
+ * @throws {Error} if spawn fails or health check times out
  */
 export async function bootLlamaServer(
   opts: ServerBootOptions,
@@ -416,21 +384,6 @@ export async function bootLlamaServer(
   }
   const loadMs = now() - bootedAt;
   daemonLog(`[boot:${opts.port}] healthy — model loaded in ${loadMs}ms`);
-
-  // Execute warmup; boot resolves only after it completes (Perf #2).
-  daemonLog(`[boot:${opts.port}] warmup (${opts.warmupTokens} tokens)`);
-  try {
-    await sendWarmupRequest(opts.port, opts.warmupTokens, { fetchImpl });
-  } catch (err) {
-    // Warmup failed; the server is healthy but not warmed. Kill + fail so the
-    // caller does not register a cold server as ready.
-    daemonLog(
-      `[boot:${opts.port}] warmup FAILED — killing group ${pid}: ${String(err)}`,
-    );
-    await killProcessGroup(pid, { killImpl });
-    throw new Error(`warmup failed: ${String(err)}`);
-  }
-  daemonLog(`[boot:${opts.port}] warmup done — boot complete`);
 
   // Track the group so the daemon-exit handler can sweep it (G1).
   trackOwnedGroup(pid, { killImpl });

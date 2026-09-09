@@ -273,7 +273,10 @@ export interface LlamaCppServerFlags {
   readonly reasoningPreserve?: boolean;
   /** --flash-attn. FlashAttention on/off. */
   readonly flashAttn?: "on" | "off";
-  /** Post-boot warm-up generation length (tokens). */
+  /**
+   * llama.cpp `--warmup` / `--no-warmup`. `0` skips llama.cpp's load warmup;
+   * any positive value passes `--warmup` (empty run; the count is not sent).
+   */
   readonly warmupTokens?: number;
   /** --spec-type. Speculative decoding mode (e.g. "draft-mtp", "none"). */
   readonly specType?: string;
