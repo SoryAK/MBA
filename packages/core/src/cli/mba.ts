@@ -7,6 +7,7 @@
  */
 
 import { fail, resolveServiceUrl, SERVICE_DOWN } from "./client.js";
+import { cmdClients } from "./clients.js";
 import { cmdCompletion } from "./completion.js";
 import { cmdEstimateMemory } from "./estimate-memory.js";
 import { usageFor } from "./help.js";
@@ -23,6 +24,8 @@ import {
   cmdModelsSet,
   cmdModelsShow,
   dispatchModelsPull,
+  cmdModelsStage,
+  cmdModelsConnect,
 } from "./models.js";
 import { parseMbaArgv } from "./route.js";
 import { cmdServers } from "./servers.js";
@@ -85,6 +88,9 @@ async function main(argv: readonly string[]): Promise<void> {
       case "servers":
         await cmdServers(baseUrl, route.args, json, skipRestart);
         return;
+      case "clients":
+        await cmdClients(baseUrl, route.args, json);
+        return;
       case "models":
         switch (route.action) {
           case "pick":
@@ -124,6 +130,12 @@ async function main(argv: readonly string[]): Promise<void> {
             return;
           case "pull":
             await dispatchModelsPull(baseUrl, route.args);
+            return;
+          case "stage":
+            await cmdModelsStage(baseUrl, route.args, json);
+            return;
+          case "connect":
+            await cmdModelsConnect(baseUrl, route.args, json);
             return;
         }
     }
