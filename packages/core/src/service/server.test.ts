@@ -99,10 +99,12 @@ describe("mba service app", () => {
     const body = (await res.json()) as {
       version: number;
       uptimeMs: number;
+      pairing: { active: boolean; count: number; sessions: unknown[] };
       paths: { baseDir: string; tcbPath: string };
     };
     expect(body.version).toBe(0);
     expect(body.uptimeMs).toBeGreaterThanOrEqual(0);
+    expect(body.pairing).toEqual({ active: false, count: 0, sessions: [] });
     expect(body.paths.baseDir).toBe(paths.baseDir);
     expect(body.paths.tcbPath).toBe(paths.tcbPath);
   });

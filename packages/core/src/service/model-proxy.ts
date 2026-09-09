@@ -56,6 +56,7 @@ import { intervene } from "./intervention.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 import type { ReasoningGate } from "../cm/reasoning.js";
 import { daemonLog } from "../mba/daemon-log.js";
+import { authorizeChat, readSessions } from "./sessions.js";
 
 export interface ModelProxyOptions {
   /**
@@ -72,6 +73,11 @@ export interface ModelProxyOptions {
   readonly healthTtlMs?: number;
   /** Injectable fetch for the upstream call + health probes (tests). */
   readonly fetch?: typeof fetch;
+  /**
+   * Paired-client sessions file. Empty / missing → door open. Present rows
+   * require a Bearer token on `/v1/chat/completions`.
+   */
+  readonly sessionsPath?: string;
   /**
    * TCB config getter (ADR-0101 Step 2). A getter — not a value — so the
    * proxy always sees the latest config after a `/set_rules` mutation. When
@@ -147,13 +153,19 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
   }
 
   /** Forward the raw body to `base` and pipe the response back verbatim. */
-  async function forward(c: Context, base: string, body: string): Promise<Response> {
+  async function forward(
+    c: Context,
+    base: string,
+    body: string,
+    stripAuth: boolean,
+  ): Promise<Response> {
     // Forward the request headers, but only the ones a proxy should pass on.
     // Authorization is the one that matters for a keyed upstream; the rest
     // (host, content-length, connection) are hop-by-hop and must not leak.
+    // A pairing token is MBA's door key — never send it to llama-server.
     const fwdHeaders = new Headers();
     const auth = c.req.header("authorization");
-    if (auth) fwdHeaders.set("authorization", auth);
+    if (auth && !stripAuth) fwdHeaders.set("authorization", auth);
     const contentType = c.req.header("content-type");
     if (contentType) fwdHeaders.set("content-type", contentType);
 
@@ -182,6 +194,21 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     // byte-identical to what the client sent (unless intervention mutates it).
     const body = await c.req.text();
 
+    let model: string | undefined;
+    try {
+      const parsed = JSON.parse(body) as { model?: unknown };
+      model = typeof parsed.model === "string" ? parsed.model : undefined;
+    } catch {
+      model = undefined;
+    }
+
+    const sessions = opts.sessionsPath ? readSessions(opts.sessionsPath) : [];
+    const door = authorizeChat(sessions, c.req.header("authorization"), model, opts.adapterDir);
+    if (!door.ok) {
+      return c.json({ error: door.error }, 401);
+    }
+    const stripAuth = door.stripAuth;
+
     // --- TCB intervention (ADR-0101 Step 2) ------------------------------
     // Guard at the door: inspect every request that passes. When no TCB
     // config is wired in, this is a no-op and the body forwards verbatim.
@@ -189,33 +216,24 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     let forwardBody = body;
     let eraseSlot = false;
     if (opts.tcbConfig) {
-      let modelForGate: string | undefined;
-      try {
-        const parsed = JSON.parse(body) as { model?: unknown };
-        modelForGate = typeof parsed.model === "string" ? parsed.model : undefined;
-      } catch {
-        modelForGate = undefined;
-      }
       const result = intervene(
         body,
         c.req.header("user-agent") ?? "",
         opts.tcbConfig(),
         opts.bcbDb,
-        { reasoning: () => opts.reasoningGate?.(modelForGate) },
+        { reasoning: () => opts.reasoningGate?.(model) },
       );
       if (result.action === "kill") {
         return result.response;
       }
       forwardBody = result.body;
       eraseSlot = result.eraseSlot === true;
-    }
-
-    let model: string | undefined;
-    try {
-      const parsed = JSON.parse(forwardBody) as { model?: unknown };
-      model = typeof parsed.model === "string" ? parsed.model : undefined;
-    } catch {
-      model = undefined;
+      try {
+        const parsed = JSON.parse(forwardBody) as { model?: unknown };
+        model = typeof parsed.model === "string" ? parsed.model : model;
+      } catch {
+        // keep the pre-intervention model
+      }
     }
 
     // --- Registry routing (Step 1b) --------------------------------------
@@ -225,7 +243,7 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
       // Dumb-proxy mode: no booted servers tracked. Fall back to the static
       // upstream if one is configured; otherwise nothing is loaded.
       if (opts.upstreamUrl) {
-        return forward(c, opts.upstreamUrl, forwardBody);
+        return forward(c, opts.upstreamUrl, forwardBody, stripAuth);
       }
       return c.json(
         { error: "no model loaded — boot one with `mba servers boot <model> <port>`" },
@@ -256,7 +274,7 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     for (const candidate of candidates) {
       if (await isHealthy(candidate)) {
         if (eraseSlot) await eraseLiveSlot(candidate, fetchImpl);
-        return forward(c, `http://127.0.0.1:${candidate.port}`, forwardBody);
+        return forward(c, `http://127.0.0.1:${candidate.port}`, forwardBody, stripAuth);
       }
     }
 

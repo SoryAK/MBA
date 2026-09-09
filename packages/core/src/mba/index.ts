@@ -6,6 +6,8 @@ export * from "./adapter-scoring.js";
 export * from "./adapter-merge.js";
 export * from "./adapter-loading.js";
 export * from "./resolver.js";
+export * from "./envelope.js";
+export * from "./stage-instructions.js";
 export * from "./server-flags.js";
 export * from "./server-lifecycle.js";
 export * from "./slot-control.js";

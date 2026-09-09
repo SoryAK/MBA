@@ -3,9 +3,10 @@
  * Install: eval "$(mba completion)"  or  mba completion zsh
  */
 
-const GROUPS = "models m servers server s machine status help completion migrate-paths estimate-memory";
-const MODEL_SUB = "list show set open path pull search edit";
+const GROUPS = "models m servers server s clients client c machine status help completion migrate-paths estimate-memory connect";
+const MODEL_SUB = "list show set open path pull search edit stage connect";
 const SERVER_SUB = "list boot stop logs slots binaries builds";
+const CLIENT_SUB = "list add connect revoke remove";
 const MACHINE_SUB = "enforce warn off";
 
 function bashScript(): string {
@@ -28,7 +29,7 @@ _mba() {
         local ids
         ids=$(mba models list --json 2>/dev/null | command sed -n 's/.*"id": "\\([^"]*\\)".*/\\1/p')
         COMPREPLY=( $(compgen -W "${MODEL_SUB} \$ids" -- "\$cur") )
-        elif [[ "\$prev" == "show" || "\$prev" == "set" || "\$prev" == "open" || "\$prev" == "path" || "\$prev" == "edit" ]]; then
+        elif [[ "\$prev" == "show" || "\$prev" == "set" || "\$prev" == "open" || "\$prev" == "path" || "\$prev" == "edit" || "\$prev" == "stage" || "\$prev" == "connect" ]]; then
         local ids
         ids=$(mba models list --json 2>/dev/null | command sed -n 's/.*"id": "\\([^"]*\\)".*/\\1/p')
         COMPREPLY=( $(compgen -W "\$ids" -- "\$cur") )
@@ -43,6 +44,11 @@ _mba() {
         COMPREPLY=( $(compgen -W "\$ids" -- "\$cur") )
       fi
       ;;
+    clients|client|c)
+      if [[ \${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "${CLIENT_SUB}" -- "\$cur") )
+      fi
+      ;;
     machine|machine-overlay)
       COMPREPLY=( $(compgen -W "${MACHINE_SUB}" -- "\$cur") )
       ;;
@@ -50,7 +56,7 @@ _mba() {
       COMPREPLY=( $(compgen -W "bash zsh" -- "\$cur") )
       ;;
     help)
-      COMPREPLY=( $(compgen -W "models servers machine status" -- "\$cur") )
+      COMPREPLY=( $(compgen -W "models servers clients machine status" -- "\$cur") )
       ;;
   esac
 }
@@ -61,10 +67,11 @@ complete -F _mba mba
 function zshScript(): string {
   return `#compdef mba
 _mba() {
-  local -a groups modelsubs serversubs
-  groups=(models m servers server s machine status help completion migrate-paths estimate-memory)
-  modelsubs=(list show set open path pull search edit)
+  local -a groups modelsubs serversubs clientsubs
+  groups=(models m servers server s clients client c machine status help completion migrate-paths estimate-memory connect)
+  modelsubs=(list show set open path pull search edit stage connect)
   serversubs=(list boot stop logs slots binaries builds)
+  clientsubs=(list add connect revoke remove)
   case $CURRENT in
     2) _describe 'command' groups ;;
     *)
@@ -75,9 +82,10 @@ _mba() {
           _describe 'models' modelsubs && _describe 'id' ids
           ;;
         servers|server|s) _describe 'servers' serversubs ;;
+        clients|client|c) _describe 'clients' clientsubs ;;
         machine) _describe 'mode' '(enforce warn off)' ;;
         completion) _describe 'shell' '(bash zsh)' ;;
-        help) _describe 'topic' '(models servers machine status)' ;;
+        help) _describe 'topic' '(models servers clients machine status)' ;;
       esac
       ;;
   esac

@@ -22,6 +22,8 @@ function fakePaths(): MbaStorePaths {
     machineOverlayPath: join(baseDir, "mba", "machine-overlay.json"),
     upstreamsPath: join(baseDir, "mba", "upstreams.json"),
     udsPath: join(baseDir, "mba", "mba.sock"),
+    sessionsPath: join(baseDir, "mba", "sessions.json"),
+    clientsPath: join(baseDir, "mba", "clients.json"),
   };
 }
 

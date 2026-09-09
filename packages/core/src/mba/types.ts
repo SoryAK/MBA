@@ -343,7 +343,7 @@ export interface MbaResolvedConfig {
   readonly profile?: MbaModelProfile;
   /**
    * Winning `instructions.md` path (family then model, last-specific wins).
-   * Store only — not injected into the prompt in this cut.
+   * Staged into the project as a harness envelope; never spliced by the proxy.
    */
   readonly instructionsPath?: string;
   /**

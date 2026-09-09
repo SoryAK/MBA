@@ -27,13 +27,10 @@ model {
       description "The project's standing playbook. Harness injects this. MBA does not own it."
     }
     envelope = file "Staged model card" {
-      #proposed
       description """
-        Not built yet. Same instructions.md, filename/path the harness already reads.
-        Environment (harness + ide) picks the envelope. Content stays one card in the store.
-        notes.md never lands here.
+        Live copy of the winning instructions.md. Filename from harness+ide.
+        The project's own CLAUDE.md stays the project's. notes.md never lands here.
       """
-      style { color amber }
     }
   }
 
@@ -84,8 +81,8 @@ model {
   harness -> mba.proxy "chat completions"
   mba.proxy -> llama "forward (and mop / erase slot)"
   harness -> project.card "injects project playbook"
-  mba.service -[proposed]-> project.envelope "stage card (env picks filename)" {
-    description "Same instructions.md. Envelope from harness+ide. Not built."
+  mba.service -> project.envelope "stage card (env picks filename)" {
+    description "Same instructions.md. Envelope from harness+ide."
   }
   mba.service -> host "download GGUF"
 }
