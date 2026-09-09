@@ -74,3 +74,4 @@ After CLI changes, rebuild this package so a linked `mba` picks them up.
 ## Docs
 
 - [Repo README](../../README.md) — operator pitch, run, onboarding, CLI
+- [Changelog](https://github.com/SoryAK/MBA/blob/main/packages/core/CHANGELOG.md) — user-facing notes per npm version
