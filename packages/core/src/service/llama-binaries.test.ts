@@ -264,13 +264,25 @@ describe("llama-server catalog persistence", () => {
     expect(llamaServerCatalogTtlMs({ MBA_LLAMA_CATALOG_TTL_MS: "0" })).toBe(0);
     const now = Date.parse("2026-09-08T12:00:00.000Z");
     expect(
-      isLlamaServerCatalogStale({ scannedAt: "2000-01-01T00:00:00.000Z", entries: [] }, now, 0),
+      isLlamaServerCatalogStale(
+        { scannedAt: "2000-01-01T00:00:00.000Z", entries: [], ignored: [] },
+        now,
+        0,
+      ),
     ).toBe(false);
     expect(
-      isLlamaServerCatalogStale({ scannedAt: "2026-09-08T11:50:00.000Z", entries: [] }, now, 15 * 60 * 1000),
+      isLlamaServerCatalogStale(
+        { scannedAt: "2026-09-08T11:50:00.000Z", entries: [], ignored: [] },
+        now,
+        15 * 60 * 1000,
+      ),
     ).toBe(false);
     expect(
-      isLlamaServerCatalogStale({ scannedAt: "2026-09-08T11:44:00.000Z", entries: [] }, now, 15 * 60 * 1000),
+      isLlamaServerCatalogStale(
+        { scannedAt: "2026-09-08T11:44:00.000Z", entries: [], ignored: [] },
+        now,
+        15 * 60 * 1000,
+      ),
     ).toBe(true);
   });
 

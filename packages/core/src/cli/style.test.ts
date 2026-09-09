@@ -60,9 +60,9 @@ describe("cli style", () => {
     const box = doneBox("PULLED", [["weights", "x".repeat(10_000)]]);
     const lines = box.split("\n");
     expect(new Set(lines.map(visibleLen)).size).toBe(1);
-    expect(lines[2]).toMatch(/…│$/);
-    expect(lines[0].startsWith(" ╭")).toBe(true);
-    expect(lines[0].endsWith("╮")).toBe(true);
+    expect(lines[2] ?? "").toMatch(/…│$/);
+    expect(lines[0]?.startsWith(" ╭")).toBe(true);
+    expect(lines[0]?.endsWith("╮")).toBe(true);
   });
 
   it("shortens $HOME to ~", () => {
