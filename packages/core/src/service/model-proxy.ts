@@ -53,6 +53,7 @@ import { readRegistry, listUpstreams, type UpstreamEntry } from "./upstream-regi
 import { readModelCatalog } from "./model-catalog.js";
 import { probeEntryHealth, getServerTypeOps } from "./server-types.js";
 import { intervene } from "./intervention.js";
+import { appendHistoryFromChatRequest } from "./model-history.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 import type { ReasoningGate } from "../cm/reasoning.js";
 import { daemonLog } from "../mba/daemon-log.js";
@@ -89,6 +90,11 @@ export interface ModelProxyOptions {
    * (trips still rewrite tool results, but no kill-state is persisted).
    */
   readonly bcbDb?: DatabaseSync;
+  /**
+   * Per-model tool/trip history. `undefined` skips writes. Failures never
+   * fail the chat.
+   */
+  readonly historyDb?: DatabaseSync;
   /**
    * Reasoning dial for the request's model (ADR-0105). Called only when an
    * AMPI recipe is about to run. Unknown → compact may still try.
@@ -223,6 +229,14 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
         opts.bcbDb,
         { reasoning: () => opts.reasoningGate?.(model) },
       );
+      appendHistoryFromChatRequest(opts.historyDb, {
+        modelId: model,
+        body,
+        ua: c.req.header("user-agent") ?? "",
+        trips: result.trips,
+        harness: result.harness,
+        lastTier: result.lastTier,
+      });
       if (result.action === "kill") {
         return result.response;
       }
@@ -234,6 +248,12 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
       } catch {
         // keep the pre-intervention model
       }
+    } else {
+      appendHistoryFromChatRequest(opts.historyDb, {
+        modelId: model,
+        body,
+        ua: c.req.header("user-agent") ?? "",
+      });
     }
 
     // --- Registry routing (Step 1b) --------------------------------------

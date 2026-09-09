@@ -38,6 +38,7 @@ describe("config-store", () => {
     expect(paths.upstreamsPath).toBe(join(paths.baseDir, "mba", "upstreams.json"));
     expect(paths.sessionsPath).toBe(join(paths.baseDir, "mba", "sessions.json"));
     expect(paths.clientsPath).toBe(join(paths.baseDir, "mba", "clients.json"));
+    expect(paths.modelHistoryPath).toBe(join(paths.baseDir, "mba-model-history.db"));
   });
 
   it("reads back a persisted TCB config", () => {

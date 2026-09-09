@@ -23,7 +23,7 @@ import { evaluateBcbEscalation } from "../bcb/escalate.js";
 import { fingerprint } from "../bcb/fingerprint.js";
 import { buildBcbKillResponse } from "../bcb/kill-response.js";
 import { applyToolCircuitBreakers } from "../bcb/tool-circuit-breaker.js";
-import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
+import type { ToolCircuitBreakerConfig, ToolCircuitBreakerTrip } from "../bcb/types.js";
 import { parseAmpiRecipe, runAmpi } from "../ampi/index.js";
 import type { ReasoningGate } from "../cm/reasoning.js";
 
@@ -35,6 +35,13 @@ import type { ReasoningGate } from "../cm/reasoning.js";
  * - `kill`: the request is short-circuited; `response` is the proxy response
  *   to return to the client.
  */
+export type InterventionHistory = {
+  readonly harness: string;
+  readonly trips: readonly ToolCircuitBreakerTrip[];
+  /** Escalation tier of this request (`nudge` / `mask` / `kill`), else empty. */
+  readonly lastTier: string;
+};
+
 export type InterventionResult =
   | {
       readonly action: "forward";
@@ -45,8 +52,8 @@ export type InterventionResult =
        * knows the port, then forwards. Marks-only (pin) does not set this.
        */
       readonly eraseSlot?: true;
-    }
-  | { readonly action: "kill"; readonly response: Response };
+    } & InterventionHistory
+  | { readonly action: "kill"; readonly response: Response } & InterventionHistory;
 
 /**
  * Inspect a model request and apply the Tool Circuit Breakers.
@@ -74,13 +81,13 @@ export function intervene(
     parsed = JSON.parse(body) as Record<string, unknown>;
   } catch {
     // Not JSON we can inspect — forward verbatim.
-    return { action: "forward", body };
+    return { action: "forward", body, harness: "unknown", trips: [], lastTier: "" };
   }
 
   const messages = parsed.messages;
   if (!Array.isArray(messages)) {
     // No messages array — nothing to inspect.
-    return { action: "forward", body };
+    return { action: "forward", body, harness: "unknown", trips: [], lastTier: "" };
   }
 
   const chatMessages = messages as ChatMessage[];
@@ -90,6 +97,7 @@ export function intervene(
   const { harness } = fingerprint(systemPrompt, ua, hasTools);
   const { ctx } = buildBcbContext(chatMessages, config);
   const broken = applyToolCircuitBreakers(chatMessages, config, ctx);
+  let lastTier = "";
 
   // If any rule rewrote a tool result, the messages array is a new reference;
   // re-serialize so the upstream sees the mutation. Otherwise keep the
@@ -104,6 +112,7 @@ export function intervene(
     const lastTrip = broken.trips[broken.trips.length - 1]!;
     const escalation = evaluateBcbEscalation(lastTrip, config, systemPrompt, harness, db);
     if (escalation) {
+      lastTier = escalation.tier;
       if (escalation.tier === "mask") {
         // Mask: hide the offending tool from the request so the model cannot
         // call it again this turn.
@@ -112,7 +121,13 @@ export function intervene(
       } else if (escalation.tier === "kill" && escalation.action !== "ampi" && escalation.kill) {
         const response = buildBcbKillResponse(escalation.kill, parsed);
         if (response) {
-          return { action: "kill", response };
+          return {
+            action: "kill",
+            response,
+            harness,
+            trips: broken.trips,
+            lastTier,
+          };
         }
         // drop-tools / block-tool mutate `parsed` in place; re-serialize and
         // continue forwarding.
@@ -135,13 +150,20 @@ export function intervene(
         parsed.messages = rewritten.messages;
         outBody = JSON.stringify(parsed);
         if (transcriptMopped(before, rewritten.messages)) {
-          return { action: "forward", body: outBody, eraseSlot: true };
+          return {
+            action: "forward",
+            body: outBody,
+            eraseSlot: true,
+            harness,
+            trips: broken.trips,
+            lastTier,
+          };
         }
       }
     }
   }
 
-  return { action: "forward", body: outBody };
+  return { action: "forward", body: outBody, harness, trips: broken.trips, lastTier };
 }
 
 /**
