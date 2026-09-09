@@ -79,4 +79,3 @@ VS Code `settings.json` uses `mcp.servers` with the same command. Set `MBA_WORKS
 
 - [Repo README](../../README.md)
 - [`@mba-ai/core`](../core)
-- [`docs/adr/`](../../docs/adr/)
