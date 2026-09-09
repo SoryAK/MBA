@@ -23,6 +23,8 @@ import {
   useLlamaServer,
   startLlamaServerCatalogRefresh,
   writeLlamaServerChoice,
+  writeLlamaServerCatalog,
+  llamaBootBinaryError,
   type LlamaServerBinary,
 } from "./llama-binaries.js";
 import type { MachineInfo } from "./machine-info.js";
@@ -408,6 +410,42 @@ describe("llama-server catalog persistence", () => {
     } finally {
       rmSync(store, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("llamaBootBinaryError", () => {
+  it("allows a first-boot llama-server path when the catalog is empty", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mba-llama-boot-"));
+    try {
+      const paths = defaultStorePaths(dir);
+      expect(llamaBootBinaryError(paths, "/opt/llama-cuda/build/bin/llama-server")).toBeUndefined();
+      expect(llamaBootBinaryError(paths, "/bin/sh")).toBe("body.binaryPath must be a llama-server binary");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a live catalog entry and refuses ignored paths", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mba-llama-boot-"));
+    try {
+      const paths = defaultStorePaths(dir);
+      const live = "/opt/llama-cuda/build/bin/llama-server";
+      const ignored = "/opt/old-cuda/build/bin/llama-server";
+      writeLlamaServerCatalog(paths, {
+        scannedAt: "2026-09-08T00:00:00.000Z",
+        entries: [{ path: live, backend: "cuda" }],
+        ignored: [{ path: ignored, backend: "cuda" }],
+      });
+      expect(llamaBootBinaryError(paths, live)).toBeUndefined();
+      expect(llamaBootBinaryError(paths, "/tmp/evil/llama-server")).toBe(
+        "body.binaryPath must be a live catalog llama-server",
+      );
+      expect(llamaBootBinaryError(paths, ignored)).toBe(
+        "body.binaryPath is ignored — restore it in the catalog first",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

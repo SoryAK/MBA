@@ -400,6 +400,62 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(readLlamaServerChoice(paths)).toMatchObject({ path: binaryPath });
   });
 
+  it("POST /servers/boot rejects a binaryPath that is not a live catalog llama-server", async () => {
+    const { seams, spawnCalls } = bootSeams(424242);
+    writeLlamaServerCatalog(paths, {
+      scannedAt: "2026-09-08T00:00:00.000Z",
+      entries: [{ path: "/opt/llama-cuda/build/bin/llama-server", backend: "cuda" }],
+      ignored: [],
+    });
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const res = await app.request("/servers/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        modelFile,
+        port: 9123,
+        binaryPath: "/tmp/evil/llama-server",
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "body.binaryPath must be a live catalog llama-server" });
+    expect(spawnCalls).toEqual([]);
+  });
+
+  it("POST /servers/boot rejects an ignored catalog binaryPath", async () => {
+    const { seams, spawnCalls } = bootSeams(424242);
+    const ignored = "/opt/old-cuda/build/bin/llama-server";
+    writeLlamaServerCatalog(paths, {
+      scannedAt: "2026-09-08T00:00:00.000Z",
+      entries: [{ path: "/opt/llama-cuda/build/bin/llama-server", backend: "cuda" }],
+      ignored: [{ path: ignored, backend: "cuda" }],
+    });
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const res = await app.request("/servers/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile, port: 9123, binaryPath: ignored }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "body.binaryPath is ignored — restore it in the catalog first",
+    });
+    expect(spawnCalls).toEqual([]);
+  });
+
+  it("POST /servers/boot rejects a binaryPath that is not llama-server", async () => {
+    const { seams, spawnCalls } = bootSeams(424242);
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const res = await app.request("/servers/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile, port: 9123, binaryPath: "/bin/sh" }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "body.binaryPath must be a llama-server binary" });
+    expect(spawnCalls).toEqual([]);
+  });
+
   it("GET /servers/binaries lists catalog rows; POST nicknames and removes them", async () => {
     const bin = "/opt/llama-cuda/build/bin/llama-server";
     writeLlamaServerCatalog(paths, {
