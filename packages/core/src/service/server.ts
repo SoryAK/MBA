@@ -658,15 +658,15 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     ) {
       return c.json({ error: "body.fork must be 'upstream' or 'llama.cpp'" }, 400);
     }
+    if (typeof input.binaryPath === "string" && input.binaryPath.length > 0) {
+      const binaryErr = llamaBootBinaryError(paths, input.binaryPath);
+      if (binaryErr) return c.json({ error: binaryErr }, 400);
+    }
     const selection = selectLlamaServer({
       lastPath: readLlamaServerChoice(paths)?.path,
       machineInfo: opts.machineInfo,
       paths,
     });
-    if (typeof input.binaryPath === "string" && input.binaryPath.length > 0) {
-      const binaryErr = llamaBootBinaryError(paths, input.binaryPath);
-      if (binaryErr) return c.json({ error: binaryErr }, 400);
-    }
     const binaryPath =
       typeof input.binaryPath === "string" && input.binaryPath.length > 0
         ? input.binaryPath

@@ -388,8 +388,13 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
 
   it("POST /servers/boot remembers binaryPath as the last llama-server", async () => {
     const { seams, spawnCalls } = bootSeams(424242);
-    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
     const binaryPath = "/opt/llama-cuda/build/bin/llama-server";
+    writeLlamaServerCatalog(paths, {
+      scannedAt: new Date().toISOString(),
+      entries: [{ path: binaryPath, backend: "cuda" }],
+      ignored: [],
+    });
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
     const res = await app.request("/servers/boot", {
       method: "POST",
       headers: { "content-type": "application/json" },
