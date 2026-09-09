@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { pullModel, sha256OfFile, type PullModelOptions } from "./model-pull.js";
+import { pullModel, PullValidationError, sha256OfFile, type PullModelOptions } from "./model-pull.js";
 
 /**
  * Build a minimal valid GGUF v3 buffer with one string kv pair, so the
@@ -350,6 +350,22 @@ describe("pullModel", () => {
       expect(existsSync(join(familyDir, "qwen3.8-27b", "qwen3.8-27b.yaml"))).toBe(true);
       expect(existsSync(join(familyDir, "instructions.md"))).toBe(false);
       expect(existsSync(join(familyDir, "notes.md"))).toBe(false);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects id and family that would write outside the store", async () => {
+    const store = freshStore();
+    try {
+      await expect(pullModel(opts(store, { id: "../escape" }))).rejects.toBeInstanceOf(PullValidationError);
+      await expect(pullModel(opts(store, { id: "ok", family: "..\\escape" }))).rejects.toBeInstanceOf(
+        PullValidationError,
+      );
+      await expect(pullModel(opts(store, { id: "ok/../../../tmp" }))).rejects.toBeInstanceOf(PullValidationError);
+      await expect(pullModel(opts(store, { id: "ok", family: "/tmp" }))).rejects.toBeInstanceOf(PullValidationError);
+      expect(existsSync(join(store, "escape"))).toBe(false);
+      expect(existsSync(join(store, "..", "escape"))).toBe(false);
     } finally {
       rmSync(store, { recursive: true, force: true });
     }

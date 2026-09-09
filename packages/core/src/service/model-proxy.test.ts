@@ -257,6 +257,34 @@ describe("model proxy (ADR-0101 Step 1)", () => {
     const fwdHeaders = new Headers(calls[0]?.init?.headers);
     expect(fwdHeaders.get("authorization")).toBe("Bearer secret-key");
   });
+
+  it("does not forward hop-by-hop or unexpected request headers to upstream", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    const { fetch: fetchImpl, calls } = upstreamFetch(
+      () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const app = createMbaServiceApp({ paths, upstreamUrl: UPSTREAM, fetch: fetchImpl });
+
+    await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer secret-key",
+        cookie: "session=steal-me",
+        host: "mba.internal",
+        connection: "close",
+        "x-forwarded-for": "1.2.3.4",
+        "x-forwarded-host": "evil.example",
+        "x-real-ip": "1.2.3.4",
+      },
+      body: JSON.stringify(CHAT_BODY),
+    });
+
+    const fwdHeaders = new Headers(calls[0]?.init?.headers);
+    expect([...fwdHeaders.keys()].sort()).toEqual(["authorization", "content-type"]);
+    expect(fwdHeaders.get("authorization")).toBe("Bearer secret-key");
+    expect(fwdHeaders.get("content-type")).toBe("application/json");
+  });
 });
 
 describe("model proxy — registry routing (ADR-0101 Step 1b)", () => {
