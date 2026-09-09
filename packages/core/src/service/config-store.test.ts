@@ -36,6 +36,8 @@ describe("config-store", () => {
 
   it("resolves the upstream registry path under the mba/ subdir", () => {
     expect(paths.upstreamsPath).toBe(join(paths.baseDir, "mba", "upstreams.json"));
+    expect(paths.sessionsPath).toBe(join(paths.baseDir, "mba", "sessions.json"));
+    expect(paths.clientsPath).toBe(join(paths.baseDir, "mba", "clients.json"));
   });
 
   it("reads back a persisted TCB config", () => {

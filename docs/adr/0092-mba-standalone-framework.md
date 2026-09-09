@@ -20,7 +20,8 @@ Key questions covered in discussion:
 5. **Core vs plugin** — BCB/TCB/AMPI is core (the differentiator). Per-model
    instruction cards (what the model reads) and operator notes (never
    injected) live in the store as `instructions.md` / `notes.md` (ADR-0091,
-   ADR-0098). Live injection into the prompt is still a later cut.
+   ADR-0098). Staging copies `instructions.md` into a harness envelope in the
+   project; MBA does not splice that card onto `messages[]`.
 
 ## Decision Drivers
 

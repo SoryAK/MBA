@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createMbaServiceApp } from "./server.js";
 import { defaultStorePaths } from "./config-store.js";
 import { writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
+import { hashToken, mintToken, writeSessions } from "./sessions.js";
 import { openBcbDb } from "../bcb/kill-state.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
 
@@ -709,5 +710,78 @@ describe("model proxy — erase slot after AMPI mop", () => {
     expect(res.status).toBe(200);
     expect(chatCalls).toEqual([8080]);
     db.close();
+  });
+});
+
+describe("model proxy pairing", () => {
+  it("stays open when no sessions exist", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    const { fetch: fetchImpl, calls } = upstreamFetch(
+      () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const app = createMbaServiceApp({ paths, upstreamUrl: UPSTREAM, fetch: fetchImpl });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(CHAT_BODY),
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("returns 401 without a token once a session exists", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    const token = mintToken();
+    writeSessions(paths.sessionsPath, [
+      {
+        id: "sess.1",
+        modelId: "llama-3.1-8b",
+        harness: "cursor",
+        projectRoot: "/tmp/p",
+        tokenHash: hashToken(token),
+        createdAt: "2026-09-09T00:00:00.000Z",
+      },
+    ]);
+    const { fetch: fetchImpl, calls } = upstreamFetch(
+      () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const app = createMbaServiceApp({ paths, upstreamUrl: UPSTREAM, fetch: fetchImpl });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(CHAT_BODY),
+    });
+    expect(res.status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("forwards when the Bearer token matches and does not send it upstream", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    const token = mintToken();
+    writeSessions(paths.sessionsPath, [
+      {
+        id: "sess.1",
+        modelId: "llama-3.1-8b",
+        harness: "cursor",
+        projectRoot: "/tmp/p",
+        tokenHash: hashToken(token),
+        createdAt: "2026-09-09T00:00:00.000Z",
+      },
+    ]);
+    const { fetch: fetchImpl, calls } = upstreamFetch(
+      () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const app = createMbaServiceApp({ paths, upstreamUrl: UPSTREAM, fetch: fetchImpl });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(CHAT_BODY),
+    });
+    expect(res.status).toBe(200);
+    const fwdHeaders = new Headers(calls[0]?.init?.headers);
+    expect(fwdHeaders.get("authorization")).toBeNull();
   });
 });

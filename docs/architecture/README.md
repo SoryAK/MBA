@@ -18,7 +18,7 @@ Then open the URL it prints (usually `http://localhost:5173`). Views: `/view/ind
 | --- | --- |
 | `index` | Landscape |
 | `house` / `pull` | Store: pull, scaffold, the two cards |
-| `boot` | Resolve adapter → spawn llama-server |
-| `clients-landscape` / `connect` | Harness + project + proxy. Staged envelope is **proposed** (amber, dotted). |
+| `boot` | Resolve adapter (paired client env when connected) → spawn llama-server |
+| `clients-landscape` / `connect` | Harness + project + proxy. `mba connect` pairs a token and stages `instructions.md`. Operator may add a client (name + envelope). |
 
 One `instructions.md` in the store. Environment (`harness` + `ide`) only changes the **filename/path** when staging exists. `notes.md` never leaves the house.

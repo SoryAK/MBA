@@ -1,6 +1,6 @@
 import { brand, dim, heading, paint, BOLD } from "./style.js";
 
-export type HelpTopic = "overview" | "models" | "servers" | "machine" | "status";
+export type HelpTopic = "overview" | "models" | "servers" | "clients" | "machine" | "status";
 
 function cmd(line: string, note: string): string {
   return `  ${paint(line.padEnd(36), BOLD)} ${dim(note)}`;
@@ -13,8 +13,9 @@ export function usageOverview(): string {
     heading("Groups"),
     cmd("mba models", "edit, search, pull  (m)"),
     cmd("mba servers", "list, boot, stop, logs, slots, builds  (s)"),
+    cmd("mba clients", "list, add, connect, revoke  (c)"),
     cmd("mba machine", "hardware clamp mode"),
-    cmd("mba status", "service, loaded model, machine mode"),
+    cmd("mba status", "service, loaded model, pairing"),
     "",
     heading("Local"),
     cmd("mba migrate-paths", "move legacy state + store"),
@@ -23,9 +24,9 @@ export function usageOverview(): string {
     "",
     dim("  mba                  home menu on a TTY"),
     dim("  mba <group> --help   details for that group"),
-    dim("  shortcuts            m → models   s → servers"),
+    dim("  shortcuts            m → models   s → servers   c → clients"),
     dim("  --yes                skip confirm (restart / boot preview)"),
-    dim("  --json               machine-readable list/show/status"),
+    dim("  --json               machine-readable list/show/status/stage/connect"),
   ].join("\n");
 }
 
@@ -41,9 +42,11 @@ export function usageModels(): string {
     cmd("mba models path <id> <file>", "print path (server_setup | yaml)"),
     cmd("mba models pull <url|owner/repo> --id <id>", "download and scaffold"),
     cmd("mba models search", "HuggingFace search → pull"),
+    cmd("mba models stage [id] --harness <name>", "copy instructions.md into the project"),
     "",
     dim("  aliases    config → show   open → path   set pull"),
-    dim("  --json     on list and show"),
+    dim("  --json     on list, show, and stage"),
+    dim("  harness    built-in set, or a name from mba clients add"),
   ].join("\n");
 }
 
@@ -72,6 +75,25 @@ export function usageServers(): string {
   ].join("\n");
 }
 
+export function usageClients(): string {
+  return [
+    `${brand("clients")}`,
+    "",
+    cmd("mba clients", "list / add / connect / revoke (TTY menu)"),
+    cmd("mba clients list", "registered envelopes + paired sessions"),
+    cmd("mba clients add <name> --envelope <path>", "operator-defined client"),
+    cmd("mba connect [id] --harness <name>", "stage card + mint a token"),
+    cmd("mba clients revoke [id]", "drop a pairing (--all unlocks chat)"),
+    cmd("mba clients remove <name>", "drop an added client"),
+    "",
+    dim("  alias      mba c    mba client"),
+    dim("  --project  project folder (default cwd)"),
+    dim("  --ide      optional; connect/boot share this env key"),
+    dim("  harness    built-in set, or a name from mba clients add"),
+    dim("  --json     on list, connect, revoke, add, remove"),
+  ].join("\n");
+}
+
 export function usageMachine(): string {
   return [
     `${brand("machine")}`,
@@ -89,7 +111,7 @@ export function usageStatus(): string {
   return [
     `${brand("status")}`,
     "",
-    cmd("mba status", "service, loaded models, machine mode"),
+    cmd("mba status", "service, loaded models, pairing, clients"),
     dim("  --json   machine-readable"),
   ].join("\n");
 }
@@ -100,6 +122,8 @@ export function usageFor(topic: HelpTopic): string {
       return usageModels();
     case "servers":
       return usageServers();
+    case "clients":
+      return usageClients();
     case "machine":
       return usageMachine();
     case "status":

@@ -54,6 +54,10 @@ export interface MbaStorePaths {
   readonly serviceInfoPath: string;
   /** Upstream model-server registry (ADR-0097 Phase 1). */
   readonly upstreamsPath: string;
+  /** Paired-client sessions (connect plane). */
+  readonly sessionsPath: string;
+  /** Operator-defined clients (name + envelope). */
+  readonly clientsPath: string;
   /** Unix-domain-socket path the service listens on (ADR-0101 Step 1). */
   readonly udsPath: string;
 }
@@ -95,6 +99,8 @@ export function defaultStorePaths(baseDir: string = defaultStateDir()): MbaStore
     machineOverlayPath: join(baseDir, "mba", "machine-overlay.json"),
     serviceInfoPath: join(baseDir, "mba", "service.json"),
     upstreamsPath: join(baseDir, "mba", "upstreams.json"),
+    sessionsPath: join(baseDir, "mba", "sessions.json"),
+    clientsPath: join(baseDir, "mba", "clients.json"),
     udsPath: join(baseDir, "mba", "mba.sock"),
   };
 }

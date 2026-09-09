@@ -7,7 +7,17 @@
 
 import type { HelpTopic } from "./help.js";
 
-export type ModelsAction = "pick" | "list" | "show" | "set" | "open" | "pull" | "search" | "edit";
+export type ModelsAction =
+  | "pick"
+  | "list"
+  | "show"
+  | "set"
+  | "open"
+  | "pull"
+  | "search"
+  | "edit"
+  | "stage"
+  | "connect";
 
 export type MbaRoute =
   | { readonly cmd: "home" }
@@ -18,6 +28,7 @@ export type MbaRoute =
   | { readonly cmd: "estimate-memory"; readonly args: readonly string[] }
   | { readonly cmd: "machine"; readonly args: readonly string[] }
   | { readonly cmd: "servers"; readonly args: readonly string[] }
+  | { readonly cmd: "clients"; readonly args: readonly string[] }
   | { readonly cmd: "models"; readonly action: ModelsAction; readonly args: readonly string[] }
   | { readonly cmd: "unknown"; readonly command: string };
 
@@ -37,6 +48,7 @@ function helpTopic(name: string | undefined): HelpTopic {
   if (name === "models" || name === "m") return "models";
   if (name === "servers" || name === "server" || name === "s") return "servers";
   if (name === "machine" || name === "machine-overlay") return "machine";
+  if (name === "clients" || name === "client" || name === "c") return "clients";
   if (name === "status") return "status";
   return "overview";
 }
@@ -51,6 +63,8 @@ function parseModels(rest: readonly string[]): MbaRoute {
   if (sub === "open" || sub === "path") return { cmd: "models", action: "open", args: tail };
   if (sub === "search") return { cmd: "models", action: "search", args: tail };
   if (sub === "pull") return { cmd: "models", action: "pull", args: tail };
+  if (sub === "stage") return { cmd: "models", action: "stage", args: tail };
+  if (sub === "connect") return { cmd: "models", action: "connect", args: tail };
   if (sub === "edit") return { cmd: "models", action: "edit", args: tail };
   return { cmd: "models", action: "edit", args: rest.filter((a) => a !== "--help" && a !== "-h") };
 }
@@ -84,6 +98,10 @@ export function parseMbaArgv(argv: readonly string[]): ParsedMba {
     if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "machine" } };
     return { assumeNo, json, route: { cmd: "machine", args: rest } };
   }
+  if (command === "clients" || command === "client" || command === "c") {
+    if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "clients" } };
+    return { assumeNo, json, route: { cmd: "clients", args: rest } };
+  }
   if (command === "models" || command === "m") {
     return { assumeNo, json, route: parseModels(rest) };
   }
@@ -98,6 +116,9 @@ export function parseMbaArgv(argv: readonly string[]): ParsedMba {
   }
   if (command === "pull") {
     return { assumeNo, json, route: { cmd: "models", action: "pull", args: rest } };
+  }
+  if (command === "connect") {
+    return { assumeNo, json, route: { cmd: "models", action: "connect", args: rest } };
   }
 
   return { assumeNo, json, route: { cmd: "unknown", command } };

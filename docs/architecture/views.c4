@@ -17,10 +17,9 @@ views {
 
   view clients-landscape {
     title "3 — Harness, project, proxy"
-    description "MBA is not the client. Environment (harness + ide) will pick the envelope; that staging is not built yet."
+    description "MBA is not the client. Environment (harness + ide) picks the envelope filename."
     include harness, project, project.*, mba.proxy, mba.service, llama, mba.mcp
     autoLayout LeftRight
-    style project.envelope { color amber }
   }
 
   dynamic view pull {
@@ -45,12 +44,12 @@ views {
 
   dynamic view boot {
     title "2 — Boot the model"
-    description "Resolve the house into llama.cpp flags, then spawn. Slot-save-path is already on disk from pull."
+    description "Resolve the house into llama.cpp flags using the paired client's environment, then spawn. Slot-save-path is already on disk from pull."
     variant sequence
 
     operator -> mba.cli "mba s boot <id>"
     mba.cli -> mba.service "POST boot"
-    mba.service -> mba.resolver "family then model then env folder"
+    mba.service -> mba.resolver "family then model then env folder (paired client)"
     mba.resolver -> mba.store "read yaml, bcb, tcb, server_setup"
     mba.service -> llama "spawn llama-server (ctx, GPU, slot-save-path)"
     mba.service -> mba.store.kv "use existing slot dirs"
@@ -58,15 +57,16 @@ views {
 
   dynamic view connect {
     title "3 — Connect a client"
-    description "Harness builds the prompt from the project. MBA proxies the HTTP call. Staging the model card into the project is next, not live."
+    description "Harness builds the prompt from the project. MBA pairs a token, stages the model card, then proxies the HTTP call."
     variant sequence
 
+    operator -> mba.cli "mba connect"
+    mba.cli -> mba.service "POST /connect"
+    mba.service -> mba.resolver "winning instructions.md"
+    mba.service -> project.envelope "copy into harness slot"
     harness -> project.card "reads project CLAUDE.md"
-    opt "not built — env picks the filename" {
-      mba.service -> project.envelope "copy instructions.md into harness slot"
-      harness -> project.envelope "same pipe as CLAUDE.md"
-    }
-    harness -> mba.proxy "POST /v1/chat/completions"
+    harness -> project.envelope "same pipe as CLAUDE.md"
+    harness -> mba.proxy "POST /v1/chat/completions (Bearer token)"
     mba.proxy -> llama "forward"
     opt "sanitize actually changed what the model sees" {
       mba.proxy -> llama "POST /slots/0?action=erase"

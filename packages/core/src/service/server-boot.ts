@@ -23,9 +23,13 @@ import { delimiter, join } from "node:path";
 import { daemonLog, resolveSeams, type LifecycleSeams } from "../mba/index.js";
 import type { MachineInfo } from "./machine-info.js";
 import type { MachineOverlayMode } from "./config-store.js";
-import { resolveRecipe } from "./recipe-resolution.js";
+import { resolveRecipe, type RecipeResolutionContext } from "./recipe-resolution.js";
 import { listUpstreams, readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
+import { resolveEnvContext, DEFAULT_RESOLVE_ENV } from "./env-context.js";
+import { readModelCatalog } from "./model-catalog.js";
+import { readSessions } from "./sessions.js";
+import { readOperatorClients } from "./operator-clients.js";
 
 /** The two llama.cpp fork variants (boot-script parity). */
 export type Fork = "upstream" | "llama.cpp";
@@ -109,6 +113,8 @@ export interface BootRecipe {
   readonly annotations: readonly string[];
   /** Whether the recipe fits the supplied machine (true if no machine info). */
   readonly fitsMachine: boolean;
+  /** Harness + ide + runtime used for environment-folder selection. */
+  readonly env: RecipeResolutionContext;
 }
 
 /**
@@ -125,15 +131,23 @@ export function resolveBootRecipe(
   adapterDir: string,
   machineInfo?: MachineInfo,
   machineOverlay: MachineOverlayMode = "enforce",
+  pairing?: { readonly sessionsPath?: string; readonly clientsPath?: string },
 ): BootRecipe {
+  const catalog = readModelCatalog(adapterDir);
+  const entry = catalog.find((c) => c.modelFile === modelFile);
+  const env = entry
+    ? resolveEnvContext({
+        modelId: entry.id,
+        sessions: pairing?.sessionsPath ? readSessions(pairing.sessionsPath) : [],
+        operatorClients: pairing?.clientsPath
+          ? readOperatorClients(pairing.clientsPath)
+          : [],
+      })
+    : DEFAULT_RESOLVE_ENV;
   const recipe = resolveRecipe(
     modelFile,
     adapterDir,
-    {
-      harness: "copilot",
-      ide: "vscode",
-      serverRuntime: "llamacpp",
-    },
+    env,
     { machineInfo, machineOverlay },
   );
   return {
@@ -143,6 +157,7 @@ export function resolveBootRecipe(
     warmupTokens: recipe.flags.warmupTokens ?? 350,
     annotations: recipe.annotations,
     fitsMachine: recipe.fitsMachine,
+    env,
   };
 }
 
@@ -170,6 +185,10 @@ export interface BootServerInput {
   readonly machineInfo?: MachineInfo;
   /** How to apply the machine overlay (default `enforce`). */
   readonly machineOverlay?: MachineOverlayMode;
+  /** Paired sessions — boot uses this model's newest pairing as resolve env. */
+  readonly sessionsPath?: string;
+  /** Operator-defined clients (ide fallback for a paired harness). */
+  readonly clientsPath?: string;
   /** Lifecycle seams (spawn/fetch/kill) — injectable for tests. */
   readonly seams?: LifecycleSeams;
 }
@@ -287,9 +306,10 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
         input.adapterDir,
         input.machineInfo,
         machineOverlay,
+        { sessionsPath: input.sessionsPath, clientsPath: input.clientsPath },
       );
       daemonLog(
-        `[boot] recipe resolved: modelId=${recipe.modelId} warmup=${recipe.warmupTokens} args=[${recipe.cliArgs.join(" ")}]`,
+        `[boot] recipe resolved: modelId=${recipe.modelId} env=${recipe.env.harness}+${recipe.env.ide}+${recipe.env.serverRuntime} warmup=${recipe.warmupTokens} args=[${recipe.cliArgs.join(" ")}]`,
       );
       if (recipe.annotations.length > 0) {
         for (const annotation of recipe.annotations) {

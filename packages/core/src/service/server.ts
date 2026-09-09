@@ -14,7 +14,7 @@
  *   POST /set_rules                  → { version, tcb }
  *        Body: { tcb, ruleClasses? }. Validates, persists atomically, bumps
  *        the version. 400 on invalid shape.
- *   GET  /status                     → { version, uptimeMs, paths }
+ *   GET  /status                     → { version, uptimeMs, pairing, paths }
  *
  * Model plane (ADR-0093 Phase 1):
  *   GET  /models                     → { models: [{ id, name, family, modelFile, loaded }] }
@@ -45,6 +45,17 @@
  *        400 invalid field/value. REPORTS `modelLoaded` (probed from the
  *        upstream) so the caller can offer a restart — the route never
  *        restarts anything itself.
+ *   POST /models/stage               → { modelId, action, envelope, dest, source?, reason? }
+ *        Body: { id, projectRoot, harness, ide? }. Copy the winning
+ *        `instructions.md` into a harness-native file in the project.
+ *        Empty cards are not staged. `notes.md` never leaves the store.
+ *        404 unknown model, 409 dest exists and is not MBA-staged.
+ *   POST /connect                    → { token, modelId, harness, projectRoot, stage }
+ *        Body: { id, projectRoot, harness, ide? }. Stage the card (best
+ *        effort) and mint a pairing token. Once any session exists, chat
+ *        through the proxy requires `Authorization: Bearer <token>`.
+ *   POST /connect/revoke             → { pairing: { active, count } }
+ *        Body: { id?, harness?, projectRoot? }. Empty body clears all.
  *
  * The app is exported separately from the listener so tests can drive it
  * with `app.request()` without binding a port.
@@ -78,6 +89,21 @@ import {
   type SwitchExecutor,
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
+import { compactHarnessKey } from "../mba/envelope.js";
+import { stageModelCard } from "./stage-model-card.js";
+import { defaultIdeForHarness } from "./env-context.js";
+import { operatorEnvelopeBindings, readOperatorClients } from "./operator-clients.js";
+import {
+  hashToken,
+  mintSessionId,
+  mintToken,
+  pairingActive,
+  publicSessions,
+  readSessions,
+  revokeSessions,
+  upsertSession,
+  writeSessions,
+} from "./sessions.js";
 import { createModelProxyRoutes } from "./model-proxy.js";
 import { reasoningGateForModel } from "./reasoning-gate.js";
 import { pullModel } from "../model/model-pull.js";
@@ -188,6 +214,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       tcbConfig,
       bcbDb,
       reasoningGate: (model) => reasoningGateForModel(model, opts.adapterDir),
+      sessionsPath: paths.sessionsPath,
     }),
   );
 
@@ -260,9 +287,15 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 
   app.get("/status", (c) => {
     const cfg = readGlobalConfig(paths);
+    const sessions = readSessions(paths.sessionsPath);
     return c.json({
       version: cfg.version,
       uptimeMs: Date.now() - startedAt,
+      pairing: {
+        active: pairingActive(sessions),
+        count: sessions.length,
+        sessions: publicSessions(sessions),
+      },
       paths: {
         baseDir: paths.baseDir,
         tcbPath: paths.tcbPath,
@@ -453,6 +486,175 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     });
   });
 
+  app.post("/models/stage", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as {
+      id?: unknown;
+      projectRoot?: unknown;
+      harness?: unknown;
+      ide?: unknown;
+    };
+    if (
+      !input ||
+      typeof input !== "object" ||
+      typeof input.id !== "string" ||
+      input.id.length === 0 ||
+      typeof input.projectRoot !== "string" ||
+      input.projectRoot.length === 0 ||
+      typeof input.harness !== "string" ||
+      input.harness.length === 0 ||
+      (input.ide !== undefined && typeof input.ide !== "string")
+    ) {
+      return c.json(
+        { error: "body must be { id, projectRoot, harness, ide? }" },
+        400,
+      );
+    }
+    const envelopes = operatorEnvelopeBindings(paths.clientsPath);
+    const result = stageModelCard({
+      adapterDir: opts.adapterDir ?? "",
+      modelId: input.id,
+      projectRoot: input.projectRoot,
+      harness: input.harness,
+      ide: typeof input.ide === "string" && input.ide.length > 0 ? input.ide : undefined,
+      envelopes,
+    });
+    if (!result.ok) {
+      const status =
+        result.code === "unknown-model"
+          ? 404
+          : result.code === "conflict"
+            ? 409
+            : 400;
+      return c.json({ error: result.error, code: result.code }, status);
+    }
+    return c.json({
+      modelId: result.modelId,
+      action: result.action,
+      reason: result.reason,
+      envelope: result.envelope,
+      dest: result.dest,
+      source: result.source,
+    });
+  });
+
+  app.post("/connect", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as {
+      id?: unknown;
+      projectRoot?: unknown;
+      harness?: unknown;
+      ide?: unknown;
+    };
+    if (
+      !input ||
+      typeof input !== "object" ||
+      typeof input.id !== "string" ||
+      input.id.length === 0 ||
+      typeof input.projectRoot !== "string" ||
+      input.projectRoot.length === 0 ||
+      typeof input.harness !== "string" ||
+      input.harness.length === 0 ||
+      (input.ide !== undefined && typeof input.ide !== "string")
+    ) {
+      return c.json(
+        { error: "body must be { id, projectRoot, harness, ide? }" },
+        400,
+      );
+    }
+    const catalog = readModelCatalog(opts.adapterDir ?? "");
+    if (!catalog.some((e) => e.id === input.id)) {
+      return c.json({ error: `unknown model: ${input.id}`, code: "unknown-model" }, 404);
+    }
+    const harness = input.harness;
+    const ide =
+      (typeof input.ide === "string" && input.ide.length > 0 ? input.ide : undefined) ??
+      readOperatorClients(paths.clientsPath).find(
+        (c) => compactHarnessKey(c.name) === compactHarnessKey(harness),
+      )?.ide ??
+      defaultIdeForHarness(harness);
+    const envelopes = operatorEnvelopeBindings(paths.clientsPath);
+    const staged = stageModelCard({
+      adapterDir: opts.adapterDir ?? "",
+      modelId: input.id,
+      projectRoot: input.projectRoot,
+      harness,
+      ide,
+      envelopes,
+    });
+    if (!staged.ok && staged.code !== "conflict") {
+      const status = staged.code === "unknown-model" ? 404 : 400;
+      return c.json({ error: staged.error, code: staged.code }, status);
+    }
+    const token = mintToken();
+    const session = {
+      id: mintSessionId(),
+      modelId: input.id,
+      harness: input.harness,
+      ide,
+      projectRoot: input.projectRoot,
+      tokenHash: hashToken(token),
+      createdAt: new Date().toISOString(),
+    };
+    writeSessions(paths.sessionsPath, upsertSession(readSessions(paths.sessionsPath), session));
+    return c.json({
+      token,
+      modelId: input.id,
+      harness: input.harness,
+      ide,
+      projectRoot: input.projectRoot,
+      stage: staged.ok
+        ? {
+            action: staged.action,
+            reason: staged.reason,
+            envelope: staged.envelope,
+            dest: staged.dest,
+          }
+        : { action: "conflict", error: staged.error, code: staged.code },
+    });
+  });
+
+  app.post("/connect/revoke", async (c) => {
+    let body: unknown = {};
+    try {
+      const text = await c.req.text();
+      if (text.length > 0) body = JSON.parse(text) as unknown;
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = (body ?? {}) as {
+      id?: unknown;
+      harness?: unknown;
+      projectRoot?: unknown;
+    };
+    if (input.id !== undefined && (typeof input.id !== "string" || input.id.length === 0)) {
+      return c.json({ error: "body.id must be a model id when set" }, 400);
+    }
+    if (input.harness !== undefined && typeof input.harness !== "string") {
+      return c.json({ error: "body.harness must be a string when set" }, 400);
+    }
+    if (input.projectRoot !== undefined && typeof input.projectRoot !== "string") {
+      return c.json({ error: "body.projectRoot must be a string when set" }, 400);
+    }
+    const next = revokeSessions(readSessions(paths.sessionsPath), {
+      modelId: typeof input.id === "string" ? input.id : undefined,
+      harness: typeof input.harness === "string" ? input.harness : undefined,
+      projectRoot: typeof input.projectRoot === "string" ? input.projectRoot : undefined,
+    });
+    writeSessions(paths.sessionsPath, next);
+    return c.json({ pairing: { active: pairingActive(next), count: next.length } });
+  });
+
   // --- Server plane (ADR-0097 Phase 2) ------------------------------------
 
   app.get("/servers", async (c) => {
@@ -586,6 +788,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         opts.adapterDir ?? "",
         opts.machineInfo,
         machineOverlay(),
+        { sessionsPath: paths.sessionsPath, clientsPath: paths.clientsPath },
       );
       const selection = selectLlamaServer({
         lastPath: readLlamaServerChoice(paths)?.path,
@@ -597,6 +800,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         modelFile: recipe.modelFile,
         cliArgs: recipe.cliArgs,
         warmupTokens: recipe.warmupTokens,
+        env: recipe.env,
         binary: selection.selected,
         binaries: selection.catalog,
         recommended: selection.recommended,
@@ -682,6 +886,8 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       binaryPath,
       machineInfo: opts.machineInfo,
       machineOverlay: machineOverlay(),
+      sessionsPath: paths.sessionsPath,
+      clientsPath: paths.clientsPath,
       seams: opts.lifecycleSeams,
     });
     if (!result.ok) {
@@ -885,6 +1091,8 @@ async function defaultSwitchExecutor(
     registryPath: (opts.paths ?? defaultStorePaths()).upstreamsPath,
     machineInfo: opts.machineInfo,
     machineOverlay: readGlobalConfig(opts.paths ?? defaultStorePaths()).machineOverlay,
+    sessionsPath: (opts.paths ?? defaultStorePaths()).sessionsPath,
+    clientsPath: (opts.paths ?? defaultStorePaths()).clientsPath,
     seams: opts.lifecycleSeams,
   });
   if (!result.ok) {
