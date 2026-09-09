@@ -1,9 +1,53 @@
+#==============================================================================#
+# Intentionally untracked files. MBA-specific entries first; then editor,
+# OS, and assistant scratch.
+#==============================================================================#
+
 node_modules/
 dist/
 coverage/
+build/
 *.log
-.DS_Store
 
 # Session notes and backlog — local only, never publish
 docs/handoffs/
 docs/backlog/
+
+#==============================================================================#
+# File extensions anywhere in the tree
+#==============================================================================#
+*~
+.#*
+*.orig
+*.rej
+.*.sw?
+.sw?
+.DS_Store
+
+#==============================================================================#
+# Editors and IDEs
+#==============================================================================#
+.vscode
+.vs
+.idea
+.zed
+.cache
+
+#==============================================================================#
+# Coding assistants
+#==============================================================================#
+.agents/
+.claude/
+.gemini/
+.codex/
+/CLAUDE.md
+/GEMINI.md
+/AGENTS.md
+/instructions.md
+
+# Cursor — keep committed project rules; ignore the rest of .cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+.cursorignore
+.cursorindexingignore
