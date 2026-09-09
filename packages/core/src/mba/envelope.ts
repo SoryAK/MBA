@@ -85,7 +85,7 @@ export function isMbaStaged(text: string): boolean {
 
 /** Wrap store card text so the harness file is identifiable and (when needed) always-on. */
 export function wrapStagedCard(harness: string, body: string): string {
-  const trimmed = body.replace(/^\uFEFF/, "").replace(/\s+$/, "") + "\n";
+  const trimmed = body.replace(/^\uFEFF/, "").trimEnd() + "\n";
   const known = normalizeHarness(harness);
   if (known === "cursor") {
     return [
