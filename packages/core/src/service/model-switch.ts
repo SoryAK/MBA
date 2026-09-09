@@ -55,7 +55,9 @@ export async function probeLoadedModel(
   upstreamUrl: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string | null> {
-  const base = upstreamUrl.replace(/\/+$/, "");
+  let end = upstreamUrl.length;
+  while (end > 0 && upstreamUrl.charCodeAt(end - 1) === 47) end -= 1;
+  const base = end === upstreamUrl.length ? upstreamUrl : upstreamUrl.slice(0, end);
   try {
     const res = await fetchImpl(`${base}/v1/models`);
     if (!res.ok) return null;

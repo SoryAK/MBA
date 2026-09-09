@@ -90,9 +90,11 @@ export interface ModelProxyOptions {
   readonly reasoningGate?: (model: string | undefined) => ReasoningGate | undefined;
 }
 
-/** Strip a trailing slash so `${base}/v1/…` never double-slashes. */
+/** Strip trailing slashes so `${base}/v1/…` never double-slashes. */
 function normalizeBase(url: string): string {
-  return url.replace(/\/+$/, "");
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1;
+  return end === url.length ? url : url.slice(0, end);
 }
 
 /** A cached health verdict for one registry entry. */
