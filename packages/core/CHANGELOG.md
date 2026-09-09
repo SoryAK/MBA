@@ -4,6 +4,29 @@ User-facing changes to `@mba-ai/core` on npm. Versions before **0.1.12** are not
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.15] — 2026-09-08
+
+### Added
+
+- llama-server catalog (scan, nickname, ignore/restore) and boot picker; GPU layers clamped to host VRAM.
+- Noun CLI (`mba models|servers|machine|status`) with list-plus-preview TTY.
+- Per-model `instructions.md` and `notes.md` (notes are never injected).
+- Live AMPI sanitize with llama.cpp slot erase after a mop; CM compact/prune (Assist, Sanction, Recover stay parked).
+- Machine overlay (enforce / warn / off), `estimate-memory`, and slot control in the per-model KV folder.
+- `mba migrate adapters`. Pull finishes the house if weights already landed.
+
+### Changed
+
+- Requires Node 22+ (`node:sqlite` in BCB kill-state).
+- License is Apache-2.0 (was MIT).
+- Adapters use `mba.ai/v1alpha1` only; the legacy apiVersion is dropped.
+- Escalation YAML names AMPI recipes. CM is the only plane that edits `messages[]`.
+
+### Fixed
+
+- Boot `binaryPath` must be a live catalog llama-server.
+- Pull `id` / `family` cannot write outside the model store.
+
 ## [0.1.12] — 2026-09-05
 
 ### Added
