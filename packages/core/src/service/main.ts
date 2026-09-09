@@ -31,6 +31,7 @@ import { buildCtxSizeResolver } from "./ctx-size-resolver.js";
 import { syncVsCodeEndpoints, watchAdapterDir } from "./model-endpoint-sync.js";
 import { refreshMachineInfo } from "./machine-store.js";
 import { startMbaService } from "./server.js";
+import { refreshLlamaServerCatalog, startLlamaServerCatalogRefresh } from "./llama-binaries.js";
 import { startUdsListener, type UdsHandle } from "./uds-listener.js";
 import { resolveVsCodeLmConfigPath } from "./vscode-lm-config.js";
 import { killAllOwnedGroups, ownedGroupCount, type LifecycleSeams } from "../mba/index.js";
@@ -91,6 +92,31 @@ function formatBytes(n: number): string {
 // owned-group registry lives on it, so the exit handler can kill every
 // server process group the daemon booted.
 const lifecycleSeams: LifecycleSeams = {};
+
+try {
+  const llamaCatalog = refreshLlamaServerCatalog(paths);
+  const backends = [...new Set(llamaCatalog.map((b) => b.backend))].join(", ");
+  console.log(
+    `[mba] llama-server catalog: ${llamaCatalog.length} build${llamaCatalog.length === 1 ? "" : "s"}` +
+      (backends ? ` (${backends})` : ""),
+  );
+} catch (err) {
+  console.warn(`[mba] llama-server catalog scan failed: ${String(err)}`);
+}
+
+const stopLlamaCatalogRefresh = startLlamaServerCatalogRefresh(paths, {
+  onRefresh: (catalog, changed) => {
+    if (!changed) return;
+    const backends = [...new Set(catalog.map((b) => b.backend))].join(", ");
+    console.log(
+      `[mba] llama-server catalog: ${catalog.length} build${catalog.length === 1 ? "" : "s"}` +
+        (backends ? ` (${backends})` : ""),
+    );
+  },
+  onError: (err) => {
+    console.warn(`[mba] llama-server catalog scan failed: ${String(err)}`);
+  },
+});
 
 const handle = await startMbaService({
   paths,
@@ -170,6 +196,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[mba] ${signal} received, closing…`);
+  stopLlamaCatalogRefresh();
   stopEndpointWatch?.();
   try {
     // G1: kill every server group this daemon booted before exiting.
