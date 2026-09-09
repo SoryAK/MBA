@@ -6,6 +6,7 @@ import {
   askYesNoInteractive,
   pickLabeledInteractive,
   pickModelInteractive,
+  pickPreviewInteractive,
   pickServerInteractive,
   searchHfInteractive,
   type ModelEntry,
@@ -316,11 +317,11 @@ describe("searchHfInteractive", () => {
     // First frame must NOT contain a cursor-up (no prior results frame to overwrite).
     expect(firstFrame).not.toMatch(/\x1b\[\d+A/);
 
-    // Now redraw via a down-arrow: must move up exactly (results.length + 1) = 3 lines.
+    // Now redraw via a down-arrow: box is 7 lines (top, header, split, 3 body, bottom).
     write.mockClear();
     stdin.emit("\x1b[B"); // down -> redraw
     const redraw = write.mock.calls.map((c) => String(c[0])).join("");
-    expect(redraw).toContain("\x1b[3A");
+    expect(redraw).toContain("\x1b[7A");
 
     stdin.emit("\x1b"); // Esc to settle
     await expect(p).resolves.toBeNull();
@@ -367,6 +368,88 @@ describe("pickLabeledInteractive", () => {
   it("resolves null on Esc", async () => {
     const p = pickLabeledInteractive("pick a quant", items);
     await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("draws the two-pane list + preview chrome", async () => {
+    const write = vi.spyOn(process.stdout, "write");
+    const p = pickLabeledInteractive("home", [
+      { label: "models", value: "models", preview: [["do", "edit dials"]] },
+      { label: "quit", value: "quit" },
+    ]);
+    await tick();
+    const frame = write.mock.calls.map((c) => String(c[0])).join("");
+    expect(frame).toContain("┬");
+    expect(frame).toContain("edit dials");
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("type-to-filter narrows the list before picking", async () => {
+    const p = pickLabeledInteractive("pick a quant", items);
+    await tick();
+    stdin.emit("Q8");
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("Q8_0");
+  });
+
+  it("clears the filter on first Esc, then cancels on the second", async () => {
+    const p = pickLabeledInteractive("pick a quant", items);
+    await tick();
+    stdin.emit("Q8");
+    stdin.emit("\x1b");
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+});
+
+describe("pickPreviewInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  const items = [
+    {
+      label: "model.Q4_K_M.gguf",
+      value: "Q4_K_M",
+      preview: [["file", "model.Q4_K_M.gguf"], ["size", "4.2 GiB"]] as const,
+    },
+    {
+      label: "model.Q8_0.gguf",
+      value: "Q8_0",
+      preview: [["file", "model.Q8_0.gguf"], ["size", "8.1 GiB"]] as const,
+    },
+  ];
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("picks the first item on Enter", async () => {
+    const p = pickPreviewInteractive("quant", items);
+    await tick();
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("Q4_K_M");
+  });
+
+  it("type-to-filter then picks the remaining row", async () => {
+    const p = pickPreviewInteractive("quant", items);
+    await tick();
+    stdin.emit("Q8");
+    stdin.emit("\r");
+    await expect(p).resolves.toBe("Q8_0");
+  });
+
+  it("draws a split pane with a preview of the selected row", async () => {
+    const write = vi.spyOn(process.stdout, "write");
+    const p = pickPreviewInteractive("quant", items);
+    await tick();
+    const frame = write.mock.calls.map((c) => String(c[0])).join("");
+    expect(frame).toContain("┬");
+    expect(frame).toContain("4.2 GiB");
     stdin.emit("\x1b");
     await expect(p).resolves.toBeNull();
   });

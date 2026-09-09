@@ -2,7 +2,7 @@
  * Model plane: list / show / set / open / pull / guided edit.
  */
 
-import { fail, serviceGet, servicePost, servicePostSse } from "./client.js";
+import { fail, formatBytes, serviceGet, servicePost, servicePostSse } from "./client.js";
 import { brand, dim, doneBox, heading, option, paint, shortenHome, BOLD } from "./style.js";
 import {
   askTextInteractive,
@@ -10,6 +10,7 @@ import {
   pickFieldInteractive,
   pickLabeledInteractive,
   pickModelInteractive,
+  pickPreviewInteractive,
   searchHfInteractive,
   type ModelEntry,
 } from "./interactive.js";
@@ -132,11 +133,20 @@ export async function cmdModelsPick(baseUrl: string, assumeNo: boolean): Promise
     return;
   }
   const picked = await pickModelInteractive(models);
-  if (picked === null) {
-    process.stdout.write("[mba] cancelled\n");
-    return;
-  }
+  if (picked === null) return;
   await guidedFlow(baseUrl, picked.id, assumeNo);
+}
+
+export async function cmdModelsMenu(baseUrl: string, assumeNo: boolean): Promise<void> {
+  for (;;) {
+    const pick = await pickLabeledInteractive("models", [
+      { label: "edit", value: "edit", preview: [["do", "pick a model and change dials"]] },
+      { label: "search", value: "search", preview: [["do", "HuggingFace search → pull"]] },
+    ]);
+    if (pick === null) return;
+    if (pick === "edit") await cmdModelsPick(baseUrl, assumeNo);
+    else await cmdModelsSearch(baseUrl);
+  }
 }
 
 export async function cmdModelsEdit(
@@ -202,7 +212,7 @@ export async function cmdModelsOpen(
   modelId: string | undefined,
   file: string | undefined,
 ): Promise<void> {
-  if (!modelId || !file) fail("usage: mba models open <model> <file>");
+  if (!modelId || !file) fail("usage: mba models path <model> <file>");
   const cfg = await serviceGet<ModelConfig>(
     baseUrl,
     `/models/config?id=${encodeURIComponent(modelId)}`,
@@ -296,13 +306,16 @@ export async function cmdModelsSearch(baseUrl: string): Promise<void> {
     process.exit(1);
   }
 
-  const formatSize = (n: number): string =>
-    n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`;
-  const quant = await pickLabeledInteractive(
-    `pick a quant for ${owner}/${repo}`,
+  const quant = await pickPreviewInteractive(
+    "quant",
     ggufs.map((f) => ({
-      label: f.size !== undefined ? `${f.path} (${formatSize(f.size)})` : f.path,
+      label: f.path,
       value: f.path,
+      preview: [
+        ["file", f.path],
+        ["size", f.size !== undefined ? formatBytes(f.size) : "—"],
+        ["sha256", f.sha256 && f.sha256.length > 12 ? `${f.sha256.slice(0, 12)}…` : (f.sha256 ?? "—")],
+      ],
     })),
   );
   if (quant === null) {

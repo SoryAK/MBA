@@ -92,9 +92,15 @@ import {
 import { bootServer, resolveBootRecipe } from "./server-boot.js";
 import {
   gpuVendors,
+  ignoreLlamaServer,
   inspectLlamaBackend,
+  llamaServerCatalogView,
+  nicknameLlamaServer,
   readLlamaServerChoice,
+  refreshLlamaServerCatalog,
+  restoreLlamaServer,
   selectLlamaServer,
+  useLlamaServer,
   writeLlamaServerChoice,
 } from "./llama-binaries.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
@@ -488,6 +494,46 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     return c.json({ servers });
   });
 
+  app.get("/servers/binaries", (c) => {
+    return c.json(llamaServerCatalogView(paths));
+  });
+
+  app.post("/servers/binaries", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { action?: unknown; path?: unknown; nickname?: unknown };
+    const path = typeof input.path === "string" ? input.path : "";
+    try {
+      if (input.action === "rescan") {
+        refreshLlamaServerCatalog(paths);
+      } else if (input.action === "nickname") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        if (typeof input.nickname !== "string") return c.json({ error: "body.nickname is required" }, 400);
+        nicknameLlamaServer(paths, path, input.nickname);
+      } else if (input.action === "remove") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        ignoreLlamaServer(paths, path);
+      } else if (input.action === "restore") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        restoreLlamaServer(paths, path);
+      } else if (input.action === "use") {
+        if (path.length === 0) return c.json({ error: "body.path is required" }, 400);
+        useLlamaServer(paths, path);
+      } else {
+        return c.json({ error: "body.action must be nickname, remove, restore, use, or rescan" }, 400);
+      }
+      return c.json(llamaServerCatalogView(paths));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.includes("not in catalog") || message.includes("not removed") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
   // GET /servers/logs?id=<id>&lines=<n> — the captured ring buffer for one
   // booted server (Feature 2). The daemon pipes each owned llama-server's
   // stdout/stderr into a per-port ring buffer; this route reads it. `lines`
@@ -543,6 +589,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       const selection = selectLlamaServer({
         lastPath: readLlamaServerChoice(paths)?.path,
         machineInfo: opts.machineInfo,
+        paths,
       });
       return c.json({
         modelId: recipe.modelId,
@@ -552,6 +599,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         binary: selection.selected,
         binaries: selection.catalog,
         recommended: selection.recommended,
+        pinned: selection.pinned,
         warning: selection.warning,
         vendors: [...gpuVendors(opts.machineInfo)],
         gpus: (opts.machineInfo?.gpus ?? [])
@@ -612,6 +660,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     const selection = selectLlamaServer({
       lastPath: readLlamaServerChoice(paths)?.path,
       machineInfo: opts.machineInfo,
+      paths,
     });
     const binaryPath =
       typeof input.binaryPath === "string" && input.binaryPath.length > 0

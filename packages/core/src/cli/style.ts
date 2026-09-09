@@ -122,6 +122,48 @@ function clipEllipsis(text: string, width: number): string {
   return `${clipLine(text, width - 1)}…`;
 }
 
+/** Pad or ellipsize to an exact visible width (ANSI-safe). */
+function fitCell(text: string, width: number): string {
+  const shown = clipEllipsis(text, width);
+  return `${shown}${" ".repeat(Math.max(0, width - visibleLen(shown)))}`;
+}
+
+/**
+ * fzf-style two-pane box: list on the left, kv preview on the right.
+ * Same border vocabulary as `doneBox`. Every line is the same visible width.
+ */
+export function previewBox(opts: {
+  title: string;
+  detail?: string;
+  count: string;
+  left: readonly string[];
+  preview: ReadonlyArray<readonly [string, string]>;
+}): string[] {
+  const total = Math.max(40, termCols() - 1);
+  const inner = Math.max(36, total - 3);
+  const leftW = Math.max(18, Math.min(inner - 17, Math.floor(inner * 0.58)));
+  const rightW = inner - leftW - 1;
+  const count = opts.count;
+  const leftHeader = [opts.title, opts.detail].filter((s) => s && s.length > 0).join("  ");
+  const headerInner = `${fitCell(leftHeader, inner - visibleLen(count) - 1)} ${count}`;
+  const body = Math.max(opts.left.length, opts.preview.length, 1);
+  const edge = (s: string) => paint(s, DIM);
+  const rows = [
+    edge(` ╭${"─".repeat(inner)}╮`),
+    `${edge(" │")}${headerInner}${edge("│")}`,
+    edge(` ├${"─".repeat(leftW)}┬${"─".repeat(rightW)}┤`),
+  ];
+  for (let i = 0; i < body; i++) {
+    const pair = opts.preview[i];
+    const right = pair ? `${pair[0].padEnd(7)} ${pair[1]}` : "";
+    rows.push(
+      `${edge(" │")}${fitCell(opts.left[i] ?? "", leftW)}${edge("│")}${fitCell(right, rightW)}${edge("│")}`,
+    );
+  }
+  rows.push(edge(` ╰${"─".repeat(leftW)}┴${"─".repeat(rightW)}╯`));
+  return rows;
+}
+
 /** Keep a painted line on one terminal row so redraw math stays honest. */
 export function clipLine(text: string, width = Math.max(termCols() - 1, 20)): string {
   if (visibleLen(text) <= width) return text;
