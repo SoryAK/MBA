@@ -77,6 +77,7 @@ import {
   type MbaStorePaths,
 } from "./config-store.js";
 import { openBcbDb } from "../bcb/kill-state.js";
+import { openModelHistoryDb } from "./model-history.js";
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
@@ -172,6 +173,11 @@ export interface MbaServiceAppOptions {
    * omitted, the daemon opens `bcb-kill-state.db` under its baseDir.
    */
   readonly bcbDb?: DatabaseSync;
+  /**
+   * Per-model history DB. Injectable for tests. When omitted, the daemon
+   * opens `mba-model-history.db` under its baseDir.
+   */
+  readonly historyDb?: DatabaseSync;
   /** Detected/persisted machine profile for recipe clamping (ADR-0103). */
   readonly machineInfo?: MachineInfo;
   /**
@@ -202,6 +208,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   const machineOverlay =
     opts.machineOverlay ?? (() => readGlobalConfig(paths).machineOverlay);
   const bcbDb = opts.bcbDb ?? openBcbDb(join(paths.baseDir, "bcb-kill-state.db"));
+  const historyDb = opts.historyDb ?? openModelHistoryDb(paths.modelHistoryPath);
 
   app.route(
     "/v1",
@@ -213,6 +220,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       fetch: opts.fetch,
       tcbConfig,
       bcbDb,
+      historyDb,
       reasoningGate: (model) => reasoningGateForModel(model, opts.adapterDir),
       sessionsPath: paths.sessionsPath,
     }),
@@ -302,6 +310,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         ruleClassesPath: paths.ruleClassesPath,
         versionPath: paths.versionPath,
         machineOverlayPath: paths.machineOverlayPath,
+        modelHistoryPath: paths.modelHistoryPath,
       },
     });
   });
