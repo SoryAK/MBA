@@ -46,7 +46,7 @@ mba --help
 mba status
 ```
 
-Node ≥ 20. llama.cpp on `PATH` if you boot with `mba servers boot`.
+Node ≥ 22. llama.cpp on `PATH` if you boot with `mba servers boot`.
 
 ## Environment
 
