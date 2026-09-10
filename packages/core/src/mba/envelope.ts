@@ -67,11 +67,26 @@ export function builtInEnvelopeBindings(): readonly EnvelopeBinding[] {
  * Built-in slots do not use this — they are the filenames the harness
  * already injects. Empty / junk → `mba`.
  */
+function isStemChar(ch: string): boolean {
+  return (
+    (ch >= "A" && ch <= "Z") ||
+    (ch >= "a" && ch <= "z") ||
+    (ch >= "0" && ch <= "9") ||
+    ch === "." ||
+    ch === "_" ||
+    ch === "-"
+  );
+}
+
 export function envelopeFileStem(modelId?: string): string {
-  const stem = (modelId ?? "")
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^[-.]+|[-.]+$/g, "");
+  // Walk the id; no regex (CodeQL js/polynomial-redos on `[-.]+`).
+  let stem = "";
+  for (const ch of (modelId ?? "").trim()) {
+    if (isStemChar(ch)) stem += ch;
+    else if (stem.length > 0 && !stem.endsWith("-")) stem += "-";
+  }
+  while (stem.startsWith("-") || stem.startsWith(".")) stem = stem.slice(1);
+  while (stem.endsWith("-") || stem.endsWith(".")) stem = stem.slice(0, -1);
   return stem.length > 0 ? stem.slice(0, 64) : "mba";
 }
 
@@ -80,8 +95,19 @@ function fillEnvelopeTemplate(template: string, modelId?: string): string {
   return template.replaceAll("{model}", envelopeFileStem(modelId));
 }
 
+function modelMarkerPayload(modelId?: string): string {
+  // Strip comment terminators without a HTML-filter regex (CodeQL js/bad-tag-filter).
+  let raw = (modelId ?? "").trim();
+  while (raw.includes("--")) raw = raw.split("--").join("-");
+  let out = "";
+  for (const ch of raw) {
+    if (ch !== ">") out += ch;
+  }
+  return out.trim();
+}
+
 function modelMarkerLine(modelId?: string): string {
-  const raw = (modelId ?? "").trim().replace(/-->/g, "");
+  const raw = modelMarkerPayload(modelId);
   return raw.length > 0 ? `\n<!-- mba-model: ${raw} -->` : "";
 }
 
@@ -110,15 +136,39 @@ export function isMbaStaged(text: string): boolean {
   return text.includes(MBA_STAGE_MARKER);
 }
 
+function isSpace(ch: string | undefined): boolean {
+  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+}
+
 /** Model id planted in a staged envelope, if present. */
 export function stagedModelId(text: string): string | undefined {
-  const m = /<!--\s*mba-model:\s*([^\s>]+)\s*-->/.exec(text);
-  return m?.[1];
+  const needle = "mba-model:";
+  let from = 0;
+  while (from < text.length) {
+    const tag = text.indexOf(needle, from);
+    if (tag < 0) return undefined;
+    const open = text.lastIndexOf("<!--", tag);
+    if (open >= 0 && text.slice(open + 4, tag).trim() === "") {
+      let p = tag + needle.length;
+      while (isSpace(text[p])) p += 1;
+      const idStart = p;
+      while (p < text.length) {
+        const c = text[p]!;
+        if (isSpace(c) || c === ">") break;
+        p += 1;
+      }
+      const id = text.slice(idStart, p);
+      if (id.length > 0 && text.indexOf("-->", p) >= 0) return id;
+    }
+    from = tag + needle.length;
+  }
+  return undefined;
 }
 
 /** Wrap store card text so the harness file is identifiable and (when needed) always-on. */
 export function wrapStagedCard(harness: string, body: string, modelId?: string): string {
-  const trimmed = body.replace(/^\uFEFF/, "").trimEnd() + "\n";
+  const withoutBom = body.startsWith("\uFEFF") ? body.slice(1) : body;
+  const trimmed = withoutBom.trimEnd() + "\n";
   const known = normalizeHarness(harness);
   const marker = `${MBA_STAGE_MARKER}${modelMarkerLine(modelId)}`;
   if (known === "cursor") {

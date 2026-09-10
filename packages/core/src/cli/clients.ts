@@ -3,6 +3,7 @@
  */
 
 import { formatClientLabel } from "../service/env-context.js";
+import { fail, serviceGet, servicePost } from "./client.js";
 import { listHarnessChoices } from "./harness-choices.js";
 import { askValueInteractive, pickLabeledInteractive } from "./interactive.js";
 import { cmdModelsConnect } from "./models.js";

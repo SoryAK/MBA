@@ -107,6 +107,7 @@ describe("envelopeFileStem", () => {
     expect(envelopeFileStem("deepseek_test")).toBe("deepseek_test");
     expect(envelopeFileStem("qwen3-coder-30b")).toBe("qwen3-coder-30b");
     expect(envelopeFileStem("../odd name")).toBe("odd-name");
+    expect(envelopeFileStem("...")).toBe("mba");
     expect(envelopeFileStem("")).toBe("mba");
     expect(envelopeFileStem(undefined)).toBe("mba");
   });
@@ -117,5 +118,12 @@ describe("stagedModelId", () => {
     const wrapped = wrapStagedCard("cursor", "# card", "deepseek_test");
     expect(stagedModelId(wrapped)).toBe("deepseek_test");
     expect(stagedModelId("# no marker")).toBeUndefined();
+  });
+
+  it("does not let a model id close the HTML comment", () => {
+    const wrapped = wrapStagedCard("cline", "# card", "foo-->bar");
+    expect(wrapped).toContain("<!-- mba-model: foo-bar -->");
+    expect(wrapped).not.toContain("-->bar");
+    expect(stagedModelId(wrapped)).toBe("foo-bar");
   });
 });

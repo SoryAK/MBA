@@ -1,4 +1,5 @@
 import { formatClientLabel } from "../service/env-context.js";
+import { resolveServiceUrl, serviceGet } from "./client.js";
 import { brand, dim, heading, kv, paint, shortenHome, BOLD, GRN, RED } from "./style.js";
 import type { ModelEntry } from "./interactive.js";
 import type { ServerEntry } from "./types.js";
