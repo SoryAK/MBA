@@ -62,8 +62,11 @@ describe("stageInstructions", () => {
       sourcePath: join(store, "instructions.md"),
       harness: "cursor",
       sourceRoot: store,
+      modelId: "deepseek_test",
     });
     expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.envelope).toBe(".cursor/rules/mba.mdc");
     const staged = readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8");
     expect(staged).toContain("card");
     expect(staged).not.toContain("operator secret");
@@ -214,5 +217,93 @@ describe("stageInstructions", () => {
     });
     expect(result).toMatchObject({ ok: false, code: "conflict" });
     expect(readFileSync(join(project, ".clinerules"), "utf8")).toBe("user cline rules\n");
+  });
+
+  it("overwrites the Cursor slot and sweeps leftover MBA cards", () => {
+    const store = join(dir, "store");
+    const project = join(dir, "project");
+    mkdirSync(store);
+    mkdirSync(join(project, ".cursor/rules"), { recursive: true });
+    writeFileSync(join(store, "instructions.md"), "card\n");
+    writeFileSync(
+      join(project, ".cursor/rules/deepseek_test.mdc"),
+      `${MBA_STAGE_MARKER}\n\nold named card\n`,
+    );
+    writeFileSync(join(project, ".cursor/rules/mine.mdc"), "# operator rule\n");
+
+    const result = stageInstructions({
+      projectRoot: project,
+      sourcePath: join(store, "instructions.md"),
+      harness: "cursor",
+      sourceRoot: store,
+      modelId: "deepseek_test",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.envelope).toBe(".cursor/rules/mba.mdc");
+    const staged = readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8");
+    expect(staged).toContain("card");
+    expect(staged).toContain("<!-- mba-model: deepseek_test -->");
+    expect(() => readFileSync(join(project, ".cursor/rules/deepseek_test.mdc"), "utf8")).toThrow();
+    expect(readFileSync(join(project, ".cursor/rules/mine.mdc"), "utf8")).toBe("# operator rule\n");
+  });
+
+  it("writes the model id into Cline and Copilot slots without renaming them", () => {
+    const store = join(dir, "store");
+    const project = join(dir, "project");
+    mkdirSync(store);
+    mkdirSync(project);
+    writeFileSync(join(store, "instructions.md"), "card\n");
+
+    const cline = stageInstructions({
+      projectRoot: project,
+      sourcePath: join(store, "instructions.md"),
+      harness: "cline",
+      sourceRoot: store,
+      modelId: "deepseek_test",
+    });
+    expect(cline.ok).toBe(true);
+    if (!cline.ok) return;
+    expect(cline.envelope).toBe(".clinerules/mba.md");
+    expect(readFileSync(join(project, ".clinerules/mba.md"), "utf8")).toContain(
+      "<!-- mba-model: deepseek_test -->",
+    );
+
+    const copilot = stageInstructions({
+      projectRoot: project,
+      sourcePath: join(store, "instructions.md"),
+      harness: "copilot",
+      sourceRoot: store,
+      modelId: "deepseek_test",
+    });
+    expect(copilot.ok).toBe(true);
+    if (!copilot.ok) return;
+    expect(copilot.envelope).toBe(".github/instructions/mba.instructions.md");
+    expect(
+      readFileSync(join(project, ".github/instructions/mba.instructions.md"), "utf8"),
+    ).toContain("<!-- mba-model: deepseek_test -->");
+  });
+
+  it("leaves a sibling's playbook when this model has no card", () => {
+    const store = join(dir, "store");
+    const project = join(dir, "project");
+    mkdirSync(store);
+    mkdirSync(join(project, ".cursor/rules"), { recursive: true });
+    writeFileSync(join(store, "instructions.md"), "");
+    writeFileSync(
+      join(project, ".cursor/rules/mba.mdc"),
+      `${MBA_STAGE_MARKER}\n<!-- mba-model: deepseek_test -->\n\nkeep me\n`,
+    );
+
+    const result = stageInstructions({
+      projectRoot: project,
+      sourcePath: join(store, "instructions.md"),
+      harness: "cursor",
+      sourceRoot: store,
+      modelId: "nomic-embed-text-v1.5",
+      slotPeers: ["deepseek_test"],
+    });
+    expect(result).toMatchObject({ ok: true, action: "skipped", reason: "empty" });
+    expect(readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8")).toContain("keep me");
   });
 });

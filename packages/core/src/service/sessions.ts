@@ -4,8 +4,10 @@
  * Empty file = door open (today's behavior). One or more sessions = the
  * proxy requires a Bearer token. MBA is the bouncer; it is not the client.
  *
- * The plaintext token is minted once, returned on POST /connect, and never
- * written to disk. sessions.json keeps a SHA-256 hex digest (`tokenHash`).
+ * Pairing is many keys: two models may share a harness + project (chat +
+ * embed). The staged envelope is one playbook for that slot. Last connect
+ * that has a card owns the file. A connect with no card must not clear a
+ * sibling's playbook.
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -200,6 +202,25 @@ export function upsertSession(
   const out = [...sessions];
   out[idx] = row;
   return out;
+}
+
+/** Sessions that share one envelope slot (same harness + project). */
+export function sessionsSharingSlot(
+  sessions: readonly ClientSession[],
+  harness: string,
+  projectRoot: string,
+): ClientSession[] {
+  const root = resolve(projectRoot);
+  return sessions.filter(
+    (s) => s.harness === harness && resolve(s.projectRoot) === root,
+  );
+}
+
+export function newestSession(
+  sessions: readonly ClientSession[],
+): ClientSession | undefined {
+  if (sessions.length === 0) return undefined;
+  return [...sessions].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
 }
 
 export function revokeSessions(

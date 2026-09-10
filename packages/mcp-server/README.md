@@ -22,7 +22,7 @@ Service-backed (fail soft if the daemon is down):
 - `mba_set_rules` — enable/disable BCB rules and rule classes
 - `mba_list_models` — adapter tree plus live loaded state
 - `mba_set_model_config` — one dial on `server_setup` or `client` (never restarts)
-- `mba_ensure_model` — ask the service to load a model. Off until the service is started with `MBA_MODEL_SWITCH=on`
+- `mba_ensure_model` — load a model and restage its paired instructions card. Off until the service is started with `MBA_MODEL_SWITCH=on`
 
 ## Install
 

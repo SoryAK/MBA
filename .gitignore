@@ -49,5 +49,8 @@ docs/backlog/
 .cursor/*
 !.cursor/rules/
 !.cursor/rules/**
+# Live MBA-staged cards (named after the connected model)
+.cursor/rules/*.mdc
+!.cursor/rules/npm-publish.mdc
 .cursorignore
 .cursorindexingignore

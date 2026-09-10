@@ -65,9 +65,18 @@ export interface MbaModelsResult {
   readonly models: MbaModelEntry[];
 }
 
+export type MbaEnsureStage = {
+  readonly action: string;
+  readonly harness?: string;
+  readonly projectRoot?: string;
+  readonly envelope?: string;
+  readonly owner?: string;
+  readonly replaced?: string;
+};
+
 export type MbaEnsureModelResult =
-  | { readonly status: "loaded"; readonly id: string }
-  | { readonly status: "switched"; readonly id: string };
+  | { readonly status: "loaded"; readonly id: string; readonly stage?: readonly MbaEnsureStage[] }
+  | { readonly status: "switched"; readonly id: string; readonly stage?: readonly MbaEnsureStage[] };
 
 export type MbaModelDialFile = "server_setup" | "client";
 

@@ -63,44 +63,80 @@ export function builtInEnvelopeBindings(): readonly EnvelopeBinding[] {
 }
 
 /**
+ * Filesystem-safe stem when an operator envelope uses `{model}`.
+ * Built-in slots do not use this — they are the filenames the harness
+ * already injects. Empty / junk → `mba`.
+ */
+export function envelopeFileStem(modelId?: string): string {
+  const stem = (modelId ?? "")
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return stem.length > 0 ? stem.slice(0, 64) : "mba";
+}
+
+function fillEnvelopeTemplate(template: string, modelId?: string): string {
+  if (!template.includes("{model}")) return template;
+  return template.replaceAll("{model}", envelopeFileStem(modelId));
+}
+
+function modelMarkerLine(modelId?: string): string {
+  const raw = (modelId ?? "").trim().replace(/-->/g, "");
+  return raw.length > 0 ? `\n<!-- mba-model: ${raw} -->` : "";
+}
+
+/**
  * Project-relative path the harness already injects.
  * `ide` is accepted so the door matches env (`harness` + `ide`); this cut
- * keys the filename on harness. Unknown harness with no extra → undefined.
+ * keys the filename on harness. Built-in paths are stable so the client
+ * keeps injecting the same slot; `modelId` is written into the card body.
+ * An added client may put `{model}` in its envelope. Unknown harness with
+ * no extra → undefined.
  */
 export function envelopeRelativePath(
   harness: string,
   _ide?: string,
   extras: readonly EnvelopeBinding[] = [],
+  modelId?: string,
 ): string | undefined {
   const known = normalizeHarness(harness);
-  if (known) return ENVELOPE_BY_HARNESS[known];
+  if (known) return fillEnvelopeTemplate(ENVELOPE_BY_HARNESS[known], modelId);
   const key = compactHarnessKey(harness);
   const extra = extras.find((e) => compactHarnessKey(e.name) === key);
-  return extra?.envelope;
+  return extra ? fillEnvelopeTemplate(extra.envelope, modelId) : undefined;
 }
 
 export function isMbaStaged(text: string): boolean {
   return text.includes(MBA_STAGE_MARKER);
 }
 
+/** Model id planted in a staged envelope, if present. */
+export function stagedModelId(text: string): string | undefined {
+  const m = /<!--\s*mba-model:\s*([^\s>]+)\s*-->/.exec(text);
+  return m?.[1];
+}
+
 /** Wrap store card text so the harness file is identifiable and (when needed) always-on. */
-export function wrapStagedCard(harness: string, body: string): string {
+export function wrapStagedCard(harness: string, body: string, modelId?: string): string {
   const trimmed = body.replace(/^\uFEFF/, "").trimEnd() + "\n";
   const known = normalizeHarness(harness);
+  const marker = `${MBA_STAGE_MARKER}${modelMarkerLine(modelId)}`;
   if (known === "cursor") {
+    const label = modelId && modelId.trim().length > 0 ? modelId.trim() : "MBA";
+    const description = JSON.stringify(`${label} model card (live copy; do not edit)`);
     return [
       "---",
-      "description: MBA model card (live copy; do not edit)",
+      `description: ${description}`,
       "alwaysApply: true",
       "---",
       "",
-      MBA_STAGE_MARKER,
+      marker,
       "",
       trimmed,
     ].join("\n");
   }
   if (known === "copilot") {
-    return ["---", 'applyTo: "**"', "---", "", MBA_STAGE_MARKER, "", trimmed].join("\n");
+    return ["---", 'applyTo: "**"', "---", "", marker, "", trimmed].join("\n");
   }
-  return `${MBA_STAGE_MARKER}\n\n${trimmed}`;
+  return `${marker}\n\n${trimmed}`;
 }

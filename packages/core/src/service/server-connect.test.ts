@@ -31,6 +31,48 @@ bindings:
   writeFileSync(join(modelDir, "m.gguf"), "gguf");
 }
 
+function writeEmbedFixture(dir: string): void {
+  const modelDir = join(dir, "nomic", "nomic-embed-text-v1.5");
+  mkdirSync(modelDir, { recursive: true });
+  writeFileSync(
+    join(modelDir, "nomic-embed-text-v1.5.yaml"),
+    `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: nomic-embed-text-v1.5
+  name: nomic-embed-text-v1.5
+identity:
+  model:
+    name: nomic-embed-text-v1.5
+    file: "./m.gguf"
+bindings: {}
+`,
+  );
+  writeFileSync(join(modelDir, "m.gguf"), "gguf");
+}
+
+function writeOtherCardFixture(dir: string): void {
+  const modelDir = join(dir, "other", "other-coder");
+  mkdirSync(modelDir, { recursive: true });
+  writeFileSync(
+    join(modelDir, "other-coder.yaml"),
+    `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: other-coder
+  name: other-coder
+identity:
+  model:
+    name: other-coder
+    file: "./m.gguf"
+bindings:
+  instructions: "./instructions.md"
+`,
+  );
+  writeFileSync(join(modelDir, "instructions.md"), "# other card\n");
+  writeFileSync(join(modelDir, "m.gguf"), "gguf");
+}
+
 describe("POST /connect", () => {
   let adapterDir: string;
   let project: string;
@@ -83,6 +125,7 @@ describe("POST /connect", () => {
     expect(st.pairing.sessions[0]).toMatchObject({
       modelId: "qwen3-coder-30b",
       harness: "cursor",
+      card: true,
     });
     expect(st.pairing.sessions[0]).not.toHaveProperty("token");
     expect(st.pairing.sessions[0]).not.toHaveProperty("tokenHash");
@@ -131,5 +174,91 @@ describe("POST /connect", () => {
       body: JSON.stringify({ model: "qwen3-coder-30b", messages: [] }),
     });
     expect(open.status).toBe(503);
+  });
+
+  it("keeps a playbook when a second model on the same slot has no card", async () => {
+    const first = await app.request("/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "qwen3-coder-30b",
+        projectRoot: project,
+        harness: "cursor",
+      }),
+    });
+    expect(first.status).toBe(200);
+    expect(readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8")).toContain("# card");
+
+    writeEmbedFixture(adapterDir);
+
+    const second = await app.request("/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "nomic-embed-text-v1.5",
+        projectRoot: project,
+        harness: "cursor",
+      }),
+    });
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as { stage: { action: string } };
+    expect(body.stage.action).toBe("skipped");
+    expect(readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8")).toContain("# card");
+    expect(readSessions(paths.sessionsPath)).toHaveLength(2);
+
+    const rev = await app.request("/connect/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "nomic-embed-text-v1.5" }),
+    });
+    expect(rev.status).toBe(200);
+    expect(readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8")).toContain("# card");
+    expect(readSessions(paths.sessionsPath)).toHaveLength(1);
+  });
+
+  it("lets the last model with a card own the harness envelope", async () => {
+    await app.request("/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "qwen3-coder-30b",
+        projectRoot: project,
+        harness: "cursor",
+      }),
+    });
+    writeOtherCardFixture(adapterDir);
+    const second = await app.request("/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "other-coder",
+        projectRoot: project,
+        harness: "cursor",
+      }),
+    });
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as {
+      stage: { action: string; owner?: string; replaced?: string };
+    };
+    expect(body.stage).toMatchObject({
+      action: "wrote",
+      owner: "other-coder",
+      replaced: "qwen3-coder-30b",
+    });
+    const disk = readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8");
+    expect(disk).toContain("# other card");
+    expect(disk).not.toContain("# card\n");
+    expect(disk).toContain("<!-- mba-model: other-coder -->");
+
+    const status = await app.request("/status");
+    const st = (await status.json()) as {
+      pairing: { sessions: Array<{ modelId: string; card: boolean }> };
+    };
+    expect(st.pairing.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ modelId: "qwen3-coder-30b", card: false }),
+        expect.objectContaining({ modelId: "other-coder", card: true }),
+      ]),
+    );
   });
 });
