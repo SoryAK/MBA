@@ -1,6 +1,13 @@
 import { brand, dim, heading, paint, BOLD } from "./style.js";
 
-export type HelpTopic = "overview" | "models" | "servers" | "clients" | "machine" | "status";
+export type HelpTopic =
+  | "overview"
+  | "models"
+  | "servers"
+  | "clients"
+  | "machine"
+  | "status"
+  | "migrate";
 
 function cmd(line: string, note: string): string {
   return `  ${paint(line.padEnd(36), BOLD)} ${dim(note)}`;
@@ -14,11 +21,11 @@ export function usageOverview(): string {
     cmd("mba models", "edit, search, pull  (m)"),
     cmd("mba servers", "list, boot, stop, logs, slots, builds  (s)"),
     cmd("mba clients", "list, add, connect, revoke  (c)"),
+    cmd("mba migrate", "local GGUFs → hub"),
     cmd("mba machine", "hardware clamp mode"),
     cmd("mba status", "service, loaded model, pairing slots"),
     "",
     heading("Local"),
-    cmd("mba migrate-paths", "move legacy state + store"),
     cmd("mba estimate-memory <gguf>", "RAM/VRAM estimate"),
     cmd("mba completion [bash|zsh]", "print shell completion"),
     "",
@@ -26,7 +33,7 @@ export function usageOverview(): string {
     dim("  mba <group> --help   details for that group"),
     dim("  shortcuts            m → models   s → servers   c → clients"),
     dim("  --yes                skip confirm (restart / boot preview)"),
-    dim("  --json               machine-readable list/show/status/stage/connect"),
+    dim("  --json               machine-readable list/show/status/stage/connect/migrate"),
   ].join("\n");
 }
 
@@ -110,6 +117,24 @@ export function usageStatus(): string {
   ].join("\n");
 }
 
+export function usageMigrate(): string {
+  return [
+    `${brand("migrate")}`,
+    "",
+    cmd("mba migrate", "models / find (TTY menu)"),
+    cmd("mba migrate models [dir]", "GGUFs in that folder → hub"),
+    cmd("mba migrate find [query]", "fuzzy-find GGUFs → hub"),
+    "",
+    dim("  copies into the hub (hardlink when possible)"),
+    dim("  find      ~/.cache/huggingface/hub and ~/models"),
+    dim("  --from    limit find to one directory"),
+    dim("  TTY       asks whether to remove the source (enter = keep)"),
+    dim("  --move    remove source without asking"),
+    dim("  --yes     skip asks; keeps source unless --move"),
+    dim("  --json    same as --yes, machine-readable results"),
+  ].join("\n");
+}
+
 export function usageFor(topic: HelpTopic): string {
   switch (topic) {
     case "models":
@@ -122,6 +147,8 @@ export function usageFor(topic: HelpTopic): string {
       return usageMachine();
     case "status":
       return usageStatus();
+    case "migrate":
+      return usageMigrate();
     default:
       return usageOverview();
   }

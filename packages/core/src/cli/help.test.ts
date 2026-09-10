@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { usageServers } from "./help.js";
+import { usageMigrate, usageServers } from "./help.js";
 
 describe("help", () => {
   const prevNoColor = process.env.NO_COLOR;
@@ -17,5 +17,15 @@ describe("help", () => {
     expect(text).toContain("mba servers binaries");
     expect(text).toContain("MBA_SWITCH_PORT");
     expect(text).toContain("--json");
+  });
+
+  it("names migrate models, find, and --from", () => {
+    process.env.NO_COLOR = "1";
+    const text = usageMigrate();
+    expect(text).toContain("mba migrate models");
+    expect(text).toContain("mba migrate find");
+    expect(text).toContain("--from");
+    expect(text).toContain("--move");
+    expect(text).toContain("--yes");
   });
 });

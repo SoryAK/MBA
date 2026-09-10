@@ -19,17 +19,19 @@ export type ModelsAction =
   | "stage"
   | "connect";
 
+export type MigrateAction = "menu" | "models" | "find";
+
 export type MbaRoute =
   | { readonly cmd: "home" }
   | { readonly cmd: "help"; readonly topic: HelpTopic }
   | { readonly cmd: "status" }
   | { readonly cmd: "completion"; readonly args: readonly string[] }
-  | { readonly cmd: "migrate-paths" }
   | { readonly cmd: "estimate-memory"; readonly args: readonly string[] }
   | { readonly cmd: "machine"; readonly args: readonly string[] }
   | { readonly cmd: "servers"; readonly args: readonly string[] }
   | { readonly cmd: "clients"; readonly args: readonly string[] }
   | { readonly cmd: "models"; readonly action: ModelsAction; readonly args: readonly string[] }
+  | { readonly cmd: "migrate"; readonly action: MigrateAction; readonly args: readonly string[] }
   | { readonly cmd: "unknown"; readonly command: string };
 
 export interface ParsedMba {
@@ -50,7 +52,22 @@ function helpTopic(name: string | undefined): HelpTopic {
   if (name === "machine" || name === "machine-overlay") return "machine";
   if (name === "clients" || name === "client" || name === "c") return "clients";
   if (name === "status") return "status";
+  if (name === "migrate") return "migrate";
   return "overview";
+}
+
+function parseMigrate(rest: readonly string[]): MbaRoute {
+  if (wantsHelp(rest)) return { cmd: "help", topic: "migrate" };
+  const kept = rest.filter((a) => a !== "--help" && a !== "-h");
+  const i = kept.findIndex((a) => a === "models" || a === "find");
+  if (i < 0) {
+    const leftover = kept.filter((a) => a !== "--move");
+    if (leftover.length > 0) return { cmd: "unknown", command: `migrate ${leftover[0]}` };
+    return { cmd: "migrate", action: "menu", args: kept };
+  }
+  const sub = kept[i] as MigrateAction;
+  const tail = [...kept.slice(0, i), ...kept.slice(i + 1)];
+  return { cmd: "migrate", action: sub, args: tail };
 }
 
 function parseModels(rest: readonly string[]): MbaRoute {
@@ -86,7 +103,6 @@ export function parseMbaArgv(argv: readonly string[]): ParsedMba {
   if (command === "completion") {
     return { assumeNo, json, route: { cmd: "completion", args: rest } };
   }
-  if (command === "migrate-paths") return { assumeNo, json, route: { cmd: "migrate-paths" } };
   if (command === "estimate-memory") {
     return { assumeNo, json, route: { cmd: "estimate-memory", args: rest } };
   }
@@ -119,6 +135,9 @@ export function parseMbaArgv(argv: readonly string[]): ParsedMba {
   }
   if (command === "connect") {
     return { assumeNo, json, route: { cmd: "models", action: "connect", args: rest } };
+  }
+  if (command === "migrate") {
+    return { assumeNo, json, route: parseMigrate(rest) };
   }
 
   return { assumeNo, json, route: { cmd: "unknown", command } };

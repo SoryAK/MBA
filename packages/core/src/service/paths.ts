@@ -24,9 +24,9 @@
  * the real process. No globals read at module scope.
  */
 
-import { cpSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir as osHomedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 /** The subset of `process.platform` values MBA cares about. */
 export type Platform = "darwin" | "win32" | "linux" | "other";
@@ -103,18 +103,6 @@ export function defaultModelStoreRoot(ctx: PathContext = livePathContext()): str
 }
 
 /**
- * The legacy (pre-Phase-4) locations, kept ONLY so `migrate-paths` can find
- * what to move. Do not use these as live defaults.
- */
-export function legacyStateDir(ctx: PathContext = livePathContext()): string {
-  return join(ctx.homedir, ".mba");
-}
-
-export function legacyModelStoreRoot(ctx: PathContext = livePathContext()): string {
-  return join(ctx.homedir, "models", "adapters");
-}
-
-/**
  * Windows %APPDATA% (roaming). Throws if unset — there is no sane fallback on
  * Windows, and a missing %APPDATA% means the environment is broken.
  */
@@ -146,81 +134,4 @@ function requireLocalAppData(env: NodeJS.ProcessEnv): string {
  */
 export function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: true });
-}
-
-// --- One-time migration (legacy → OS-aware) ---------------------------------
-//
-// `migrate-paths` moves MBA's two homes from the old hardcoded locations to
-// the OS-aware ones. It is explicit (the user runs it), idempotent (a second
-// run finds nothing to move), and conservative (it never overwrites a
-// non-empty destination). The pure core below is filesystem-free so the
-// decision logic is testable; the CLI wires it to the real paths.
-
-/** The outcome of migrating a single home (state or store). */
-export type MigrationOutcome =
-  | { readonly status: "moved"; readonly from: string; readonly to: string }
-  | { readonly status: "skipped-missing-source"; readonly from: string; readonly to: string }
-  | { readonly status: "skipped-destination-exists"; readonly from: string; readonly to: string };
-
-/**
- * Decide what to do for ONE home, given the current state of the two
- * directories. Pure — no filesystem access — so the decision table is
- * directly testable.
- *
- *   - source missing            → nothing to move (fresh install, or already
- *                                 migrated). Skip.
- *   - destination exists non-empty → REFUSE. We will not clobber data the
- *                                 user may have placed there. Skip with a
- *                                 distinct status so the caller can warn.
- *   - otherwise (source present, destination absent or empty) → move.
- */
-export function planMigration(
-  sourceExists: boolean,
-  destinationExists: boolean,
-  destinationEmpty: boolean,
-  from: string,
-  to: string,
-): MigrationOutcome {
-  if (!sourceExists) {
-    return { status: "skipped-missing-source", from, to };
-  }
-  if (destinationExists && !destinationEmpty) {
-    return { status: "skipped-destination-exists", from, to };
-  }
-  return { status: "moved", from, to };
-}
-
-/**
- * Perform the actual move for one home, applying the plan from
- * {@link planMigration}. `sourceExists` / `destinationExists` /
- * `destinationEmpty` are read by the caller (which owns the filesystem
- * probes) and passed in, keeping this function's contract explicit.
- *
- * The move is a `renameSync` when source and destination are on the same
- * filesystem (the common case — both under the user's home), which is a
- * metadata op, not a copy. If they are on different devices, `renameSync`
- * throws EXDEV and we fall back to a recursive copy + delete.
- */
-export function executeMigration(
-  from: string,
-  to: string,
-  sourceExists: boolean,
-  destinationExists: boolean,
-  destinationEmpty: boolean,
-): MigrationOutcome {
-  const plan = planMigration(sourceExists, destinationExists, destinationEmpty, from, to);
-  if (plan.status !== "moved") return plan;
-  // renameSync does not create the destination's parents. The store's new home
-  // (…/mba/model_hub/adapters) sits under parents that a fresh install has not
-  // made yet, so create them first.
-  mkdirSync(dirname(to), { recursive: true });
-  try {
-    renameSync(from, to);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
-    // Cross-device: copy the tree, then remove the source.
-    cpSync(from, to, { recursive: true });
-    rmSync(from, { recursive: true, force: true });
-  }
-  return { status: "moved", from, to };
 }

@@ -6,7 +6,15 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { pullModel, PullValidationError, sha256OfFile, type PullModelOptions } from "./model-pull.js";
+import {
+  adoptLocalGguf,
+  AdoptSourceError,
+  PullConflictError,
+  PullValidationError,
+  pullModel,
+  sha256OfFile,
+  type PullModelOptions,
+} from "./model-pull.js";
 
 /**
  * Build a minimal valid GGUF v3 buffer with one string kv pair, so the
@@ -524,6 +532,153 @@ describe("sha256OfFile", () => {
       await expect(sha256OfFile(path)).resolves.toBe(expected);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("adoptLocalGguf", () => {
+  it("hardlinks into the store and scaffolds the same house as pull", async () => {
+    const store = freshStore();
+    const srcDir = freshStore();
+    try {
+      const source = join(srcDir, "weights.gguf");
+      writeFileSync(source, GGUF);
+      const result = await adoptLocalGguf({
+        sourcePath: source,
+        id: "local-model",
+        storeRoot: store,
+      });
+      expect(result.id).toBe("local-model");
+      expect(result.family).toBe("local-model");
+      expect(result.sha256).toBe(SHA256);
+      expect(["hardlink", "copy"]).toContain(result.placed);
+      expect(result.familyCreated).toBe(true);
+      expect(result.moved).toBe(false);
+
+      const dest = join(store, "local-model", "local-model", "weights.gguf");
+      expect(readFileSync(dest)).toEqual(GGUF);
+      expect(readFileSync(source)).toEqual(GGUF);
+      if (result.placed === "hardlink") {
+        expect(statSync(source).ino).toBe(statSync(dest).ino);
+      }
+
+      const yaml = YAML.parse(
+        readFileSync(join(store, "local-model", "local-model", "local-model.yaml"), "utf8"),
+      ) as { identity: { model: { file: string } } };
+      expect(yaml.identity.model.file).toBe("./weights.gguf");
+      expect(existsSync(join(store, "local-model", "family.yaml"))).toBe(true);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("finishes the house when the GGUF is already at dest", async () => {
+    const store = freshStore();
+    try {
+      const modelDir = join(store, "already", "already");
+      mkdirSync(modelDir, { recursive: true });
+      const dest = join(modelDir, "weights.gguf");
+      writeFileSync(dest, GGUF);
+      const result = await adoptLocalGguf({
+        sourcePath: dest,
+        id: "already",
+        storeRoot: store,
+      });
+      expect(result.placed).toBe("inplace");
+      expect(result.moved).toBe(false);
+      expect(existsSync(join(modelDir, "already.yaml"))).toBe(true);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("unlinks the source after a successful adopt when move is set", async () => {
+    const store = freshStore();
+    const srcDir = freshStore();
+    try {
+      const source = join(srcDir, "weights.gguf");
+      writeFileSync(source, GGUF);
+      const result = await adoptLocalGguf({
+        sourcePath: source,
+        id: "moved-model",
+        storeRoot: store,
+        move: true,
+      });
+      expect(result.moved).toBe(true);
+      expect(existsSync(source)).toBe(false);
+      const dest = join(store, "moved-model", "moved-model", "weights.gguf");
+      expect(readFileSync(dest)).toEqual(GGUF);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not unlink when move is set but the source is already dest", async () => {
+    const store = freshStore();
+    try {
+      const modelDir = join(store, "keep", "keep");
+      mkdirSync(modelDir, { recursive: true });
+      const dest = join(modelDir, "weights.gguf");
+      writeFileSync(dest, GGUF);
+      const result = await adoptLocalGguf({
+        sourcePath: dest,
+        id: "keep",
+        storeRoot: store,
+        move: true,
+      });
+      expect(result.placed).toBe("inplace");
+      expect(result.moved).toBe(false);
+      expect(readFileSync(dest)).toEqual(GGUF);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("conflicts when the model folder is already adopted", async () => {
+    const store = freshStore();
+    const srcDir = freshStore();
+    try {
+      const source = join(srcDir, "weights.gguf");
+      writeFileSync(source, GGUF);
+      await adoptLocalGguf({ sourcePath: source, id: "dup", storeRoot: store });
+      await expect(
+        adoptLocalGguf({ sourcePath: source, id: "dup", storeRoot: store }),
+      ).rejects.toBeInstanceOf(PullConflictError);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("404s when the source file is missing", async () => {
+    const store = freshStore();
+    try {
+      await expect(
+        adoptLocalGguf({
+          sourcePath: join(store, "missing.gguf"),
+          id: "gone",
+          storeRoot: store,
+        }),
+      ).rejects.toBeInstanceOf(AdoptSourceError);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unsafe id", async () => {
+    const store = freshStore();
+    const srcDir = freshStore();
+    try {
+      const source = join(srcDir, "weights.gguf");
+      writeFileSync(source, GGUF);
+      await expect(
+        adoptLocalGguf({ sourcePath: source, id: "../escape", storeRoot: store }),
+      ).rejects.toBeInstanceOf(PullValidationError);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+      rmSync(srcDir, { recursive: true, force: true });
     }
   });
 });

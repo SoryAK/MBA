@@ -29,17 +29,21 @@
 
 import { createHash, type Hash } from "node:crypto";
 import {
+  copyFileSync,
   createReadStream,
   createWriteStream,
   existsSync,
+  linkSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream";
 import { mkdir, writeFile } from "node:fs/promises";
 import { slotSavePath } from "../mba/server-lifecycle.js";
@@ -168,6 +172,8 @@ export class PullValidationError extends Error {}
 export class PullConflictError extends Error {}
 /** Downloaded content does not match the expected digest → HTTP 422. */
 export class PullVerifyError extends Error {}
+/** Source path missing or not a file → HTTP 404. */
+export class AdoptSourceError extends Error {}
 
 /** Family and model folder names — one store segment, no `..` or separators. */
 const STORE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -466,4 +472,179 @@ export async function pullModel(opts: PullModelOptions): Promise<PullModelResult
       `weights verified at ${dest}; scaffold failed: ${detail} — re-run the same pull to finish the house`,
     );
   }
+}
+
+export type AdoptPlacement = "copy" | "hardlink" | "inplace";
+
+export interface AdoptLocalOptions {
+  /** Absolute path to an existing GGUF on this machine. */
+  sourcePath: string;
+  /** Model id — becomes the model folder name and adapter id. Required. */
+  id: string;
+  /** Family slug. Defaults to the id. */
+  family?: string;
+  /** Store root override (default: $MBA_ADAPTER_DIR ?? OS-aware store). */
+  storeRoot?: string;
+  /**
+   * After a successful house, unlink the source path. No-op when the source
+   * is already the dest file (`placed: "inplace"`). Hardlink drops the extra
+   * name; a cross-device copy deletes the original after dest is complete.
+   */
+  move?: boolean;
+}
+
+export interface AdoptModelResult {
+  id: string;
+  family: string;
+  sha256: string;
+  modelDir: string;
+  adapterPath: string;
+  familyCreated: boolean;
+  placed: AdoptPlacement;
+  /** True when `move` unlinked the source path. */
+  moved: boolean;
+}
+
+function realOrAbs(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/**
+ * Place `source` at `dest`: hardlink when the filesystems match, otherwise
+ * copy. Source is left in place. Same inode already at dest is a no-op.
+ */
+function placeWeights(source: string, dest: string): AdoptPlacement {
+  const srcReal = realOrAbs(source);
+  if (existsSync(dest)) {
+    if (realOrAbs(dest) === srcReal) return "inplace";
+    throw new PullConflictError(`destination already exists: ${dest}`);
+  }
+  mkdirSync(dirname(dest), { recursive: true });
+  try {
+    linkSync(srcReal, dest);
+    return "hardlink";
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EXDEV" || code === "EPERM" || code === "ENOTSUP" || code === "EACCES") {
+      copyFileSync(srcReal, dest);
+      return "copy";
+    }
+    throw err;
+  }
+}
+
+/**
+ * Adopt a local GGUF into the model store (same house as pull, no HTTP).
+ *
+ * Copies (or hardlinks) into `store/<family>/<id>/<file>.gguf`, hashes,
+ * parses the header, and writes empty scaffolds + draft YAML. If the
+ * source is already the dest file and YAML is missing, this is finish-house.
+ * `move` unlinks the source only after that house is written, and never
+ * when source and dest are the same file.
+ */
+export async function adoptLocalGguf(opts: AdoptLocalOptions): Promise<AdoptModelResult> {
+  const { id } = opts;
+  if (!id || id.length === 0) throw new PullValidationError("adopt requires id");
+  const family = opts.family && opts.family.length > 0 ? opts.family : id;
+  assertSafeStoreSegment("id", id);
+  assertSafeStoreSegment("family", family);
+
+  if (!opts.sourcePath || opts.sourcePath.length === 0) {
+    throw new PullValidationError("adopt requires path");
+  }
+  const source = resolve(opts.sourcePath);
+  const srcStat = statSync(source, { throwIfNoEntry: false });
+  if (!srcStat || !srcStat.isFile()) {
+    throw new AdoptSourceError(`source GGUF not found: ${source}`);
+  }
+
+  const storeRoot = resolveStoreRoot(opts.storeRoot);
+  const familyDir = join(storeRoot, family);
+  const modelDir = join(familyDir, id);
+  const fileName = basename(source);
+  if (fileName === "." || fileName === ".." || fileName.includes("/") || fileName.includes("\\")) {
+    throw new PullValidationError("source path must end in a file name inside the model folder");
+  }
+  const dest = join(modelDir, fileName);
+  assertInsideStore(storeRoot, familyDir);
+  assertInsideStore(storeRoot, modelDir);
+  assertInsideStore(storeRoot, dest);
+
+  const dirPlan = planModelDir(modelDir, fileName, id);
+  if (dirPlan === "conflict") {
+    throw new PullConflictError(
+      `model folder already exists: ${modelDir} — remove it first to re-adopt`,
+    );
+  }
+  if (dirPlan === "resume") {
+    throw new PullConflictError(
+      `model folder has an unfinished download: ${modelDir} — remove the .partial or finish the pull first`,
+    );
+  }
+
+  mkdirSync(modelDir, { recursive: true });
+  let placed: AdoptPlacement;
+  try {
+    placed = placeWeights(source, dest);
+  } catch (err) {
+    if (err instanceof PullConflictError) throw err;
+    throw err;
+  }
+
+  const sha256 = await sha256OfFile(dest);
+  const adapterPath = join(modelDir, `${id}.yaml`);
+  let familyCreated: boolean;
+  try {
+    const scaffold = writeEmptyScaffolds(modelDir, familyDir, family, dest);
+    const meta = parseGgufMetadata(dest);
+    const profile = deriveGgufProfile(meta, fileName, sha256);
+    const ggufName =
+      typeof meta.fields["general.name"] === "string"
+        ? (meta.fields["general.name"] as string)
+        : undefined;
+    familyCreated = await scaffold;
+    if (!existsSync(adapterPath)) {
+      writeFileSync(
+        adapterPath,
+        draftAdapterYaml({ id, family, fileName, sha256, profile, ggufName }),
+      );
+    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `weights at ${dest}; scaffold failed: ${detail} — re-run the same adopt to finish the house`,
+    );
+  }
+
+  let moved = false;
+  if (opts.move && placed !== "inplace" && realOrAbs(source) !== realOrAbs(dest)) {
+    try {
+      unlinkSync(source);
+      moved = true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        moved = true;
+      } else {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `adopted into ${modelDir}; could not remove source ${source}: ${detail}`,
+        );
+      }
+    }
+  }
+  return {
+    id,
+    family,
+    sha256,
+    modelDir,
+    adapterPath,
+    familyCreated,
+    placed,
+    moved,
+  };
 }

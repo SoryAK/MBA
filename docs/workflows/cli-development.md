@@ -14,9 +14,9 @@ Industry notes (Claude Code architecture review + git/gh/kubectl): steal TTY-vs-
 
 ## What `mba` is
 
-A **thin client** of the MBA daemon. It does not own adapter files, sessions, or llama-server. Reads and writes go through the service (`GET` / `POST`). Local exceptions (no daemon): `migrate-paths`, `estimate-memory`, `completion`, `--help`.
+A **thin client** of the MBA daemon. It does not own adapter files, sessions, or llama-server. Reads and writes go through the service (`GET` / `POST`). Local exceptions (no daemon): `estimate-memory`, `completion`, `--help`. Scan of operator GGUFs for `mba migrate` is local; the hub write is `POST /models/adopt`.
 
-Nouns: `models` (`m`), `servers` (`s`), `clients` (`c`), `machine`, `status`. Old flat verbs stay as aliases.
+Nouns: `models` (`m`), `servers` (`s`), `clients` (`c`), `migrate`, `machine`, `status`. Old flat verbs stay as aliases. `migrate` has no shortcut.
 
 TTY and `--json` are two skins of the same route. JSON field names are the contract. TTY labels can change in a polish; JSON must not.
 
@@ -32,7 +32,7 @@ TTY and `--json` are two skins of the same route. JSON field names are the contr
 | `client.ts` | `fail`, `serviceGet` / `servicePost`, `resolveServiceUrl` |
 | `style.ts` | paint, `brand`, `kv`, `heading`, `shortenHome` |
 | `interactive.ts` | raw-mode pickers and one-line prompts |
-| `status.ts` / `clients.ts` / `models.ts` / `servers.ts` / `machine.ts` | one noun each |
+| `status.ts` / `clients.ts` / `models.ts` / `servers.ts` / `machine.ts` / `migrate.ts` | one noun each |
 | `slot-print.ts` | TTY grouping for paired sessions (status + clients) |
 | `list-print.ts` | TTY rows for servers, models, registered clients |
 | `harness-choices.ts` | built-in + operator envelopes for pickers |

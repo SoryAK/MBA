@@ -103,7 +103,6 @@ describe("parseMbaArgv", () => {
       args: ["logs", "s1", "--follow"],
     });
     expect(parseMbaArgv(["machine"]).route).toEqual({ cmd: "machine", args: [] });
-    expect(parseMbaArgv(["migrate-paths"]).route).toEqual({ cmd: "migrate-paths" });
     expect(parseMbaArgv(["estimate-memory", "m.gguf"]).route).toEqual({
       cmd: "estimate-memory",
       args: ["m.gguf"],
@@ -146,5 +145,36 @@ describe("parseMbaArgv", () => {
 
   it("flags unknown top-level commands", () => {
     expect(parseMbaArgv(["context-gc"]).route).toEqual({ cmd: "unknown", command: "context-gc" });
+  });
+
+  it("parses migrate as a group", () => {
+    expect(parseMbaArgv(["migrate"]).route).toEqual({ cmd: "migrate", action: "menu", args: [] });
+    expect(parseMbaArgv(["migrate", "models", "/tmp/weights"]).route).toEqual({
+      cmd: "migrate",
+      action: "models",
+      args: ["/tmp/weights"],
+    });
+    expect(parseMbaArgv(["migrate", "find", "--from", "/tmp", "deepseek"]).route).toEqual({
+      cmd: "migrate",
+      action: "find",
+      args: ["--from", "/tmp", "deepseek"],
+    });
+    expect(parseMbaArgv(["migrate", "--help"]).route).toEqual({ cmd: "help", topic: "migrate" });
+    expect(parseMbaArgv(["help", "migrate"]).route).toEqual({ cmd: "help", topic: "migrate" });
+    expect(parseMbaArgv(["migrate", "models", "--json", "~/models"]).json).toBe(true);
+    expect(parseMbaArgv(["migrate", "--move"]).route).toEqual({
+      cmd: "migrate",
+      action: "menu",
+      args: ["--move"],
+    });
+    expect(parseMbaArgv(["migrate", "--move", "models", "/tmp/weights"]).route).toEqual({
+      cmd: "migrate",
+      action: "models",
+      args: ["--move", "/tmp/weights"],
+    });
+    expect(parseMbaArgv(["migrate", "oops"]).route).toEqual({
+      cmd: "unknown",
+      command: "migrate oops",
+    });
   });
 });
