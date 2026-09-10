@@ -7,6 +7,7 @@ import {
   pickLabeledInteractive,
   pickModelInteractive,
   pickPreviewInteractive,
+  pickManyInteractive,
   pickServerInteractive,
   searchHfInteractive,
   type ModelEntry,
@@ -569,6 +570,46 @@ describe("askYesNoInteractive", () => {
 
   it("returns null on Esc", async () => {
     const p = askYesNoInteractive("boot with these flags?");
+    await tick();
+    stdin.emit("\x1b");
+    await expect(p).resolves.toBeNull();
+  });
+});
+
+describe("pickManyInteractive", () => {
+  let stdin: ReturnType<typeof fakeStdin>;
+  const items = [
+    { label: "a.gguf", value: "/tmp/a.gguf", preview: [["file", "a.gguf"]] as const },
+    { label: "b.gguf", value: "/tmp/b.gguf", preview: [["file", "b.gguf"]] as const },
+  ];
+  beforeEach(() => {
+    stdin = fakeStdin();
+    vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as NodeJS.ReadStream & { fd: 0 });
+    vi.spyOn(process.stdout, "write").mockReturnValue(true as unknown as ReturnType<typeof process.stdout.write>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("adopts the highlighted row on enter with nothing marked", async () => {
+    const p = pickManyInteractive("adopt", items);
+    await tick();
+    stdin.emit("\r");
+    await expect(p).resolves.toEqual(["/tmp/a.gguf"]);
+  });
+
+  it("toggles with space and confirms the marked set", async () => {
+    const p = pickManyInteractive("adopt", items);
+    await tick();
+    stdin.emit(" ");
+    stdin.emit("\x1b[B");
+    stdin.emit(" ");
+    stdin.emit("\r");
+    await expect(p).resolves.toEqual(["/tmp/a.gguf", "/tmp/b.gguf"]);
+  });
+
+  it("resolves null on Esc", async () => {
+    const p = pickManyInteractive("adopt", items);
     await tick();
     stdin.emit("\x1b");
     await expect(p).resolves.toBeNull();

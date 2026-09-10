@@ -11,6 +11,7 @@ import {
   visibleLen,
   bootedLine,
   pulledLine,
+  adoptedLine,
   BOLD,
   CYAN,
   colorEnabled,
@@ -58,6 +59,13 @@ describe("cli style", () => {
     process.env.NO_COLOR = "1";
     expect(pulledLine("deepseek_test", "deepseek")).toBe(
       "  PULLED  deepseek_test  deepseek    next  mba s boot deepseek_test",
+    );
+  });
+
+  it("renders a one-line ADOPTED result", () => {
+    process.env.NO_COLOR = "1";
+    expect(adoptedLine("local_r1", "deepseek")).toBe(
+      "  ADOPTED  local_r1  deepseek    next  mba s boot local_r1",
     );
   });
 

@@ -83,6 +83,7 @@ mba models stage qwen --harness cursor
 mba connect qwen --harness cursor
 mba servers              # list / boot / stop (TTY)
 mba s logs <id>
+mba migrate models ~/models   # local GGUFs → hub (copy/hardlink)
 mba machine              # enforce | warn | off
 mba estimate-memory <gguf>
 eval "$(mba completion)" # bash; or: mba completion zsh
@@ -100,8 +101,6 @@ eval "$(mba completion)" # bash; or: mba completion zsh
 | `MBA_SWITCH_PORT` | Default boot port (8080) |
 
 Defaults are OS-aware: XDG on Linux, `%APPDATA%` / `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS.
-
-Upgrading from a pre-0.1.1 install: `mba migrate-paths` once (local, never overwrites).
 
 ## MCP
 

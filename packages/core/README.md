@@ -18,7 +18,7 @@ configure adapter → BCB (system watch) → AMPI (system live response)
 - **BCB** — behavioral circuit breakers. You name known failure modes on this model and configure an escalation ladder plus a programmatic response.
 - **AMPI** — automated multi-process intervention. A deterministic named recipe that runs when a breaker fires (Sanitize, Assist, Sanction, Recover).
 - **Service** — binds `127.0.0.1` on an OS-assigned port and writes `<state dir>/mba/service.json`.
-- **CLI** — `mba` (`models`, `servers`, `machine`, `status`). The published bin is the CLI, not the service.
+- **CLI** — `mba` (`models`, `servers`, `clients`, `migrate`, `machine`, `status`). The published bin is the CLI, not the service.
 
 ## Install (library)
 
@@ -58,7 +58,7 @@ Node ≥ 22. llama.cpp on `PATH` if you boot with `mba servers boot`.
 | `MBA_SWITCH_PORT` | Default boot port (8080) |
 | `MBA_UPSTREAM_URL` | Fallback upstream when the registry is empty |
 
-Defaults are OS-aware (see `src/service/paths.ts`). Upgrading from a pre-0.1.1 install: `mba migrate-paths` once (local, never overwrites).
+Defaults are OS-aware (see `src/service/paths.ts`).
 
 ## Develop
 

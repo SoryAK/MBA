@@ -37,6 +37,11 @@
  *        sha256 mismatch, download failure) arrives as an `error` event —
  *        the HTTP status is 200 for the whole stream; the CLI renders the
  *        message and exits non-zero.
+ *   POST /models/adopt               → AdoptModelResult
+ *        Body: { path, id, family?, move? }. Copy (or hardlink) a local GGUF
+ *        into the model store and finish the same house as pull. `move`
+ *        unlinks the source after success (not when source is already dest).
+ *        400 bad id/path, 404 source missing, 409 model folder exists.
  *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired, hint?, machineHint? }] }
  *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
  *        Body: { id, file: 'server_setup'|'client', field, value }. The
@@ -109,7 +114,13 @@ import {
 } from "./sessions.js";
 import { createModelProxyRoutes } from "./model-proxy.js";
 import { reasoningGateForModel } from "./reasoning-gate.js";
-import { pullModel } from "../model/model-pull.js";
+import {
+  adoptLocalGguf,
+  AdoptSourceError,
+  PullConflictError,
+  PullValidationError,
+  pullModel,
+} from "../model/model-pull.js";
 import {
   listUpstreams,
   readRegistry,
@@ -447,6 +458,46 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         await stream.writeSSE({ data: JSON.stringify({ type: "error", message }) });
       }
     });
+  });
+
+  app.post("/models/adopt", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { path?: unknown; id?: unknown; family?: unknown; move?: unknown };
+    if (
+      !input ||
+      typeof input.path !== "string" ||
+      input.path.length === 0 ||
+      typeof input.id !== "string" ||
+      input.id.length === 0 ||
+      (input.family !== undefined && typeof input.family !== "string") ||
+      (input.move !== undefined && typeof input.move !== "boolean")
+    ) {
+      return c.json(
+        { error: "body requires path, id (strings); family is an optional string; move is an optional boolean" },
+        400,
+      );
+    }
+    try {
+      const result = await adoptLocalGguf({
+        sourcePath: input.path,
+        id: input.id,
+        family: input.family,
+        move: input.move,
+        storeRoot: opts.adapterDir,
+      });
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof AdoptSourceError) return c.json({ error: message }, 404);
+      if (err instanceof PullValidationError) return c.json({ error: message }, 400);
+      if (err instanceof PullConflictError) return c.json({ error: message }, 409);
+      return c.json({ error: message }, 500);
+    }
   });
 
   app.get("/models/config", (c) => {

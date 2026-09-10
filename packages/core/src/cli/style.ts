@@ -36,11 +36,14 @@ export function rule(width = 40): string {
   return paint(` ${"─".repeat(width)}`, DIM);
 }
 
-/** Selected: cyan ▸ + green ● + bold name. Idle: dim ○ + dim name. */
-export function option(selected: boolean, name: string, desc = ""): string {
+/** Selected: cyan ▸ + green ● + bold name. Idle: dim ○ + dim name.
+ *  `marked` splits cursor from selection (multi-select). When omitted,
+ *  marked follows `selected` — same as a single-select row. */
+export function option(selected: boolean, name: string, desc = "", marked?: boolean): string {
+  const isMarked = marked ?? selected;
   const arrow = selected ? paint("▸ ", CYAN) : "  ";
-  const dot = selected ? paint("●", GRN) : paint("○", DIM);
-  const label = selected ? paint(name, BOLD) : paint(name, DIM);
+  const dot = isMarked ? paint("●", GRN) : paint("○", DIM);
+  const label = selected || isMarked ? paint(name, BOLD) : paint(name, DIM);
   const extra = desc ? paint(`  ${desc}`, DIM) : "";
   return ` ${arrow}${dot} ${label}${extra}`;
 }
@@ -115,6 +118,12 @@ export function bootedLine(id: string, pid?: number, next?: string): string {
 export function pulledLine(id: string, family?: string): string {
   const familyBit = family ? `  ${dim(family)}` : "";
   return `  ${paint("PULLED", BOLD, GRN)}  ${paint(id, BOLD)}${familyBit}    ${dim("next")}  mba s boot ${id}`;
+}
+
+/** One-line adopt result. Path prints on the next line. */
+export function adoptedLine(id: string, family?: string): string {
+  const familyBit = family ? `  ${dim(family)}` : "";
+  return `  ${paint("ADOPTED", BOLD, GRN)}  ${paint(id, BOLD)}${familyBit}    ${dim("next")}  mba s boot ${id}`;
 }
 
 export const HIDE_CURSOR = "\x1b[?25l";

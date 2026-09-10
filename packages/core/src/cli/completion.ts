@@ -3,10 +3,11 @@
  * Install: eval "$(mba completion)"  or  mba completion zsh
  */
 
-const GROUPS = "models m servers server s clients client c machine status help completion migrate-paths estimate-memory connect";
+const GROUPS = "models m servers server s clients client c migrate machine status help completion estimate-memory connect";
 const MODEL_SUB = "list show set open path pull search edit stage connect";
 const SERVER_SUB = "list boot stop logs slots binaries builds";
 const CLIENT_SUB = "list add connect revoke remove";
+const MIGRATE_SUB = "models find";
 const MACHINE_SUB = "enforce warn off";
 
 function bashScript(): string {
@@ -49,6 +50,11 @@ _mba() {
         COMPREPLY=( $(compgen -W "${CLIENT_SUB}" -- "\$cur") )
       fi
       ;;
+    migrate)
+      if [[ \${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "${MIGRATE_SUB}" -- "\$cur") )
+      fi
+      ;;
     machine|machine-overlay)
       COMPREPLY=( $(compgen -W "${MACHINE_SUB}" -- "\$cur") )
       ;;
@@ -56,7 +62,7 @@ _mba() {
       COMPREPLY=( $(compgen -W "bash zsh" -- "\$cur") )
       ;;
     help)
-      COMPREPLY=( $(compgen -W "models servers clients machine status" -- "\$cur") )
+      COMPREPLY=( $(compgen -W "models servers clients migrate machine status" -- "\$cur") )
       ;;
   esac
 }
@@ -67,11 +73,12 @@ complete -F _mba mba
 function zshScript(): string {
   return `#compdef mba
 _mba() {
-  local -a groups modelsubs serversubs clientsubs
-  groups=(models m servers server s clients client c machine status help completion migrate-paths estimate-memory connect)
+  local -a groups modelsubs serversubs clientsubs migratesubs
+  groups=(models m servers server s clients client c migrate machine status help completion estimate-memory connect)
   modelsubs=(list show set open path pull search edit stage connect)
   serversubs=(list boot stop logs slots binaries builds)
   clientsubs=(list add connect revoke remove)
+  migratesubs=(models find)
   case $CURRENT in
     2) _describe 'command' groups ;;
     *)
@@ -83,9 +90,10 @@ _mba() {
           ;;
         servers|server|s) _describe 'servers' serversubs ;;
         clients|client|c) _describe 'clients' clientsubs ;;
+        migrate) _describe 'migrate' migratesubs ;;
         machine) _describe 'mode' '(enforce warn off)' ;;
         completion) _describe 'shell' '(bash zsh)' ;;
-        help) _describe 'topic' '(models servers clients machine status)' ;;
+        help) _describe 'topic' '(models servers clients migrate machine status)' ;;
       esac
       ;;
   esac

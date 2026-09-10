@@ -102,17 +102,26 @@ function previewPickLines(
   allCount: number,
   list: readonly PreviewPickItem[],
   cursor: number,
+  marked?: ReadonlySet<string>,
 ): string[] {
   const win = sliceWindow(list, cursor, PREVIEW_LIST_WINDOW);
   const left =
     win.items.length === 0
       ? [dim("  (no matches)")]
-      : win.items.map((it, i) => option(win.start + i === cursor, it.label));
+      : win.items.map((it, i) =>
+          option(win.start + i === cursor, it.label, "", marked?.has(it.value)),
+        );
   const current = list[cursor];
+  const count =
+    marked !== undefined ? `${marked.size} sel · ${list.length}/${allCount}` : `${list.length}/${allCount}`;
   return previewBox({
     title,
-    detail: filter ? `filter: ${filter}` : undefined,
-    count: `${list.length}/${allCount}`,
+    detail: filter
+      ? `filter: ${filter}`
+      : marked !== undefined
+        ? "space toggle · enter adopt"
+        : undefined,
+    count,
     left,
     preview: current?.preview ?? [],
   });
@@ -718,6 +727,93 @@ export function pickPreviewInteractive(
           query = query.slice(0, -1);
           if (!query && selectedAt >= 0) cursor = selectedAt;
           else cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
+          render();
+        } else if (key === "\x03") {
+          finish(() => reject(new Error("cancelled")));
+          return;
+        } else if (key.length === 1 && !key.startsWith("\x1b")) {
+          query += key;
+          cursor = 0;
+          render();
+        }
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    render();
+  });
+}
+
+/**
+ * Multi-select sibling of `pickPreviewInteractive`. Space toggles the
+ * current row (does not add to the filter). Enter confirms the marked
+ * set; if nothing is marked, the highlighted row is adopted. Esc clears
+ * the filter first, then cancels.
+ */
+export function pickManyInteractive(
+  title: string,
+  items: readonly PreviewPickItem[],
+): Promise<string[] | null> {
+  return new Promise<string[] | null>((resolve, reject) => {
+    const stdin = process.stdin;
+    const frame = createMenuFrame();
+    let query = "";
+    let cursor = 0;
+    const marked = new Set<string>();
+
+    const filtered = () => (query ? items.filter((it) => matchesQuery(it, query)) : items);
+
+    const render = () => {
+      frame.draw(previewPickLines(brand(title), query, items.length, filtered(), cursor, marked));
+    };
+
+    const finish = (ok: () => void) => {
+      endInteractive(stdin, onData);
+      frame.close({ erase: true });
+      ok();
+    };
+
+    const onData = (buf: Buffer) => {
+      for (const key of tokenizeKeys(buf.toString("utf8"))) {
+        const list = filtered();
+        if (key === "\x1b[A") {
+          if (list.length === 0) continue;
+          cursor = (cursor - 1 + list.length) % list.length;
+          render();
+        } else if (key === "\x1b[B") {
+          if (list.length === 0) continue;
+          cursor = (cursor + 1) % list.length;
+          render();
+        } else if (key === " ") {
+          const row = list[cursor];
+          if (!row) continue;
+          if (marked.has(row.value)) marked.delete(row.value);
+          else marked.add(row.value);
+          render();
+        } else if (key === "\r" || key === "\n") {
+          const chosen =
+            marked.size > 0
+              ? items.filter((it) => marked.has(it.value)).map((it) => it.value)
+              : list[cursor]
+                ? [list[cursor]!.value]
+                : [];
+          if (chosen.length === 0) continue;
+          finish(() => resolve(chosen));
+          return;
+        } else if (key === "\x1b") {
+          if (query.length > 0) {
+            query = "";
+            cursor = 0;
+            render();
+            continue;
+          }
+          finish(() => resolve(null));
+          return;
+        } else if (key === "\x7f" || key === "\b") {
+          query = query.slice(0, -1);
+          cursor = Math.min(cursor, Math.max(0, filtered().length - 1));
           render();
         } else if (key === "\x03") {
           finish(() => reject(new Error("cancelled")));

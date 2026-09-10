@@ -13,7 +13,6 @@ import { cmdEstimateMemory } from "./estimate-memory.js";
 import { usageFor } from "./help.js";
 import { cmdHome } from "./home.js";
 import { cmdMachine } from "./machine.js";
-import { cmdMigratePaths } from "./migrate.js";
 import {
   cmdModelsEdit,
   cmdModelsList,
@@ -28,6 +27,7 @@ import {
   cmdModelsConnect,
 } from "./models.js";
 import { parseMbaArgv } from "./route.js";
+import { cmdMigrate } from "./migrate.js";
 import { cmdServers } from "./servers.js";
 import { cmdStatus } from "./status.js";
 
@@ -63,10 +63,6 @@ async function main(argv: readonly string[]): Promise<void> {
     cmdCompletion(route.args);
     return;
   }
-  if (route.cmd === "migrate-paths") {
-    cmdMigratePaths();
-    return;
-  }
   if (route.cmd === "estimate-memory") {
     cmdEstimateMemory([...route.args]);
     return;
@@ -90,6 +86,9 @@ async function main(argv: readonly string[]): Promise<void> {
         return;
       case "clients":
         await cmdClients(baseUrl, route.args, json);
+        return;
+      case "migrate":
+        await cmdMigrate(baseUrl, route.action, route.args, skipRestart, json);
         return;
       case "models":
         switch (route.action) {

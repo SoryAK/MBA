@@ -17,6 +17,7 @@ import {
   type ModelEntry,
 } from "./interactive.js";
 import { listHfGgufs, searchHfModels } from "../model/hf-resolve.js";
+import { deriveModelId } from "../model/model-id.js";
 import { handleRestartPrompt, parseValue } from "./restart.js";
 import type { ModelConfig, SetResult } from "./types.js";
 import { KNOWN_HARNESSES } from "../mba/envelope.js";
@@ -266,15 +267,6 @@ export async function cmdModelsPull(
     process.stderr.write(`[mba] error: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
   }
-}
-
-function deriveModelId(repo: string): string {
-  return (
-    repo
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "model"
-  );
 }
 
 function deriveFamily(owner: string): string {

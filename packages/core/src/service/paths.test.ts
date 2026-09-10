@@ -1,16 +1,12 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   defaultStateDir,
   defaultModelStoreRoot,
-  legacyStateDir,
-  legacyModelStoreRoot,
   ensureDir,
   normalizePlatform,
-  planMigration,
-  executeMigration,
   type PathContext,
 } from "./paths.js";
 
@@ -119,15 +115,6 @@ describe("defaultModelStoreRoot", () => {
   });
 });
 
-describe("legacy locations (migration source only)", () => {
-  it("state: ~/.mba", () => {
-    expect(legacyStateDir(ctx())).toBe("/home/user/.mba");
-  });
-  it("store: ~/models/adapters", () => {
-    expect(legacyModelStoreRoot(ctx())).toBe("/home/user/models/adapters");
-  });
-});
-
 describe("ensureDir", () => {
   let root: string;
   beforeEach(() => {
@@ -146,113 +133,5 @@ describe("ensureDir", () => {
     const target = join(root, "exists");
     ensureDir(target);
     expect(() => ensureDir(target)).not.toThrow();
-  });
-});
-
-describe("planMigration (pure decision table)", () => {
-  it("moves when source exists and destination is absent", () => {
-    expect(planMigration(true, false, true, "/old", "/new")).toEqual({
-      status: "moved",
-      from: "/old",
-      to: "/new",
-    });
-  });
-  it("moves when source exists and destination is present but empty", () => {
-    expect(planMigration(true, true, true, "/old", "/new")).toEqual({
-      status: "moved",
-      from: "/old",
-      to: "/new",
-    });
-  });
-  it("skips when the source is missing (fresh install / already migrated)", () => {
-    expect(planMigration(false, false, true, "/old", "/new")).toEqual({
-      status: "skipped-missing-source",
-      from: "/old",
-      to: "/new",
-    });
-  });
-  it("refuses when the destination exists and is non-empty", () => {
-    expect(planMigration(true, true, false, "/old", "/new")).toEqual({
-      status: "skipped-destination-exists",
-      from: "/old",
-      to: "/new",
-    });
-  });
-});
-
-describe("executeMigration (real filesystem)", () => {
-  let root: string;
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "mba-migrate-"));
-  });
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  /** Probe helpers mirroring what the CLI does before calling executeMigration. */
-  function probe(dir: string): { exists: boolean; empty: boolean } {
-    const exists = existsSync(dir);
-    const empty = exists && readdirSync(dir).length === 0;
-    return { exists, empty };
-  }
-
-  it("moves a populated source into an absent destination", () => {
-    const from = join(root, "old");
-    const to = join(root, "new");
-    ensureDir(from);
-    writeFileSync(join(from, "a.txt"), "hello");
-    const p = probe(from);
-    const d = probe(to);
-    const result = executeMigration(from, to, p.exists, d.exists, d.empty);
-    expect(result.status).toBe("moved");
-    expect(existsSync(join(to, "a.txt"))).toBe(true);
-    expect(existsSync(from)).toBe(false);
-  });
-
-  it("creates the destination's missing parents (nested new home)", () => {
-    const from = join(root, "old");
-    // Destination sits under parents that do not exist yet — the real store
-    // case (…/mba/model_hub/adapters on a fresh install).
-    const to = join(root, "a", "b", "c", "new");
-    ensureDir(from);
-    writeFileSync(join(from, "a.txt"), "hello");
-    const p = probe(from);
-    const d = probe(to);
-    const result = executeMigration(from, to, p.exists, d.exists, d.empty);
-    expect(result.status).toBe("moved");
-    expect(existsSync(join(to, "a.txt"))).toBe(true);
-    expect(existsSync(from)).toBe(false);
-  });
-
-  it("is idempotent — a second run finds no source and skips", () => {
-    const from = join(root, "old");
-    const to = join(root, "new");
-    ensureDir(from);
-    writeFileSync(join(from, "a.txt"), "hello");
-    executeMigration(from, to, probe(from).exists, probe(to).exists, probe(to).empty);
-    // Second run: source is gone now.
-    const p = probe(from);
-    const d = probe(to);
-    const result = executeMigration(from, to, p.exists, d.exists, d.empty);
-    expect(result.status).toBe("skipped-missing-source");
-    // Data still intact at the destination.
-    expect(existsSync(join(to, "a.txt"))).toBe(true);
-  });
-
-  it("refuses to overwrite a non-empty destination", () => {
-    const from = join(root, "old");
-    const to = join(root, "new");
-    ensureDir(from);
-    writeFileSync(join(from, "a.txt"), "from");
-    ensureDir(to);
-    writeFileSync(join(to, "b.txt"), "to");
-    const p = probe(from);
-    const d = probe(to);
-    const result = executeMigration(from, to, p.exists, d.exists, d.empty);
-    expect(result.status).toBe("skipped-destination-exists");
-    // Source untouched, destination untouched.
-    expect(existsSync(join(from, "a.txt"))).toBe(true);
-    expect(existsSync(join(to, "b.txt"))).toBe(true);
-    expect(existsSync(join(to, "a.txt"))).toBe(false);
   });
 });
