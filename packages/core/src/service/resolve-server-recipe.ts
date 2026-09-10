@@ -19,8 +19,9 @@
  *   --model-file <path>   (required) Absolute path to the .gguf to boot.
  *   --adapter-dir <dir>   Adapters root (default: derived from --model-file,
  *                         falling back to the OS-aware model store, see service/paths.ts).
- *   --harness <name>      Harness for env-folder selection (default: copilot).
- *   --ide <name>          IDE for env-folder selection (default: vscode).
+ *   --harness <name>      Harness for env-folder selection (default: none —
+ *                         family+model only, matching in-daemon boot).
+ *   --ide <name>          IDE for env-folder selection (default: none).
  *   --runtime <name>      Inference runtime (default: llamacpp).
  *
  * Output (stdout, single JSON object):
@@ -43,6 +44,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { readClientBlock } from "./model-endpoint-sync.js";
 import { resolveRecipe } from "./recipe-resolution.js";
+import { BARE_BOOT_ENV } from "./env-context.js";
 import { defaultStorePaths, type MbaStorePaths } from "./config-store.js";
 import { readMachineInfo } from "./machine-store.js";
 import { readGlobalConfig } from "./config-store.js";
@@ -59,9 +61,9 @@ interface CliArgs {
 function parseArgs(argv: readonly string[]): CliArgs {
   const args: CliArgs = {
     modelFile: "",
-    harness: "copilot",
-    ide: "vscode",
-    runtime: "llamacpp",
+    harness: BARE_BOOT_ENV.harness,
+    ide: BARE_BOOT_ENV.ide,
+    runtime: BARE_BOOT_ENV.serverRuntime,
   };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
@@ -131,9 +133,7 @@ function main(): void {
   );
 
   // The shared resolution chain (R1): catalog lookup → declared identity →
-  // resolveMbaConfig → sanitize → buildLlamaServerFlags. The in-daemon
-  // resolveBootRecipe runs the same chain, so the flags the script sets and
-  // the flags the proxy applies are provably the same bytes.
+  // resolveBootRecipe runs the same chain (bare env unless --harness).
   // ADR-0103: if a machine profile has been persisted, apply it now.
   const paths: MbaStorePaths = defaultStorePaths();
   const machineInfo = readMachineInfo(paths);
@@ -147,6 +147,7 @@ function main(): void {
         harness: args.harness,
         ide: args.ide,
         serverRuntime: args.runtime,
+        applyEnvFolders: args.harness !== BARE_BOOT_ENV.harness,
       },
       { machineInfo, machineOverlay },
     );

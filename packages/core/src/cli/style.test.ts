@@ -9,6 +9,8 @@ import {
   previewBox,
   shortenHome,
   visibleLen,
+  bootedLine,
+  pulledLine,
   BOLD,
   CYAN,
   colorEnabled,
@@ -40,6 +42,23 @@ describe("cli style", () => {
     process.env.FORCE_COLOR = "1";
     expect(colorEnabled()).toBe(true);
     expect(paint("MBA", BOLD, CYAN)).toBe(`${BOLD}${CYAN}MBA\x1b[0m`);
+  });
+
+  it("renders a one-line BOOTED result", () => {
+    process.env.NO_COLOR = "1";
+    expect(bootedLine("llama-cpp-8080", 126627)).toBe(
+      "  BOOTED  llama-cpp-8080  pid 126627    next  mba s logs llama-cpp-8080",
+    );
+    expect(bootedLine("llama-cpp-8080", 126627, "mba connect deepseek_test")).toBe(
+      "  BOOTED  llama-cpp-8080  pid 126627    next  mba connect deepseek_test",
+    );
+  });
+
+  it("renders a one-line PULLED result", () => {
+    process.env.NO_COLOR = "1";
+    expect(pulledLine("deepseek_test", "deepseek")).toBe(
+      "  PULLED  deepseek_test  deepseek    next  mba s boot deepseek_test",
+    );
   });
 
   it("renders a done box with a title", () => {

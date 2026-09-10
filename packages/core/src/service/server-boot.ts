@@ -3,10 +3,9 @@
  *
  * The "how" of booting a model server in-daemon, replacing the retired
  * `llama-server-up.sh` shell-out:
- *   - `resolveBootRecipe` — resolve the per-model tuning recipe (the same
- *     4-rung merge the proxy uses: `resolveMbaConfig` →
- *     `sanitizeLlamaCppServerFlags` → `buildLlamaServerFlags`), so the flags
- *     the daemon sets are provably the same bytes the proxy applies.
+ *   - `resolveBootRecipe` — resolve family + model dials only (no env
+ *     overlay). Connect attaches a client later. Same sanitize/build chain
+ *     as the one-shot recipe CLI.
  *   - `defaultBinaryPath` — map a fork to its llama-server binary (boot-script
  *     parity), overridable via `MBA_LLAMA_SERVER_BIN`.
  *   - `bootServer` — enforce the G2 port rule (refuse a busy port, allow a new
@@ -17,7 +16,7 @@
  * recipe read; process spawning goes through the injected `LifecycleSeams`.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { daemonLog, resolveSeams, type LifecycleSeams } from "../mba/index.js";
@@ -26,10 +25,7 @@ import type { MachineOverlayMode } from "./config-store.js";
 import { resolveRecipe, type RecipeResolutionContext } from "./recipe-resolution.js";
 import { listUpstreams, readRegistry, writeRegistry, type UpstreamEntry } from "./upstream-registry.js";
 import { getServerTypeOps, type ServerType } from "./server-types.js";
-import { resolveEnvContext, DEFAULT_RESOLVE_ENV } from "./env-context.js";
-import { readModelCatalog } from "./model-catalog.js";
-import { readSessions } from "./sessions.js";
-import { readOperatorClients } from "./operator-clients.js";
+import { BARE_BOOT_ENV, isBareBootEnv } from "./env-context.js";
 
 /** The two llama.cpp fork variants (boot-script parity). */
 export type Fork = "upstream" | "llama.cpp";
@@ -113,15 +109,29 @@ export interface BootRecipe {
   readonly annotations: readonly string[];
   /** Whether the recipe fits the supplied machine (true if no machine info). */
   readonly fitsMachine: boolean;
-  /** Harness + ide + runtime used for environment-folder selection. */
+  /** Always bare at boot (`none`); connect attaches a client later. */
   readonly env: RecipeResolutionContext;
+  /** Sparse model facts for the boot TTY card. Absent keys are omitted. */
+  readonly model?: BootCardModel;
+}
+
+/** Important weights/client facts for the boot preview (not a spec dump). */
+export interface BootCardModel {
+  readonly sizeLabel?: string;
+  readonly quant?: string;
+  readonly architecture?: string;
+  readonly fileBytes?: number;
+  readonly vision?: boolean;
+  readonly toolCalling?: boolean;
+  /** `expertCount/expertUsedCount` when this is an MoE. */
+  readonly moe?: string;
 }
 
 /**
  * Resolve the effective llama.cpp recipe for `modelFile` from the adapter
- * tree. Thin wrapper over the shared `resolveRecipe` chain (R1) — the same
- * chain the `resolve-server-recipe` CLI runs, so the daemon and the legacy
- * external boot script set identical flags.
+ * tree. Family + model dials only — no pairing overlay, no Copilot default.
+ * Connect attaches a client later. Same sanitize/build chain as the
+ * `resolve-server-recipe` CLI when that CLI also omits `--harness`.
  *
  * @throws {Error} when no adapter under `adapterDir` declares `modelFile`
  *   (the model is not in the MBA tree — the route maps this to 404).
@@ -131,19 +141,8 @@ export function resolveBootRecipe(
   adapterDir: string,
   machineInfo?: MachineInfo,
   machineOverlay: MachineOverlayMode = "enforce",
-  pairing?: { readonly sessionsPath?: string; readonly clientsPath?: string },
 ): BootRecipe {
-  const catalog = readModelCatalog(adapterDir);
-  const entry = catalog.find((c) => c.modelFile === modelFile);
-  const env = entry
-    ? resolveEnvContext({
-        modelId: entry.id,
-        sessions: pairing?.sessionsPath ? readSessions(pairing.sessionsPath) : [],
-        operatorClients: pairing?.clientsPath
-          ? readOperatorClients(pairing.clientsPath)
-          : [],
-      })
-    : DEFAULT_RESOLVE_ENV;
+  const env = BARE_BOOT_ENV;
   const recipe = resolveRecipe(
     modelFile,
     adapterDir,
@@ -158,7 +157,38 @@ export function resolveBootRecipe(
     annotations: recipe.annotations,
     fitsMachine: recipe.fitsMachine,
     env,
+    model: bootCardModel(recipe),
   };
+}
+
+function bootCardModel(
+  recipe: ReturnType<typeof resolveRecipe>,
+): BootCardModel | undefined {
+  const p = recipe.resolved.profile;
+  const fileBytes = ggufFileBytes(recipe.modelFile);
+  const experts = p?.params?.expertCount;
+  const used = p?.params?.expertUsedCount;
+  const moe =
+    experts !== undefined ? (used !== undefined ? `${experts}/${used}` : String(experts)) : undefined;
+  const model: BootCardModel = {
+    ...(p?.sizeLabel ? { sizeLabel: p.sizeLabel } : {}),
+    ...(p?.quant ? { quant: p.quant } : {}),
+    ...(p?.architecture ? { architecture: p.architecture } : {}),
+    ...(fileBytes !== undefined ? { fileBytes } : {}),
+    ...(recipe.client?.vision !== undefined ? { vision: recipe.client.vision } : {}),
+    ...(recipe.client?.toolCalling !== undefined ? { toolCalling: recipe.client.toolCalling } : {}),
+    ...(moe ? { moe } : {}),
+  };
+  return Object.keys(model).length > 0 ? model : undefined;
+}
+
+function ggufFileBytes(path: string): number | undefined {
+  try {
+    const n = statSync(path).size;
+    return n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Input to `bootServer`. */
@@ -185,10 +215,6 @@ export interface BootServerInput {
   readonly machineInfo?: MachineInfo;
   /** How to apply the machine overlay (default `enforce`). */
   readonly machineOverlay?: MachineOverlayMode;
-  /** Paired sessions — boot uses this model's newest pairing as resolve env. */
-  readonly sessionsPath?: string;
-  /** Operator-defined clients (ide fallback for a paired harness). */
-  readonly clientsPath?: string;
   /** Lifecycle seams (spawn/fetch/kill) — injectable for tests. */
   readonly seams?: LifecycleSeams;
 }
@@ -307,10 +333,12 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
         input.adapterDir,
         input.machineInfo,
         machineOverlay,
-        { sessionsPath: input.sessionsPath, clientsPath: input.clientsPath },
       );
+      const envLabel = isBareBootEnv(recipe.env)
+        ? "none"
+        : `${recipe.env.harness}+${recipe.env.ide}+${recipe.env.serverRuntime}`;
       daemonLog(
-        `[boot] recipe resolved: modelId=${recipe.modelId} env=${recipe.env.harness}+${recipe.env.ide}+${recipe.env.serverRuntime} warmup=${recipe.warmupTokens} args=[${recipe.cliArgs.join(" ")}]`,
+        `[boot] recipe resolved: modelId=${recipe.modelId} env=${envLabel} warmup=${recipe.warmupTokens} args=[${recipe.cliArgs.join(" ")}]`,
       );
       if (recipe.annotations.length > 0) {
         for (const annotation of recipe.annotations) {

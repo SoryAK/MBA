@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import YAML from "yaml";
 import { resolveMbaConfig, sanitizeLlamaCppServerFlags } from "../mba/index.js";
+import { BARE_BOOT_ENV } from "./env-context.js";
 import { readModelCatalog } from "./model-catalog.js";
 import type { CtxSizeResolver } from "./model-endpoint-sync.js";
 
@@ -33,13 +34,17 @@ export function buildCtxSizeResolver(adapterDir: string): CtxSizeResolver {
         identity?: { model?: { name?: string; family?: string } };
       };
       const modelName = raw.identity?.model?.name ?? entry.name;
-      const resolved = resolveMbaConfig(mbaBaseDir, {
-        modelName,
-        modelFamily: raw.identity?.model?.family,
-        harness: "copilot",
-        ide: "vscode",
-        serverRuntime: "llamacpp",
-      });
+      const resolved = resolveMbaConfig(
+        mbaBaseDir,
+        {
+          modelName,
+          modelFamily: raw.identity?.model?.family,
+          harness: BARE_BOOT_ENV.harness,
+          ide: BARE_BOOT_ENV.ide,
+          serverRuntime: BARE_BOOT_ENV.serverRuntime,
+        },
+        { applyEnvFolders: false },
+      );
       const { flags } = sanitizeLlamaCppServerFlags(resolved.server["llama.cpp"]);
       return flags.ctxSize;
     } catch {

@@ -90,10 +90,10 @@ import {
   type SwitchExecutor,
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
-import { compactHarnessKey } from "../mba/envelope.js";
+import { compactHarnessKey, envelopeRelativePath } from "../mba/envelope.js";
 import { readEnvelopeOwner } from "../mba/stage-instructions.js";
 import { stageModelCard, restageSlotsAfterRevoke, restagePairedSlotsForModel } from "./stage-model-card.js";
-import { defaultIdeForHarness } from "./env-context.js";
+import { defaultIdeForHarness, bootEnvJson, isBareBootEnv } from "./env-context.js";
 import { operatorEnvelopeBindings, readOperatorClients } from "./operator-clients.js";
 import {
   hashToken,
@@ -305,7 +305,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       if (!ownerBySlot.has(key)) {
         ownerBySlot.set(key, readEnvelopeOwner(s.projectRoot, s.harness, extras, s.ide));
       }
-      return { ...s, card: ownerBySlot.get(key) === s.modelId };
+      return {
+        ...s,
+        card: ownerBySlot.get(key) === s.modelId,
+        envelope: envelopeRelativePath(s.harness, s.ide, extras),
+      };
     });
     return c.json({
       version: cfg.version,
@@ -846,7 +850,6 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         opts.adapterDir ?? "",
         opts.machineInfo,
         machineOverlay(),
-        { sessionsPath: paths.sessionsPath, clientsPath: paths.clientsPath },
       );
       const selection = selectLlamaServer({
         lastPath: readLlamaServerChoice(paths)?.path,
@@ -858,7 +861,8 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         modelFile: recipe.modelFile,
         cliArgs: recipe.cliArgs,
         warmupTokens: recipe.warmupTokens,
-        env: recipe.env,
+        env: bootEnvJson(recipe.env),
+        envAttached: !isBareBootEnv(recipe.env),
         binary: selection.selected,
         binaries: selection.catalog,
         recommended: selection.recommended,
@@ -868,6 +872,13 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         gpus: (opts.machineInfo?.gpus ?? [])
           .map((g) => g.name)
           .filter((n): n is string => typeof n === "string" && n.length > 0),
+        vramBytes: (opts.machineInfo?.gpus ?? [])
+          .filter((g) => typeof g.name === "string" && g.name.length > 0)
+          .map((g) => (typeof g.vramBytes === "number" && g.vramBytes > 0 ? g.vramBytes : null)),
+        ramBytes: opts.machineInfo?.totalRamBytes,
+        cpuThreads: opts.machineInfo?.cpuCores,
+        machineOverlay: machineOverlay(),
+        model: recipe.model,
       });
     } catch (err) {
       return c.json(
@@ -944,8 +955,6 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       binaryPath,
       machineInfo: opts.machineInfo,
       machineOverlay: machineOverlay(),
-      sessionsPath: paths.sessionsPath,
-      clientsPath: paths.clientsPath,
       seams: opts.lifecycleSeams,
     });
     if (!result.ok) {
@@ -1149,8 +1158,6 @@ async function defaultSwitchExecutor(
     registryPath: (opts.paths ?? defaultStorePaths()).upstreamsPath,
     machineInfo: opts.machineInfo,
     machineOverlay: readGlobalConfig(opts.paths ?? defaultStorePaths()).machineOverlay,
-    sessionsPath: (opts.paths ?? defaultStorePaths()).sessionsPath,
-    clientsPath: (opts.paths ?? defaultStorePaths()).clientsPath,
     seams: opts.lifecycleSeams,
   });
   if (!result.ok) {

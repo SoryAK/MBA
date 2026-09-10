@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_RESOLVE_ENV, defaultIdeForHarness, formatClientLabel, resolveEnvContext } from "./env-context.js";
+import {
+  BARE_BOOT_ENV,
+  DEFAULT_RESOLVE_ENV,
+  bootEnvJson,
+  defaultIdeForHarness,
+  formatClientLabel,
+  isBareBootEnv,
+  overlayFolderName,
+  resolveEnvContext,
+} from "./env-context.js";
 import { hashToken, type ClientSession } from "./sessions.js";
 
 function session(partial: Partial<ClientSession> & Pick<ClientSession, "modelId" | "harness">): ClientSession {
@@ -14,8 +23,20 @@ function session(partial: Partial<ClientSession> & Pick<ClientSession, "modelId"
   };
 }
 
+describe("BARE_BOOT_ENV", () => {
+  it("is none and skips env folders", () => {
+    expect(isBareBootEnv(BARE_BOOT_ENV)).toBe(true);
+    expect(isBareBootEnv(DEFAULT_RESOLVE_ENV)).toBe(false);
+    expect(bootEnvJson(BARE_BOOT_ENV)).toEqual({
+      harness: "none",
+      ide: "none",
+      serverRuntime: "llamacpp",
+    });
+  });
+});
+
 describe("resolveEnvContext", () => {
-  it("falls back to copilot+vscode+llamacpp when unpaired", () => {
+  it("falls back to copilot+vscode+llamacpp when unpaired (connect/stage, not boot)", () => {
     expect(resolveEnvContext({ modelId: "deepseek_test" })).toEqual(DEFAULT_RESOLVE_ENV);
   });
 
@@ -61,6 +82,22 @@ describe("defaultIdeForHarness", () => {
     expect(defaultIdeForHarness("cursor")).toBe("cursor");
     expect(defaultIdeForHarness("claude-code")).toBe("cli");
     expect(defaultIdeForHarness("windsurf")).toBe("vscode");
+  });
+});
+
+describe("overlayFolderName", () => {
+  it("stays harness-only unless ide or runtime actually differs", () => {
+    expect(overlayFolderName({ harness: "cursor", ide: "cursor", serverRuntime: "llamacpp" })).toBe(
+      "cursor",
+    );
+    expect(overlayFolderName({ harness: "copilot", ide: "vscode", serverRuntime: "llamacpp" })).toBe(
+      "copilot",
+    );
+    expect(overlayFolderName({ harness: "claude-code", ide: "cli" })).toBe("claude-code");
+    expect(overlayFolderName({ harness: "copilot", ide: "cursor" })).toBe("copilot+cursor");
+    expect(
+      overlayFolderName({ harness: "cursor", ide: "cursor", serverRuntime: "ollama" }),
+    ).toBe("cursor+ollama");
   });
 });
 

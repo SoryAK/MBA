@@ -3,7 +3,9 @@
  */
 
 import { fail, formatBytes, serviceGet, servicePost, servicePostSse } from "./client.js";
-import { brand, dim, doneBox, heading, option, paint, shortenHome, BOLD } from "./style.js";
+import { brand, dim, heading, kv, paint, shortenHome, pulledLine, BOLD } from "./style.js";
+import { formatModelLine } from "./list-print.js";
+import { extraIde, harnessKind } from "../service/env-context.js";
 import {
   askTextInteractive,
   askValueInteractive,
@@ -22,25 +24,24 @@ import { harnessPickerRows } from "./harness-choices.js";
 
 function printConfig(cfg: ModelConfig): void {
   process.stdout.write(`${brand("show")}  ${paint(cfg.modelId, BOLD)}\n`);
-  process.stdout.write(`  ${dim("yaml")}         ${cfg.files.yamlPath}\n`);
-  process.stdout.write(`  ${dim("server_setup")} ${cfg.files.serverSetupPath}\n`);
+  process.stdout.write(`${kv("yaml", shortenHome(cfg.files.yamlPath), 12)}\n`);
+  process.stdout.write(`${kv("server_setup", shortenHome(cfg.files.serverSetupPath), 12)}\n`);
   if (cfg.files.blockCount !== undefined) {
-    process.stdout.write(`  ${dim("blockCount")}   ${cfg.files.blockCount}\n`);
+    process.stdout.write(`${kv("blocks", String(cfg.files.blockCount), 12)}\n`);
   }
   if (cfg.files.maxContextLength !== undefined) {
-    process.stdout.write(`  ${dim("maxContext")}   ${cfg.files.maxContextLength}\n`);
+    process.stdout.write(`${kv("max ctx", String(cfg.files.maxContextLength), 12)}\n`);
   }
   process.stdout.write("\n");
   for (const file of ["server_setup", "client"] as const) {
     const fields = cfg.fields.filter((f) => f.file === file);
-    const label = file === "server_setup" ? "server_setup (llama.cpp boot flags)" : "client (live-synced)";
-    process.stdout.write(`  ${heading(label)}\n`);
+    process.stdout.write(`  ${heading(file === "server_setup" ? "server" : "client")}\n`);
     for (const f of fields) {
-      const current = f.current === null ? "(unset)" : String(f.current);
-      const restart = f.restartRequired ? "  restart" : "";
+      const current = f.current === null ? dim("unset") : String(f.current);
+      const restart = f.restartRequired ? dim("  restart") : "";
       const hints = [f.hint, f.machineHint].filter(Boolean).join("; ");
-      const hint = hints ? `  ${hints}` : "";
-      process.stdout.write(`${option(false, f.field.padEnd(16), `${current}${restart}${hint}`)}\n`);
+      const hint = hints ? dim(`  ${hints}`) : "";
+      process.stdout.write(`${kv(f.field, `${current}${restart}${hint}`, 16)}\n`);
     }
     process.stdout.write("\n");
   }
@@ -99,9 +100,9 @@ async function listModels(baseUrl: string): Promise<ModelEntry[]> {
 }
 
 function printModelList(models: readonly ModelEntry[]): void {
+  process.stdout.write(`${brand("models")}\n`);
   for (const m of models) {
-    const loaded = m.loaded ? "  [loaded]" : "";
-    process.stdout.write(`${m.id}${m.family ? `  (${m.family})` : ""}${loaded}\n`);
+    process.stdout.write(`${formatModelLine(m)}\n`);
   }
 }
 
@@ -118,7 +119,8 @@ export async function cmdModelsList(baseUrl: string, json = false): Promise<void
     return;
   }
   if (models.length === 0) {
-    process.stdout.write("[mba] no models in the adapter tree\n");
+    process.stdout.write(`${brand("models")}\n`);
+    process.stdout.write(`  ${dim("none")}\n`);
     return;
   }
   printModelList(models);
@@ -258,13 +260,7 @@ export async function cmdModelsPull(
 
   try {
     const result = await servicePostSse<PullResult>(baseUrl, "/models/pull", body);
-    process.stdout.write(
-      doneBox("PULLED", [
-        ["id", result.resumed ? `${result.id} · resumed` : result.id],
-        ["family", result.familyCreated ? `${result.family} · new` : result.family],
-        ["next", `mba s boot ${result.id}`],
-      ]) + "\n",
-    );
+    process.stdout.write(`${pulledLine(result.id, result.family)}\n`);
     process.stdout.write(`${dim(`  ${shortenHome(result.modelDir)}`)}\n`);
   } catch (error) {
     process.stderr.write(`[mba] error: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -556,7 +552,13 @@ export async function cmdModelsConnect(
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
-  process.stdout.write(`[mba] connected ${result.modelId} as ${result.harness}\n`);
+  process.stdout.write(`[mba] connected ${result.modelId}\n`);
+  const extra = extraIde(result.harness, ide);
+  const extraBit = extra ? `  · ${extra}` : "";
+  const file = result.stage && "envelope" in result.stage ? result.stage.envelope : undefined;
+  process.stdout.write(
+    `    ${paint(result.harness, BOLD)}  ${dim(harnessKind(result.harness))}${extraBit}   ${dim(file ?? "—")}\n`,
+  );
   process.stdout.write(`[mba] token  ${result.token}\n`);
   process.stdout.write(`[mba] point the client at ${baseUrl}/v1  (Authorization: Bearer <token>)\n`);
   if ("envelope" in result.stage && result.stage.action === "wrote") {

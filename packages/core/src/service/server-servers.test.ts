@@ -258,6 +258,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
   // --- POST /servers/resolve ------------------------------------------------
 
   it("POST /servers/resolve returns the effective flags without booting", async () => {
+    writeFileSync(modelFile, Buffer.alloc(64));
     const app = createMbaServiceApp({ paths, adapterDir });
     const res = await app.request("/servers/resolve", {
       method: "POST",
@@ -280,6 +281,11 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(body.cliArgs).not.toContain("-m");
     expect(body.warmupTokens).toBeDefined();
     expect(Array.isArray((body as { binaries?: unknown }).binaries)).toBe(true);
+    const facts = body as { cpuThreads?: number; model?: { fileBytes?: number } };
+    expect(facts.model?.fileBytes).toBeGreaterThan(0);
+    expect((body as { machineOverlay?: string }).machineOverlay).toBe("enforce");
+    expect((body as { envAttached?: boolean }).envAttached).toBe(false);
+    expect((body as { env?: { harness: string } }).env?.harness).toBe("none");
   });
 
   it("POST /servers/resolve appends extraArgs from server_setup.json (ADR-0100)", async () => {

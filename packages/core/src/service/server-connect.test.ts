@@ -256,8 +256,16 @@ describe("POST /connect", () => {
     };
     expect(st.pairing.sessions).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ modelId: "qwen3-coder-30b", card: false }),
-        expect.objectContaining({ modelId: "other-coder", card: true }),
+        expect.objectContaining({
+          modelId: "qwen3-coder-30b",
+          card: false,
+          envelope: ".cursor/rules/mba.mdc",
+        }),
+        expect.objectContaining({
+          modelId: "other-coder",
+          card: true,
+          envelope: ".cursor/rules/mba.mdc",
+        }),
       ]),
     );
   });

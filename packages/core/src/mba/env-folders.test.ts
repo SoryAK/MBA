@@ -151,6 +151,34 @@ describe("environment-folder resolution (ADR-0091)", () => {
     expect(flags?.warmupTokens).toBe(777);
   });
 
+  it("skips environment folders when applyEnvFolders is false (bare boot)", () => {
+    const adapters = join(dir, "mba", "adapters");
+    buildTree(adapters);
+
+    const resolved = resolveMbaConfig(join(dir, "mba"), CTX, { applyEnvFolders: false });
+    const flags = resolved.server["llama.cpp"];
+
+    expect(flags?.ctxSize).toBe(100000);
+    expect(flags?.gpuLayers).toBe(99);
+    expect(flags?.threads).toBeUndefined();
+    expect(flags?.warmupTokens).toBeUndefined();
+  });
+
+  it("does not match copilot overlays when harness is none", () => {
+    const adapters = join(dir, "mba", "adapters");
+    buildTree(adapters);
+
+    const resolved = resolveMbaConfig(join(dir, "mba"), {
+      ...CTX,
+      harness: "none",
+      ide: "none",
+    });
+    const flags = resolved.server["llama.cpp"];
+    expect(flags?.ctxSize).toBe(100000);
+    expect(flags?.threads).toBeUndefined();
+    expect(flags?.warmupTokens).toBeUndefined();
+  });
+
   it("selects the exact environment folder by harness-ide-runtime segments", () => {
     const adapters = join(dir, "mba", "adapters");
     buildTree(adapters);

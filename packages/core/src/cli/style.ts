@@ -104,6 +104,19 @@ export function doneBox(title: string, rows: ReadonlyArray<readonly [string, str
   ].join("\n");
 }
 
+/** One-line boot result. Port already sat on the preview header. */
+export function bootedLine(id: string, pid?: number, next?: string): string {
+  const pidBit = pid !== undefined ? `  pid ${pid}` : "";
+  const nextBit = next ?? `mba s logs ${id}`;
+  return `  ${paint("BOOTED", BOLD, GRN)}  ${paint(id, BOLD)}${pidBit}    ${dim("next")}  ${nextBit}`;
+}
+
+/** One-line pull result. Path prints on the next line. */
+export function pulledLine(id: string, family?: string): string {
+  const familyBit = family ? `  ${dim(family)}` : "";
+  return `  ${paint("PULLED", BOLD, GRN)}  ${paint(id, BOLD)}${familyBit}    ${dim("next")}  mba s boot ${id}`;
+}
+
 export const HIDE_CURSOR = "\x1b[?25l";
 export const SHOW_CURSOR = "\x1b[?25h";
 

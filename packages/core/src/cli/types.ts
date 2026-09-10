@@ -41,6 +41,16 @@ export interface ServerEntry {
   readonly duplicate?: boolean;
 }
 
+/** One pairing row from GET /status (`pairing.sessions`). */
+export interface PairingSession {
+  readonly modelId: string;
+  readonly harness: string;
+  readonly ide?: string;
+  readonly projectRoot: string;
+  readonly card?: boolean;
+  readonly envelope?: string;
+}
+
 export interface BootResult {
   readonly id: string;
   readonly serverType: string;

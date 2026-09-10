@@ -18,7 +18,7 @@ Then open the URL it prints (usually `http://localhost:5173`). Views: `/view/ind
 | --- | --- |
 | `index` | Landscape |
 | `house` / `pull` | Store: pull, scaffold, the two cards |
-| `boot` | Paired client env (else Copilot/VS Code) → spawn llama-server |
+| `boot` | Family + model dials only → spawn llama-server. Connect attaches a client. |
 | `pairing` | `sessions.json` (token hash) and `clients.json` (added envelopes) |
 | `clients-landscape` / `connect` | Stage card, mint token, proxy requires Bearer. Add a client is name + envelope. |
 

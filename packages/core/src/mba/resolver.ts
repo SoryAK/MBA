@@ -62,6 +62,11 @@ export interface MbaResolverOptions {
    * If omitted, built-in defaults are used.
    */
   readonly globalBcbConfig?: ToolCircuitBreakerConfig;
+  /**
+   * When false, skip `environments/` overlay folders (bare boot). Default
+   * true: stage, proxy, and an explicit `--harness` still merge those dials.
+   */
+  readonly applyEnvFolders?: boolean;
 }
 
 /**
@@ -291,7 +296,9 @@ export function resolveMbaConfig(
     // adapters (family / model) carry an environments/ folder; a legacy env
     // adapter IS the environment, so it has none. The folder holds only the
     // binding files it overrides; absent files inherit from lower rungs.
-    if (!isLegacyEnvAdapter) {
+    // Bare boot skips this rung so a leftover pairing (or Copilot default)
+    // cannot silently rewrite server_setup / TCB.
+    if (!isLegacyEnvAdapter && options.applyEnvFolders !== false) {
       const envDir = selectEnvironmentFolder(scopeDir, enrichedCtx);
       if (envDir) {
         for (const [file, fileName] of ENV_BINDING_FILES) {

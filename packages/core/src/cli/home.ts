@@ -13,9 +13,8 @@ export async function cmdHome(baseUrl: string, assumeNo: boolean): Promise<void>
       { label: "clients", value: "clients", preview: [["do", "add a client, pair, list, revoke"]] },
       { label: "machine", value: "machine", preview: [["do", "enforce / warn / off"]] },
       { label: "status", value: "status", preview: [["do", "service, loaded models, overlay"]] },
-      { label: "quit", value: "quit", preview: [["do", "leave mba"]] },
     ]);
-    if (pick === null || pick === "quit") {
+    if (pick === null) {
       process.stdout.write("[mba] done\n");
       return;
     }
