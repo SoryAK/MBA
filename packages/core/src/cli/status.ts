@@ -1,3 +1,4 @@
+import { formatClientLabel } from "../service/env-context.js";
 import { resolveServiceUrl, serviceGet } from "./client.js";
 import { brand, dim, heading, kv, paint, shortenHome, BOLD, GRN, RED } from "./style.js";
 import type { ModelEntry } from "./interactive.js";
@@ -10,6 +11,7 @@ interface PublicSession {
   readonly ide?: string;
   readonly projectRoot: string;
   readonly createdAt: string;
+  readonly card?: boolean;
 }
 
 interface StatusBody {
@@ -29,9 +31,10 @@ function printServerRow(s: ServerEntry): void {
 }
 
 function printSessionRow(s: PublicSession): void {
-  const who = s.ide ? `${s.harness}+${s.ide}` : s.harness;
+  const who = formatClientLabel(s.harness, s.ide);
+  const tag = (s.card ? "card" : "pair").padEnd(4);
   process.stdout.write(
-    `    ${paint(who.padEnd(18), BOLD)}  ${s.modelId.padEnd(22)}  ${dim(shortenHome(s.projectRoot))}\n`,
+    `    ${paint(who.padEnd(18), BOLD)}  ${s.modelId.padEnd(22)}  ${s.card ? paint(tag, GRN) : dim(tag)}  ${dim(shortenHome(s.projectRoot))}\n`,
   );
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_RESOLVE_ENV, defaultIdeForHarness, resolveEnvContext } from "./env-context.js";
+import { DEFAULT_RESOLVE_ENV, defaultIdeForHarness, formatClientLabel, resolveEnvContext } from "./env-context.js";
 import { hashToken, type ClientSession } from "./sessions.js";
 
 function session(partial: Partial<ClientSession> & Pick<ClientSession, "modelId" | "harness">): ClientSession {
@@ -61,5 +61,19 @@ describe("defaultIdeForHarness", () => {
     expect(defaultIdeForHarness("cursor")).toBe("cursor");
     expect(defaultIdeForHarness("claude-code")).toBe("cli");
     expect(defaultIdeForHarness("windsurf")).toBe("vscode");
+  });
+});
+
+describe("formatClientLabel", () => {
+  it("drops a redundant or default ide", () => {
+    expect(formatClientLabel("cursor", "cursor")).toBe("cursor");
+    expect(formatClientLabel("copilot", "vscode")).toBe("copilot");
+    expect(formatClientLabel("claude-code", "cli")).toBe("claude-code");
+    expect(formatClientLabel("cursor")).toBe("cursor");
+    expect(formatClientLabel("windsurf", "vscode")).toBe("windsurf");
+  });
+
+  it("keeps a non-default ide", () => {
+    expect(formatClientLabel("copilot", "cursor")).toBe("copilot+cursor");
   });
 });

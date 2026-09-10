@@ -7,7 +7,9 @@
  * gates on DNA (Phase 3).
  *
  * The service is OFF by default: until `MBA_MODEL_SWITCH=on` is set on the
- * service, this tool returns the 409 "disabled" message.
+ * service, this tool returns the 409 "disabled" message. A successful
+ * ensure also restages this model's instructions card in every project
+ * the model is already paired to.
  */
 import {
   fetchEnsureModel,

@@ -3,7 +3,7 @@
  * operator-defined clients in mba/clients.json.
  */
 
-import { builtInEnvelopeBindings, envelopeRelativePath } from "../mba/envelope.js";
+import { builtInEnvelopeBindings } from "../mba/envelope.js";
 import { defaultStorePaths } from "../service/config-store.js";
 import { readOperatorClients } from "../service/operator-clients.js";
 
@@ -37,7 +37,7 @@ export function harnessPickerRows(): Array<{
     label: h.source === "added" ? `${h.name} (added)` : h.name,
     value: h.name,
     preview: [
-      ["envelope", envelopeRelativePath(h.name, undefined, [{ name: h.name, envelope: h.envelope }]) ?? h.envelope],
+      ["envelope", h.envelope],
       ["source", h.source],
     ] as const,
   }));

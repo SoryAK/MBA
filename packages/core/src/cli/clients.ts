@@ -2,6 +2,7 @@
  * Client plane: list paired sessions, add operator clients, connect, revoke.
  */
 
+import { formatClientLabel } from "../service/env-context.js";
 import { fail, serviceGet, servicePost } from "./client.js";
 import { listHarnessChoices } from "./harness-choices.js";
 import { askValueInteractive, pickLabeledInteractive } from "./interactive.js";
@@ -20,6 +21,7 @@ interface PublicSession {
   readonly ide?: string;
   readonly projectRoot: string;
   readonly createdAt: string;
+  readonly card?: boolean;
 }
 
 async function listSessions(baseUrl: string): Promise<readonly PublicSession[]> {
@@ -30,9 +32,10 @@ async function listSessions(baseUrl: string): Promise<readonly PublicSession[]> 
 }
 
 function printSession(s: PublicSession): void {
-  const who = s.ide ? `${s.harness}+${s.ide}` : s.harness;
+  const who = formatClientLabel(s.harness, s.ide);
+  const tag = (s.card ? "card" : "pair").padEnd(4);
   process.stdout.write(
-    `    ${paint(who.padEnd(18), BOLD)}  ${s.modelId.padEnd(22)}  ${dim(shortenHome(s.projectRoot))}\n`,
+    `    ${paint(who.padEnd(18), BOLD)}  ${s.modelId.padEnd(22)}  ${s.card ? paint(tag, BOLD) : dim(tag)}  ${dim(shortenHome(s.projectRoot))}\n`,
   );
 }
 

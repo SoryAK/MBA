@@ -466,7 +466,14 @@ interface ConnectResult {
   readonly harness: string;
   readonly projectRoot: string;
   readonly stage:
-    | { readonly action: string; readonly reason?: string; readonly envelope?: string; readonly dest?: string }
+    | {
+        readonly action: string;
+        readonly reason?: string;
+        readonly envelope?: string;
+        readonly dest?: string;
+        readonly owner?: string;
+        readonly replaced?: string;
+      }
     | { readonly action: "conflict"; readonly error: string };
 }
 
@@ -554,6 +561,11 @@ export async function cmdModelsConnect(
   process.stdout.write(`[mba] point the client at ${baseUrl}/v1  (Authorization: Bearer <token>)\n`);
   if ("envelope" in result.stage && result.stage.action === "wrote") {
     process.stdout.write(`[mba] staged → ${result.stage.envelope}\n`);
+    if (result.stage.replaced) {
+      process.stdout.write(
+        `[mba] envelope now ${result.modelId} (replaced ${result.stage.replaced})\n`,
+      );
+    }
   } else if ("error" in result.stage) {
     process.stdout.write(`[mba] card not overwritten — ${result.stage.error}\n`);
   }

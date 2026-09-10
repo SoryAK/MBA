@@ -6,7 +6,7 @@
  * historical default (copilot + vscode + llamacpp).
  */
 
-import { normalizeHarness } from "../mba/envelope.js";
+import { compactHarnessKey, normalizeHarness } from "../mba/envelope.js";
 import type { RecipeResolutionContext } from "./recipe-resolution.js";
 import type { ClientSession } from "./sessions.js";
 import type { OperatorClient } from "./operator-clients.js";
@@ -23,6 +23,18 @@ export function defaultIdeForHarness(harness: string): string {
   if (known === "cursor") return "cursor";
   if (known === "claude-code") return "cli";
   return "vscode";
+}
+
+/**
+ * Status/list label. Hide a redundant ide (`cursor+cursor`) and the shipped
+ * default (`copilot+vscode` → `copilot`). Keep `harness+ide` when the ide
+ * is a real extra.
+ */
+export function formatClientLabel(harness: string, ide?: string): string {
+  if (!ide) return harness;
+  if (compactHarnessKey(ide) === compactHarnessKey(harness)) return harness;
+  if (ide === defaultIdeForHarness(harness)) return harness;
+  return `${harness}+${ide}`;
 }
 
 function sessionForModel(

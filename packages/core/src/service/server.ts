@@ -64,7 +64,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   defaultStorePaths,
@@ -91,7 +91,8 @@ import {
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
 import { compactHarnessKey } from "../mba/envelope.js";
-import { stageModelCard } from "./stage-model-card.js";
+import { readEnvelopeOwner } from "../mba/stage-instructions.js";
+import { stageModelCard, restageSlotsAfterRevoke, restagePairedSlotsForModel } from "./stage-model-card.js";
 import { defaultIdeForHarness } from "./env-context.js";
 import { operatorEnvelopeBindings, readOperatorClients } from "./operator-clients.js";
 import {
@@ -102,6 +103,7 @@ import {
   publicSessions,
   readSessions,
   revokeSessions,
+  sessionsSharingSlot,
   upsertSession,
   writeSessions,
 } from "./sessions.js";
@@ -296,13 +298,22 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   app.get("/status", (c) => {
     const cfg = readGlobalConfig(paths);
     const sessions = readSessions(paths.sessionsPath);
+    const extras = operatorEnvelopeBindings(paths.clientsPath);
+    const ownerBySlot = new Map<string, string | undefined>();
+    const sessionsOut = publicSessions(sessions).map((s) => {
+      const key = `${s.harness}\0${resolve(s.projectRoot)}`;
+      if (!ownerBySlot.has(key)) {
+        ownerBySlot.set(key, readEnvelopeOwner(s.projectRoot, s.harness, extras, s.ide));
+      }
+      return { ...s, card: ownerBySlot.get(key) === s.modelId };
+    });
     return c.json({
       version: cfg.version,
       uptimeMs: Date.now() - startedAt,
       pairing: {
         active: pairingActive(sessions),
         count: sessions.length,
-        sessions: publicSessions(sessions),
+        sessions: sessionsOut,
       },
       paths: {
         baseDir: paths.baseDir,
@@ -366,7 +377,13 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (result.status === "failed") {
       return c.json(result, 500);
     }
-    return c.json(result);
+    const stage = restagePairedSlotsForModel({
+      adapterDir: opts.adapterDir ?? "",
+      modelId: result.id,
+      sessions: readSessions(paths.sessionsPath),
+      envelopes: operatorEnvelopeBindings(paths.clientsPath),
+    });
+    return c.json(stage.length > 0 ? { ...result, stage } : result);
   });
 
   app.post("/models/pull", async (c) => {
@@ -525,6 +542,13 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       );
     }
     const envelopes = operatorEnvelopeBindings(paths.clientsPath);
+    const slotPeers = sessionsSharingSlot(
+      readSessions(paths.sessionsPath),
+      input.harness,
+      input.projectRoot,
+    )
+      .map((s) => s.modelId)
+      .filter((id) => id !== input.id);
     const result = stageModelCard({
       adapterDir: opts.adapterDir ?? "",
       modelId: input.id,
@@ -532,6 +556,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       harness: input.harness,
       ide: typeof input.ide === "string" && input.ide.length > 0 ? input.ide : undefined,
       envelopes,
+      slotPeers,
     });
     if (!result.ok) {
       const status =
@@ -593,6 +618,14 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       )?.ide ??
       defaultIdeForHarness(harness);
     const envelopes = operatorEnvelopeBindings(paths.clientsPath);
+    const previousOwner = readEnvelopeOwner(input.projectRoot, harness, envelopes, ide);
+    const slotPeers = sessionsSharingSlot(
+      readSessions(paths.sessionsPath),
+      harness,
+      input.projectRoot,
+    )
+      .map((s) => s.modelId)
+      .filter((id) => id !== input.id);
     const staged = stageModelCard({
       adapterDir: opts.adapterDir ?? "",
       modelId: input.id,
@@ -600,6 +633,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       harness,
       ide,
       envelopes,
+      slotPeers,
     });
     if (!staged.ok && staged.code !== "conflict") {
       const status = staged.code === "unknown-model" ? 404 : 400;
@@ -628,6 +662,13 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
             reason: staged.reason,
             envelope: staged.envelope,
             dest: staged.dest,
+            owner: readEnvelopeOwner(input.projectRoot, harness, envelopes, ide) ??
+              (staged.action === "wrote" ? input.id : previousOwner),
+            ...(previousOwner &&
+            previousOwner !== input.id &&
+            staged.action === "wrote"
+              ? { replaced: previousOwner }
+              : {}),
           }
         : { action: "conflict", error: staged.error, code: staged.code },
     });
@@ -655,12 +696,20 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (input.projectRoot !== undefined && typeof input.projectRoot !== "string") {
       return c.json({ error: "body.projectRoot must be a string when set" }, 400);
     }
-    const next = revokeSessions(readSessions(paths.sessionsPath), {
+    const before = readSessions(paths.sessionsPath);
+    const next = revokeSessions(before, {
       modelId: typeof input.id === "string" ? input.id : undefined,
       harness: typeof input.harness === "string" ? input.harness : undefined,
       projectRoot: typeof input.projectRoot === "string" ? input.projectRoot : undefined,
     });
+    const revoked = before.filter((s) => !next.some((n) => n.id === s.id));
     writeSessions(paths.sessionsPath, next);
+    restageSlotsAfterRevoke({
+      adapterDir: opts.adapterDir ?? "",
+      envelopes: operatorEnvelopeBindings(paths.clientsPath),
+      remaining: next,
+      revoked,
+    });
     return c.json({ pairing: { active: pairingActive(next), count: next.length } });
   });
 

@@ -163,6 +163,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description:
           "Ask the MBA service to make sure a specific model is the loaded one " +
           "(ADR-0093). Idempotent: if the model is already loaded this is a no-op. " +
+          "Also restages that model's instructions card in projects it is paired to. " +
           "Model switching is OFF by default — until the service is armed with " +
           "MBA_MODEL_SWITCH=on, this returns a 409 'disabled' error. Unknown model " +
           "ids return 404. This is the user-triggered switch; the proxy never " +

@@ -7,10 +7,12 @@ import {
   bearerToken,
   hashToken,
   mintToken,
+  newestSession,
   pairingActive,
   publicSessions,
   readSessions,
   revokeSessions,
+  sessionsSharingSlot,
   upsertSession,
   writeSessions,
   type ClientSession,
@@ -115,6 +117,25 @@ describe("sessions", () => {
     ];
     expect(revokeSessions(rows, { modelId: "a" }).map((s) => s.modelId)).toEqual(["b"]);
     expect(revokeSessions(rows, {})).toEqual([]);
+  });
+
+  it("groups sessions that share a harness and project", () => {
+    const a = session({ modelId: "deepseek_test", token: "t1", id: "1" });
+    const b = session({
+      modelId: "nomic-embed-text-v1.5",
+      token: "t2",
+      id: "2",
+      createdAt: "2026-09-09T02:00:00.000Z",
+    });
+    const other = session({
+      modelId: "nomic-embed-text-v1.5",
+      token: "t3",
+      id: "3",
+      projectRoot: "/tmp/other",
+    });
+    const onSlot = sessionsSharingSlot([a, b, other], "cursor", "/tmp/proj");
+    expect(onSlot.map((s) => s.modelId)).toEqual(["deepseek_test", "nomic-embed-text-v1.5"]);
+    expect(newestSession(onSlot)?.modelId).toBe("nomic-embed-text-v1.5");
   });
 
   it("parses a Bearer token", () => {

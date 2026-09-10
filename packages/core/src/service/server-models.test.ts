@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMbaServiceApp } from "./server.js";
 import { defaultStorePaths } from "./config-store.js";
 import { writeRegistry } from "./upstream-registry.js";
+import { hashToken, writeSessions } from "./sessions.js";
 
 function writeAdapter(
   dir: string,
@@ -181,6 +182,70 @@ describe("mba service model plane (ADR-0093 Phase 1)", () => {
       body: JSON.stringify({ nope: true }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("POST /models/ensure restages the paired envelope on the same trigger", async () => {
+    const mbaDir = mkdtempSync(join(tmpdir(), "mba-ensure-card-"));
+    const nestedAdapters = join(mbaDir, "adapters");
+    const modelDir = join(nestedAdapters, "qwen", "qwen3-coder", "qwen3-coder-30b");
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(
+      join(modelDir, "qwen3-coder-30b.yaml"),
+      `apiVersion: mba.ai/v1alpha1
+kind: ModelBehavioralAdapter
+metadata:
+  id: qwen3-coder-30b
+  name: qwen3-coder-30b
+identity:
+  model:
+    name: qwen3-coder-30b
+    file: "./m.gguf"
+bindings:
+  instructions: "./instructions.md"
+`,
+    );
+    writeFileSync(join(modelDir, "instructions.md"), "# qwen card\n");
+    writeFileSync(join(modelDir, "m.gguf"), "gguf");
+    const project = join(mbaDir, "project");
+    mkdirSync(project);
+    writeSessions(paths.sessionsPath, [
+      {
+        id: "s1",
+        modelId: "qwen3-coder-30b",
+        harness: "cursor",
+        projectRoot: project,
+        tokenHash: hashToken("mba.test"),
+        createdAt: "2026-09-09T00:00:00.000Z",
+      },
+    ]);
+    const app = createMbaServiceApp({
+      paths,
+      adapterDir: nestedAdapters,
+      upstreamUrl: "http://127.0.0.1:8080",
+      switchEnabled: true,
+      switchExecutor: vi.fn(),
+      fetch: modelsFetch([join(modelDir, "m.gguf")]),
+    });
+    const res = await app.request("/models/ensure", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "qwen3-coder-30b" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      id: string;
+      stage: Array<{ action: string; owner?: string; envelope?: string }>;
+    };
+    expect(body.status).toBe("loaded");
+    expect(body.stage).toEqual([
+      expect.objectContaining({
+        action: "wrote",
+        owner: "qwen3-coder-30b",
+        envelope: ".cursor/rules/mba.mdc",
+      }),
+    ]);
+    expect(readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8")).toContain("# qwen card");
   });
 
   describe("probe target resolution (ADR-0097 Phase 1)", () => {
