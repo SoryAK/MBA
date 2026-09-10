@@ -7,7 +7,7 @@ import { serviceGet, servicePost } from "./client.js";
 import { askYesNoInteractive } from "./interactive.js";
 import { resolveModelFile } from "./resolve-model.js";
 import { selectRestartTargets } from "./restart-selection.js";
-import { doneBox } from "./style.js";
+import { bootedLine } from "./style.js";
 import type { BootResult, ServerEntry, SetResult } from "./types.js";
 
 export async function askYesNo(question: string): Promise<boolean> {
@@ -46,14 +46,7 @@ async function restartServer(
   }
   process.stdout.write(`[mba] rebooting ${modelId} on port ${port} (waits for health)…\n`);
   const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", { modelFile: file, port });
-  process.stdout.write(
-    doneBox("BOOTED", [
-      ["id", entry.id],
-      ["port", String(entry.port)],
-      ["pid", entry.pid !== undefined ? String(entry.pid) : "-"],
-      ["next", `mba s logs ${entry.id}`],
-    ]) + "\n",
-  );
+  process.stdout.write(`${bootedLine(entry.id, entry.pid)}\n`);
 }
 
 export async function handleRestartPrompt(

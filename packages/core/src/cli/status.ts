@@ -1,41 +1,20 @@
-import { formatClientLabel } from "../service/env-context.js";
 import { resolveServiceUrl, serviceGet } from "./client.js";
-import { brand, dim, heading, kv, paint, shortenHome, BOLD, GRN, RED } from "./style.js";
+import { formatPairedSlotLines } from "./slot-print.js";
+import { formatServerLine } from "./list-print.js";
+import { brand, dim, heading, kv, paint, GRN, RED } from "./style.js";
 import type { ModelEntry } from "./interactive.js";
-import type { ServerEntry } from "./types.js";
-
-interface PublicSession {
-  readonly id: string;
-  readonly modelId: string;
-  readonly harness: string;
-  readonly ide?: string;
-  readonly projectRoot: string;
-  readonly createdAt: string;
-  readonly card?: boolean;
-}
+import type { PairingSession, ServerEntry } from "./types.js";
 
 interface StatusBody {
   readonly pairing?: {
     readonly active: boolean;
     readonly count: number;
-    readonly sessions?: readonly PublicSession[];
+    readonly sessions?: readonly PairingSession[];
   };
 }
 
 function printServerRow(s: ServerEntry): void {
-  const health = s.healthy ? paint("ok", GRN) : paint("down", RED);
-  const pid = s.pid !== undefined ? String(s.pid) : "-";
-  process.stdout.write(
-    `    ${paint(s.id.padEnd(18), BOLD)}  ${String(s.port).padEnd(5)}  ${pid.padEnd(7)}  ${health}  ${dim(s.modelFile)}\n`,
-  );
-}
-
-function printSessionRow(s: PublicSession): void {
-  const who = formatClientLabel(s.harness, s.ide);
-  const tag = (s.card ? "card" : "pair").padEnd(4);
-  process.stdout.write(
-    `    ${paint(who.padEnd(18), BOLD)}  ${s.modelId.padEnd(22)}  ${s.card ? paint(tag, GRN) : dim(tag)}  ${dim(shortenHome(s.projectRoot))}\n`,
-  );
+  process.stdout.write(`${formatServerLine(s)}\n`);
 }
 
 export async function cmdStatus(json: boolean): Promise<void> {
@@ -120,19 +99,19 @@ export async function cmdStatus(json: boolean): Promise<void> {
     : dim("off");
   process.stdout.write(`${kv("pairing", pairingLabel)}\n`);
 
-  process.stdout.write(`\n  ${heading("clients")}`);
+  process.stdout.write(`\n  ${heading("clients")}\n`);
   if (sessions.length === 0) {
-    process.stdout.write(`  ${dim("none")}\n`);
+    process.stdout.write(`    ${dim("none")}\n`);
   } else {
-    process.stdout.write(`\n`);
-    for (const sess of sessions) printSessionRow(sess);
+    for (const line of formatPairedSlotLines(sessions)) {
+      process.stdout.write(`${line}\n`);
+    }
   }
 
-  process.stdout.write(`\n  ${heading("servers")}`);
+  process.stdout.write(`\n  ${heading("servers")}\n`);
   if (servers.length === 0) {
-    process.stdout.write(`  ${dim("none")}\n`);
+    process.stdout.write(`    ${dim("none")}\n`);
     return;
   }
-  process.stdout.write(`\n`);
   for (const s of servers) printServerRow(s);
 }

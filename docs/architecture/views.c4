@@ -51,16 +51,16 @@ views {
 
   dynamic view boot {
     title "2 — Boot the model"
-    description "Paired client supplies harness+ide+runtime. No pairing → Copilot + VS Code + llama.cpp. Env folders overlay dials, not instructions.md."
+    description "Family + model dials only. No pairing overlay. The boot card tells the operator to mba connect if they want a client attached."
     variant sequence
 
     operator -> mba.cli "mba s boot <id>"
-    mba.cli -> mba.service "POST boot"
-    mba.service -> mba.state.sessions "newest pairing for this model"
-    mba.service -> mba.resolver "family, model, then env folder"
+    mba.cli -> mba.service "POST /servers/resolve then POST /servers/boot"
+    mba.service -> mba.resolver "family + model (skip environments/)"
     mba.resolver -> mba.store "yaml, bcb, tcb, server_setup"
     mba.service -> llama "spawn llama-server (ctx, GPU, slot-save-path)"
     mba.service -> mba.store.kv "use existing slot dirs"
+    mba.cli -> operator "BOOTED · next mba connect <id>"
   }
 
   dynamic view connect {

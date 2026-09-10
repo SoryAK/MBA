@@ -110,6 +110,8 @@ and **`POST /models/pull`** (service route, same parameters) perform:
    (`family.yaml` + empty binding files + the same two empty markdown files).
    Family markdown is the default; the model's files replace it. Live
    injection of instructions is a later cut — this cut only stores the files.
+   Pull does **not** create `environments/` folders (ADR-0091: overlays are
+   sparse; a shelf exists only when that client has extra dials).
 
 New modules in `@mba-ai/core` (`src/model/`):
 

@@ -49,6 +49,86 @@ export function pairCliArgs(args: readonly string[]): FlagPair[] {
   return out;
 }
 
+function pairFor(pairs: readonly FlagPair[], flags: readonly string[]): FlagPair | undefined {
+  return pairs.find((p) => flags.includes(p.flag));
+}
+
+const USUAL_KV = "q8_0";
+
+/** Hide shipped-default flags from the boot card (--jinja, kv q8_0). */
+export function isUsualBootFlag(pair: FlagPair, all: readonly FlagPair[]): boolean {
+  if (pair.flag === "--jinja" && pair.value === "on") return true;
+  const kvFlags = new Set(["-ctk", "-ctv", "--cache-type-k", "--cache-type-v"]);
+  if (!kvFlags.has(pair.flag)) return false;
+  const k = pairFor(all, ["-ctk", "--cache-type-k"])?.value ?? USUAL_KV;
+  const v = pairFor(all, ["-ctv", "--cache-type-v"])?.value ?? USUAL_KV;
+  return k === USUAL_KV && v === USUAL_KV;
+}
+
+/**
+ * Dense boot dials. Grouped tables stay in `groupFlagPairs` for tests;
+ * the TTY card prints these lines instead.
+ */
+export function compactBootLines(pairs: readonly FlagPair[]): string[] {
+  const used = new Set<string>();
+  const take = (flags: readonly string[]): FlagPair | undefined => {
+    const p = pairFor(pairs, flags);
+    if (p) used.add(p.flag);
+    return p;
+  };
+
+  const ctx = take(["--ctx-size", "-c"]);
+  const ngl = take(["-ngl", "--n-gpu-layers", "--gpu-layers"]);
+  const threads = take(["--threads"]);
+  const flash = take(["--flash-attn", "-fa"]);
+  const parallel = take(["--parallel"]);
+  const reuse = take(["--cache-reuse"]);
+  const ram = take(["--cache-ram"]);
+  const ctk = take(["-ctk", "--cache-type-k"]);
+  const ctv = take(["-ctv", "--cache-type-v"]);
+  const reason = take(["--reasoning-budget"]);
+  const preserve = take(["--reasoning-preserve"]);
+  const warmup = take(["--warmup"]);
+  const noWarmup = take(["--no-warmup"]);
+
+  const context: string[] = [];
+  if (ctx) context.push(`ctx ${ctx.value}`);
+  if (ngl) context.push(`ngl ${ngl.value}`);
+  if (threads) context.push(`threads ${threads.value}`);
+  if (flash) context.push(`flash ${flash.value === "on" ? "on" : flash.value}`);
+  if (parallel) context.push(`parallel ${parallel.value}`);
+
+  const cache: string[] = [];
+  if (reuse) cache.push(`cache ${reuse.value}`);
+  if (ram) cache.push(`ram ${ram.value}`);
+  const k = ctk?.value;
+  const v = ctv?.value;
+  const usualKv =
+    (!k && !v) ||
+    ((k ?? USUAL_KV) === USUAL_KV && (v ?? USUAL_KV) === USUAL_KV);
+  if (!usualKv) {
+    cache.push(`kv ${[k, v].filter(Boolean).join("/")}`);
+  }
+
+  const thinking: string[] = [];
+  if (reason) thinking.push(`reason ${reason.value}`);
+  if (preserve && preserve.value === "on") thinking.push("preserve");
+  else if (preserve) thinking.push(`preserve ${preserve.value}`);
+  if (noWarmup) thinking.push("no-warmup");
+  else if (warmup) thinking.push("warmup");
+
+  const other = pairs
+    .filter((p) => !used.has(p.flag) && !isUsualBootFlag(p, pairs))
+    .map((p) => (p.value === "on" ? p.flag : `${p.flag} ${p.value}`));
+
+  const lines: string[] = [];
+  if (context.length > 0) lines.push(context.join("  "));
+  if (cache.length > 0) lines.push(cache.join("  "));
+  if (thinking.length > 0) lines.push(thinking.join("  "));
+  if (other.length > 0) lines.push(`other  ${other.join("  ")}`);
+  return lines;
+}
+
 export function groupFlagPairs(pairs: readonly FlagPair[]): FlagGroup[] {
   const buckets = new Map<string, FlagPair[]>();
   for (const g of GROUP_FLAGS) buckets.set(g.name, []);

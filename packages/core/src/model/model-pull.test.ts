@@ -140,6 +140,7 @@ describe("pullModel", () => {
       expect(readFileSync(join(familyDir, "notes.md"), "utf8")).toBe("");
       expect(fam.bindings.instructions).toBe("./instructions.md");
       expect(fam.bindings.notes).toBe("./notes.md");
+      expect(existsSync(join(modelDir, "environments"))).toBe(false);
     } finally {
       rmSync(store, { recursive: true, force: true });
     }

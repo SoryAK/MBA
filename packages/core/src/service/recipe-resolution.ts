@@ -3,12 +3,14 @@
  *
  * Both the one-shot `resolve-server-recipe` CLI (sourced by the legacy
  * external boot script) and the in-daemon `resolveBootRecipe` (server plane)
- * need the SAME effective recipe for a weights file — the 4-rung merge the proxy uses at
- * runtime. Before this extraction the two entry points each re-implemented the
- * chain (catalog lookup → declared identity → `resolveMbaConfig` →
- * `sanitizeLlamaCppServerFlags` → `buildLlamaServerFlags`), so a fix to one
- * could silently drift from the other. This module is the single source of the
- * chain; both entry points are now thin wrappers over `resolveRecipe`.
+ * need the SAME effective recipe for a weights file. Boot passes a bare
+ * env (`applyEnvFolders: false`); an explicit harness still runs the 4-rung
+ * merge the proxy uses at request time. Before this extraction the two
+ * entry points each re-implemented the chain (catalog lookup → declared
+ * identity → `resolveMbaConfig` → `sanitizeLlamaCppServerFlags` →
+ * `buildLlamaServerFlags`), so a fix to one could silently drift from the
+ * other. This module is the single source of the chain; both entry points
+ * are now thin wrappers over `resolveRecipe`.
  *
  * Pure-ish: fs I/O is confined to the catalog + adapter-YAML reads. It throws
  * when no adapter under `adapterDir` declares `modelFile` — each wrapper maps
@@ -34,6 +36,8 @@ export interface RecipeResolutionContext {
   readonly harness: string;
   readonly ide: string;
   readonly serverRuntime: string;
+  /** When false, skip `environments/` overlays. Omit to apply them. */
+  readonly applyEnvFolders?: boolean;
 }
 
 /** The fully-resolved recipe for one weights file. */
@@ -52,6 +56,11 @@ export interface ResolvedRecipe {
   readonly declaredName?: string;
   /** Declared `identity.model.family`. */
   readonly declaredFamily?: string;
+  /** YAML `client.vision` / `client.toolCalling` when declared. */
+  readonly client?: {
+    readonly vision?: boolean;
+    readonly toolCalling?: boolean;
+  };
   /** The raw 4-rung merge result (profile, selectedIds, diagnostics, …). */
   readonly resolved: MbaResolvedConfig;
   /** Fully-populated, in-range LlamaCppServerFlags (post-sanitize). */
@@ -96,12 +105,20 @@ export function resolveRecipe(
   // the declared name omits).
   let declaredName: string | undefined;
   let declaredFamily: string | undefined;
+  let client: ResolvedRecipe["client"];
   try {
     const raw = YAML.parse(readFileSync(entry.yamlPath, "utf8")) as {
       identity?: { model?: { name?: string; family?: string } };
+      client?: { vision?: unknown; toolCalling?: unknown };
     };
     declaredName = raw.identity?.model?.name;
     declaredFamily = raw.identity?.model?.family;
+    const vision = typeof raw.client?.vision === "boolean" ? raw.client.vision : undefined;
+    const toolCalling =
+      typeof raw.client?.toolCalling === "boolean" ? raw.client.toolCalling : undefined;
+    if (vision !== undefined || toolCalling !== undefined) {
+      client = { vision, toolCalling };
+    }
   } catch {
     // Unreadable/malformed YAML — fall through to the catalog name below.
   }
@@ -109,13 +126,17 @@ export function resolveRecipe(
   // resolveMbaConfig wants the MBA *base* dir (parent of `adapters/`); the
   // catalog wants the adapters dir itself. Keep the two distinct.
   const mbaBaseDir = dirname(adapterDir);
-  const resolved = resolveMbaConfig(mbaBaseDir, {
-    modelName: declaredName ?? entry.name,
-    modelFamily: declaredFamily,
-    harness: ctx.harness,
-    ide: ctx.ide,
-    serverRuntime: ctx.serverRuntime,
-  });
+  const resolved = resolveMbaConfig(
+    mbaBaseDir,
+    {
+      modelName: declaredName ?? entry.name,
+      modelFamily: declaredFamily,
+      harness: ctx.harness,
+      ide: ctx.ide,
+      serverRuntime: ctx.serverRuntime,
+    },
+    { applyEnvFolders: ctx.applyEnvFolders },
+  );
 
   const { flags, dropped, clamped } = sanitizeLlamaCppServerFlags(resolved.server["llama.cpp"]);
 
@@ -152,6 +173,7 @@ export function resolveRecipe(
     catalogName: entry.name,
     declaredName,
     declaredFamily,
+    client,
     resolved,
     flags: effectiveFlags,
     dropped,

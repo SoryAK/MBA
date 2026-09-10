@@ -183,6 +183,14 @@ bindings:
    multiple environment folders match, the most-specific (most segments)
    wins; ties are broken by the existing deterministic rules and surfaced as
    diagnostics.
+   **Overlays are sparse.** Pull does not create `environments/`. A folder
+   exists only when that client (or a more specific combo) has dials that
+   differ from family/model. The default name is harness-only
+   (`environments/cursor/`). Add `+ide` or `+runtime` only when that
+   combination needs different dials. Do not pre-create a cartesian product
+   of harness × ide × runtime, and do not nest those segments as directories
+   (`environments/cursor/cli/llamacpp` is not the shape — one folder, `+`-joined
+   name).
 4. **`file` lives with `profile`** — one fact: "these weights, at this path,
    with this spec sheet." The MCP server's existing
    `identity.model.file` contract is unchanged.

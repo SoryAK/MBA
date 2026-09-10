@@ -3,8 +3,9 @@
  */
 
 import { defaultSwitchPort, fail, serviceGet, servicePost } from "./client.js";
-import { groupFlagPairs, pairCliArgs } from "./flag-pairs.js";
-import { brand, dim, doneBox, heading, kv, shortenHome } from "./style.js";
+import { printBootPreview, type BootPreviewExtras } from "./boot-preview.js";
+import { brand, dim, shortenHome, bootedLine } from "./style.js";
+import { formatServerLine } from "./list-print.js";
 import {
   askPortInteractive,
   askTextInteractive,
@@ -23,26 +24,9 @@ function cancelled(): void {
 }
 
 function printServersTable(servers: ServerEntry[]): void {
-  const header =
-    "id".padEnd(18) +
-    "port".padEnd(8) +
-    "pid".padEnd(10) +
-    "healthy".padEnd(9) +
-    "resolved".padEnd(9) +
-    "dup".padEnd(5) +
-    "model";
-  process.stdout.write(header + "\n");
+  process.stdout.write(`${brand("servers")}\n`);
   for (const s of servers) {
-    process.stdout.write(
-      s.id.padEnd(18) +
-        String(s.port).padEnd(8) +
-        (s.pid !== undefined ? String(s.pid) : "-").padEnd(10) +
-        (s.healthy ? "yes" : "no").padEnd(9) +
-        (s.resolved ? "yes" : "no").padEnd(9) +
-        (s.duplicate ? "yes" : "-").padEnd(5) +
-        s.modelFile +
-        "\n",
-    );
+    process.stdout.write(`${formatServerLine(s)}\n`);
   }
 }
 
@@ -53,7 +37,8 @@ async function cmdServersList(baseUrl: string, plain: boolean, json = false): Pr
     return;
   }
   if (servers.length === 0) {
-    process.stdout.write("[mba] no servers registered\n");
+    process.stdout.write(`${brand("servers")}\n`);
+    process.stdout.write(`  ${dim("none")}\n`);
     return;
   }
   if (!process.stdin.isTTY || plain) {
@@ -88,6 +73,7 @@ interface LlamaBinaryRow {
 interface ResolvePreview {
   readonly cliArgs: string[];
   readonly env?: { harness: string; ide: string; serverRuntime: string };
+  readonly envAttached?: boolean;
   readonly binary?: LlamaBinaryRow;
   readonly binaries?: ReadonlyArray<LlamaBinaryRow>;
   readonly recommended?: LlamaBackend;
@@ -95,6 +81,11 @@ interface ResolvePreview {
   readonly warning?: string;
   readonly vendors?: readonly GpuVendor[];
   readonly gpus?: readonly string[];
+  readonly vramBytes?: readonly (number | null)[];
+  readonly ramBytes?: number;
+  readonly cpuThreads?: number;
+  readonly machineOverlay?: "enforce" | "warn" | "off";
+  readonly model?: BootPreviewExtras["model"];
 }
 
 export function llamaNickColumnWidth(rows: readonly LlamaBinaryRow[]): number {
@@ -142,73 +133,30 @@ export function shouldAskLlamaBinary(
   return tty && !assumeNo && binCount > 1 && !pinned;
 }
 
-export function printBootPreview(
-  modelId: string,
-  port: number,
-  cliArgs: readonly string[],
-  extras?: {
-    binary?: { path: string; backend: string; nickname?: string };
-    warning?: string;
-    gpus?: readonly string[];
-    env?: { harness: string; ide: string; serverRuntime: string };
-  },
-): void {
-  const pairs = pairCliArgs(cliArgs);
-  const groups = groupFlagPairs(pairs);
-  const flagWidth = Math.min(
-    22,
-    Math.max(12, ...pairs.map((p) => p.flag.length), 12),
-  );
-  process.stdout.write(`${brand("boot")}\n`);
-  process.stdout.write(`${kv("model", modelId, 5)}\n`);
-  process.stdout.write(`${kv("port", String(port), 5)}\n`);
-  if (extras?.env) {
-    process.stdout.write(
-      `${kv("env", `${extras.env.harness}+${extras.env.ide}+${extras.env.serverRuntime}`, 5)}\n`,
-    );
-  }
-  if (extras?.gpus && extras.gpus.length > 0) {
-    process.stdout.write(`${kv("gpu", extras.gpus.join(", "), 5)}\n`);
-  }
-  if (extras?.binary) {
-    const nick = extras.binary.nickname?.trim();
-    const shown = nick
-      ? `${extras.binary.backend}  ${nick}  ${shortenHome(extras.binary.path)}`
-      : `${extras.binary.backend}  ${shortenHome(extras.binary.path)}`;
-    process.stdout.write(`${kv("bin", shown, 5)}\n`);
-  }
-  if (extras?.warning) {
-    process.stdout.write(`${kv("note", extras.warning, 5)}\n`);
-  }
-  for (const group of groups) {
-    process.stdout.write(`\n  ${heading(group.name)}\n`);
-    for (const { flag, value } of group.pairs) {
-      process.stdout.write(`    ${dim(flag.padEnd(flagWidth))}  ${value}\n`);
-    }
-  }
-  process.stdout.write("\n");
-}
+export { printBootPreview };
 
-function previewExtras(
-  recipe: ResolvePreview,
-  binaryPath: string | undefined,
-): {
-  binary?: { path: string; backend: string; nickname?: string };
-  warning?: string;
-  gpus?: readonly string[];
-  env?: { harness: string; ide: string; serverRuntime: string };
-} {
+function previewExtras(recipe: ResolvePreview, binaryPath: string | undefined): BootPreviewExtras {
   const bin =
     binaryPath !== undefined
       ? recipe.binaries?.find((b) => b.path === binaryPath) ?? recipe.binary
       : recipe.binary;
   const vendors = new Set(recipe.vendors ?? []);
   const warning = bin ? binaryMismatchWarning(bin.backend, vendors) : recipe.warning;
+  const picked =
+    binaryPath !== undefined && recipe.binary?.path !== undefined && binaryPath !== recipe.binary.path;
   return {
     binary: bin,
     warning,
     gpus: recipe.gpus,
+    vramBytes: recipe.vramBytes,
+    ramBytes: recipe.ramBytes,
+    cpuThreads: recipe.cpuThreads,
+    machineOverlay: recipe.machineOverlay,
     env: recipe.env,
+    envAttached: recipe.envAttached,
+    model: recipe.model,
+    pinned: recipe.pinned,
+    picked,
   };
 }
 
@@ -309,28 +257,15 @@ async function cmdServersBoot(
       modelRef,
       port,
     });
-    process.stdout.write(
-      doneBox("BOOTED", [
-        ["id", entry.id],
-        ["port", String(entry.port)],
-        ["next", `mba s logs ${entry.id}`],
-      ]) + "\n",
-    );
+    process.stdout.write(`${bootedLine(entry.id, undefined, `mba connect ${modelRef}`)}\n`);
     return entry;
   }
   const modelFile = await resolveModelFile(baseUrl, modelRef);
-  process.stdout.write(`[mba] booting ${modelFile} on port ${port} (waits for health)…\n`);
+  process.stdout.write(`  ${dim("waiting")}  health…\n`);
   const body: Record<string, unknown> = { modelFile, port };
   if (binaryPath) body.binaryPath = binaryPath;
   const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", body);
-  process.stdout.write(
-    doneBox("BOOTED", [
-      ["id", entry.id],
-      ["port", String(entry.port)],
-      ["pid", entry.pid !== undefined ? String(entry.pid) : "-"],
-      ["next", `mba s logs ${entry.id}`],
-    ]) + "\n",
-  );
+  process.stdout.write(`${bootedLine(entry.id, entry.pid, `mba connect ${modelRef}`)}\n`);
   return entry;
 }
 

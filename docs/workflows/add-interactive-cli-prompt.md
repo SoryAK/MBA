@@ -6,6 +6,9 @@
 
 **Last Updated:** 2026-08-29
 
+Parent playbook for the whole CLI (build, JSON vs TTY, pairing identity):
+[cli-development.md](./cli-development.md).
+
 ---
 
 ## Successful Sequence

@@ -2,41 +2,25 @@
  * Client plane: list paired sessions, add operator clients, connect, revoke.
  */
 
-import { formatClientLabel } from "../service/env-context.js";
 import { fail, serviceGet, servicePost } from "./client.js";
 import { listHarnessChoices } from "./harness-choices.js";
 import { askValueInteractive, pickLabeledInteractive } from "./interactive.js";
+import { formatRegisteredClientLine } from "./list-print.js";
 import { cmdModelsConnect } from "./models.js";
+import { formatPairedSlotLines } from "./slot-print.js";
+import { brand, dim, heading, shortenHome } from "./style.js";
 import { defaultStorePaths } from "../service/config-store.js";
 import {
   addOperatorClient,
   removeOperatorClient,
 } from "../service/operator-clients.js";
-import { brand, dim, heading, paint, shortenHome, BOLD } from "./style.js";
+import type { PairingSession } from "./types.js";
 
-interface PublicSession {
-  readonly id: string;
-  readonly modelId: string;
-  readonly harness: string;
-  readonly ide?: string;
-  readonly projectRoot: string;
-  readonly createdAt: string;
-  readonly card?: boolean;
-}
-
-async function listSessions(baseUrl: string): Promise<readonly PublicSession[]> {
+async function listSessions(baseUrl: string): Promise<readonly PairingSession[]> {
   const st = await serviceGet<{
-    pairing?: { sessions?: readonly PublicSession[] };
+    pairing?: { sessions?: readonly PairingSession[] };
   }>(baseUrl, "/status");
   return st.pairing?.sessions ?? [];
-}
-
-function printSession(s: PublicSession): void {
-  const who = formatClientLabel(s.harness, s.ide);
-  const tag = (s.card ? "card" : "pair").padEnd(4);
-  process.stdout.write(
-    `    ${paint(who.padEnd(18), BOLD)}  ${s.modelId.padEnd(22)}  ${s.card ? paint(tag, BOLD) : dim(tag)}  ${dim(shortenHome(s.projectRoot))}\n`,
-  );
 }
 
 async function cmdClientsList(baseUrl: string, json: boolean): Promise<void> {
@@ -49,17 +33,16 @@ async function cmdClientsList(baseUrl: string, json: boolean): Promise<void> {
   process.stdout.write(`${brand("clients")}\n`);
   process.stdout.write(`  ${heading("registered")}\n`);
   for (const h of catalog) {
-    const tag = h.source === "added" ? "  added" : "";
-    process.stdout.write(
-      `    ${paint(h.name.padEnd(18), BOLD)}  ${dim(h.envelope)}${tag}\n`,
-    );
+    process.stdout.write(`${formatRegisteredClientLine(h)}\n`);
   }
   process.stdout.write(`  ${heading("paired")}\n`);
   if (sessions.length === 0) {
     process.stdout.write(`    ${dim("none — mba connect to pair")}\n`);
     return;
   }
-  for (const s of sessions) printSession(s);
+  for (const line of formatPairedSlotLines(sessions)) {
+    process.stdout.write(`${line}\n`);
+  }
 }
 
 const ADD_USAGE =
