@@ -1,6 +1,6 @@
 #!/bin/sh
-# Drop Claude and Copilot Co-authored-by trailers so they do not show up as
-# GitHub contributors. Cursor trailers are kept. Dependabot is untouched.
+# Drop agent Co-authored-by trailers so they do not show up as GitHub
+# contributors (Claude, Copilot, Cursor). Dependabot is untouched.
 #
 # Git does not run this unless you copy it to .git/hooks/commit-msg.
 # From a clone: chmod +x .githooks/commit-msg &&
@@ -11,8 +11,10 @@ msg=$1
 
 tmp=$msg.tmp.$$
 grep -viE \
-  '^[[:space:]]*Co-authored-by:[[:space:]]*(Claude|Copilot)' \
-  "$msg" >"$tmp" || true
+  '^[[:space:]]*Co-authored-by:[[:space:]]*(Claude|Copilot|Cursor)\b' \
+  "$msg" | grep -viE \
+  '^[[:space:]]*Co-authored-by:[[:space:]].*cursoragent@' \
+  >"$tmp" || true
 mv "$tmp" "$msg"
 
 exit 0
