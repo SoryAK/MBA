@@ -142,6 +142,7 @@ After CLI changes, rebuild `@mba-ai/core` so a linked `mba` picks them up (`npm 
 ## Docs
 
 - [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — system manual
+- [`docs/ci.md`](docs/ci.md) — merge gate (GitHub Actions)
 - [`docs/adr/`](docs/adr/) — architecture decision records
 
 ## License

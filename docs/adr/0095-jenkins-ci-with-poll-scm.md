@@ -1,6 +1,9 @@
 # ADR-0095: Jenkins CI with Poll SCM (local, no internet exposure)
 
-**Status:** Accepted
+**Status:** Accepted for the local Jenkins trigger. The **merge gate** on the
+public repo is GitHub Actions plus the Protect main ruleset; see
+[docs/ci.md](../ci.md). This ADR remains the record of why Poll SCM was
+chosen when the repo could not use Actions.
 
 ## Context
 
