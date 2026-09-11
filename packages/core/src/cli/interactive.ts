@@ -755,13 +755,14 @@ export function pickPreviewInteractive(
 export function pickManyInteractive(
   title: string,
   items: readonly PreviewPickItem[],
+  opts?: { marked?: readonly string[] },
 ): Promise<string[] | null> {
   return new Promise<string[] | null>((resolve, reject) => {
     const stdin = process.stdin;
     const frame = createMenuFrame();
     let query = "";
     let cursor = 0;
-    const marked = new Set<string>();
+    const marked = new Set(opts?.marked ?? []);
 
     const filtered = () => (query ? items.filter((it) => matchesQuery(it, query)) : items);
 

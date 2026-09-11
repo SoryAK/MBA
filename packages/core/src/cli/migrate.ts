@@ -24,8 +24,10 @@ import {
   scanGgufs,
   type FoundGguf,
 } from "../model/gguf-scan.js";
-import { deriveModelId } from "../model/model-id.js";
-import { adoptedLine, brand, dim, shortenHome } from "./style.js";
+import { assignAdoptIds, groupGgufs, ggufStem, type GgufGroup } from "../model/gguf-group.js";
+import { listHubFamilies, suggestFamily, type HubFamily } from "../model/suggest-family.js";
+import { askFamilyInteractive } from "./family-choices.js";
+import { adoptedIdLine, adoptedLine, brand, dim, kv, shortenHome } from "./style.js";
 
 const MODELS_USAGE = "usage: mba migrate models [dir] [--move] [--yes] [--json]";
 const FIND_USAGE = "usage: mba migrate find [query] [--from <dir>] [--move] [--yes] [--json]";
@@ -90,7 +92,63 @@ function parseMigrateFlags(
   return { move, from, rest };
 }
 
-function foundItems(files: readonly FoundGguf[]): PreviewPickItem[] {
+function filePreviewRows(files: readonly FoundGguf[]): Array<readonly [string, string]> {
+  return files.map((f) => ["file", f.fileName]);
+}
+
+function groupItems(groups: readonly GgufGroup[]): PreviewPickItem[] {
+  return groups.map((g) => {
+    const n = g.files.length;
+    const bytes = g.files.reduce((sum, f) => sum + f.bytes, 0);
+    const name = g.files.find((f) => f.ggufName)?.ggufName ?? "—";
+    return {
+      label: `${g.stem}  ${n} file${n === 1 ? "" : "s"}`,
+      value: g.key,
+      preview: [
+        ["name", name],
+        ["size", formatBytes(bytes)],
+        ...filePreviewRows(g.files),
+      ],
+    };
+  });
+}
+
+async function hubCatalog(baseUrl: string): Promise<{
+  skip: ReturnType<typeof catalogSkipFromModelFiles>;
+  families: HubFamily[];
+}> {
+  const { models } = await serviceGet<{ models: ModelEntry[] }>(baseUrl, "/models");
+  return {
+    skip: catalogSkipFromModelFiles(models.map((m) => m.modelFile)),
+    families: listHubFamilies(models),
+  };
+}
+
+function dropCataloged(files: readonly FoundGguf[], skip: ReturnType<typeof catalogSkipFromModelFiles>): FoundGguf[] {
+  return files.filter((f) => !isAlreadyInHub(f.path, skip));
+}
+
+function groupNeedles(group: GgufGroup): string[] {
+  const first = group.files[0];
+  return [
+    group.stem,
+    first?.ggufName ?? "",
+    first ? ggufStem(first.fileName) : "",
+    first?.fileName ?? "",
+  ];
+}
+
+function defaultFamily(group: GgufGroup, families: readonly HubFamily[]): string {
+  return suggestFamily(groupNeedles(group), families) ?? group.stem;
+}
+
+interface NamedGroup {
+  readonly group: GgufGroup;
+  readonly family: string;
+  readonly rows: Array<{ file: FoundGguf; id: string }>;
+}
+
+function fileItems(files: readonly FoundGguf[]): PreviewPickItem[] {
   return files.map((f) => ({
     label: f.fileName,
     value: f.path,
@@ -103,37 +161,64 @@ function foundItems(files: readonly FoundGguf[]): PreviewPickItem[] {
   }));
 }
 
-async function hubSkip(baseUrl: string) {
-  const { models } = await serviceGet<{ models: ModelEntry[] }>(baseUrl, "/models");
-  return catalogSkipFromModelFiles(models.map((m) => m.modelFile));
+async function refineGroup(
+  group: GgufGroup,
+  pool: readonly FoundGguf[],
+): Promise<GgufGroup | null> {
+  if (group.files.length === 1) return group;
+  const n = group.files.length;
+  const action = await pickLabeledInteractive("group", [
+    {
+      label: "adopt",
+      value: "adopt",
+      preview: [
+        ["do", `adopt all ${n}`],
+        ...filePreviewRows(group.files),
+      ],
+    },
+    {
+      label: "edit",
+      value: "edit",
+      preview: [
+        ["do", "unmark to drop, mark to add, then adopt the rest"],
+        ...filePreviewRows(group.files),
+      ],
+    },
+  ]);
+  if (action === null) return null;
+  if (action === "adopt") return group;
+  const inGroup = new Set(group.files.map((f) => f.path));
+  const extras = pool.filter((f) => !inGroup.has(f.path));
+  const picked = await pickManyInteractive("files", fileItems([...group.files, ...extras]), {
+    marked: group.files.map((f) => f.path),
+  });
+  if (picked === null) return null;
+  const byPath = new Map(pool.map((f) => [f.path, f]));
+  const next = picked.map((p) => byPath.get(p)).filter((f): f is FoundGguf => f !== undefined);
+  return { ...group, files: next };
 }
 
-function dropCataloged(files: readonly FoundGguf[], skip: ReturnType<typeof catalogSkipFromModelFiles>): FoundGguf[] {
-  return files.filter((f) => !isAlreadyInHub(f.path, skip));
-}
-
-async function confirmIds(
-  files: readonly FoundGguf[],
+async function confirmGroup(
+  group: GgufGroup,
   assumeNo: boolean,
-): Promise<Array<{ file: FoundGguf; id: string; family: string }> | null> {
-  const out: Array<{ file: FoundGguf; id: string; family: string }> = [];
-  for (const file of files) {
-    const defaultId = deriveModelId(file.fileName);
-    if (assumeNo) {
-      out.push({ file, id: defaultId, family: defaultId });
-      continue;
-    }
-    if (!process.stdin.isTTY) {
-      out.push({ file, id: defaultId, family: defaultId });
-      continue;
-    }
-    const id = await askTextInteractive("model id", defaultId);
-    if (id === null) return null;
-    const family = await askTextInteractive("family", id);
-    if (family === null) return null;
-    out.push({ file, id, family });
+  families: readonly HubFamily[],
+): Promise<NamedGroup | null> {
+  const ids = assignAdoptIds(group.files);
+  const rows = group.files.map((file) => ({ file, id: ids.get(file.path) ?? file.fileName }));
+  if (assumeNo || !process.stdin.isTTY) {
+    return { group, family: defaultFamily(group, families), rows };
   }
-  return out;
+  if (group.files.length === 1) {
+    const only = rows[0]!;
+    const id = await askTextInteractive("model id", only.id);
+    if (id === null) return null;
+    const family = await askFamilyInteractive(groupNeedles(group), families);
+    if (family === null) return null;
+    return { group, family, rows: [{ file: only.file, id }] };
+  }
+  const family = await askFamilyInteractive(groupNeedles(group), families);
+  if (family === null) return null;
+  return { group, family, rows };
 }
 
 async function adoptOne(
@@ -148,12 +233,28 @@ async function adoptOne(
   return servicePost<AdoptResult>(baseUrl, "/models/adopt", body);
 }
 
+function printSingleton(
+  result: AdoptResult,
+): void {
+  process.stdout.write(`${adoptedLine(result.id, result.family)}\n`);
+  process.stdout.write(`${dim(`  ${shortenHome(result.modelDir)}`)}\n`);
+  if (result.moved) process.stdout.write(`${dim("  source removed")}\n`);
+}
+
+function printBulkFooter(family: string, moved: boolean, count: number): void {
+  process.stdout.write(`${kv("family", family, 8)}\n`);
+  if (moved) process.stdout.write(`${kv("source", "removed", 8)}\n`);
+  const any = count === 1 ? "" : `   (any of the ${count})`;
+  process.stdout.write(`${kv("next", `mba s boot <id>${any}`, 8)}\n`);
+}
+
 async function adoptPicked(
   baseUrl: string,
   files: readonly FoundGguf[],
   assumeNo: boolean,
   json: boolean,
   move: boolean,
+  families: readonly HubFamily[],
 ): Promise<void> {
   if (files.length === 0) {
     if (json) {
@@ -164,29 +265,53 @@ async function adoptPicked(
     return;
   }
 
-  let chosen: FoundGguf[] = [...files];
+  const groups = groupGgufs(files);
+  let chosen = groups;
   const batch = json || assumeNo || !process.stdin.isTTY;
   if (!batch) {
-    const picked = await pickManyInteractive("adopt", foundItems(files));
+    const picked = await pickManyInteractive("adopt", groupItems(groups));
     if (picked === null) {
       process.stdout.write("[mba] cancelled\n");
       return;
     }
-    const byPath = new Map(files.map((f) => [f.path, f]));
-    chosen = picked.map((p) => byPath.get(p)).filter((f): f is FoundGguf => f !== undefined);
+    const byKey = new Map(groups.map((g) => [g.key, g]));
+    const pickedGroups = picked.map((k) => byKey.get(k)).filter((g): g is GgufGroup => g !== undefined);
+    chosen = [];
+    for (const group of pickedGroups) {
+      const refined = await refineGroup(group, files);
+      if (refined === null) {
+        process.stdout.write("[mba] cancelled\n");
+        return;
+      }
+      if (refined.files.length === 0) continue;
+      chosen.push(refined);
+    }
+    const seen = new Set<string>();
+    chosen = chosen.map((g) => {
+      const next = g.files.filter((f) => {
+        if (seen.has(f.path)) return false;
+        seen.add(f.path);
+        return true;
+      });
+      return { ...g, files: next };
+    }).filter((g) => g.files.length > 0);
   }
+  if (chosen.length === 0) return;
 
-  const named = await confirmIds(chosen, batch);
-  if (named === null) {
-    process.stdout.write("[mba] cancelled\n");
-    return;
+  const named: NamedGroup[] = [];
+  for (const group of chosen) {
+    const row = await confirmGroup(group, batch, families);
+    if (row === null) {
+      process.stdout.write("[mba] cancelled\n");
+      return;
+    }
+    named.push(row);
   }
-  if (named.length === 0) return;
 
   let doMove = move;
   if (!doMove && !batch && process.stdin.isTTY) {
-    const prompt =
-      named.length === 1 ? "remove source after adopt?" : "remove source files after adopt?";
+    const n = named.reduce((sum, g) => sum + g.rows.length, 0);
+    const prompt = n === 1 ? "remove source after adopt?" : "remove source files after adopt?";
     const answer = await askYesNoInteractive(prompt);
     if (answer === null) {
       process.stdout.write("[mba] cancelled\n");
@@ -197,21 +322,35 @@ async function adoptPicked(
 
   const results: AdoptResult[] = [];
   let failed = 0;
-  for (const row of named) {
-    if (!json) process.stdout.write(`[mba] adopting ${row.id}...\n`);
-    try {
-      const result = await adoptOne(baseUrl, row.file.path, row.id, row.family, doMove);
-      results.push(result);
-      if (!json) {
-        process.stdout.write(`${adoptedLine(result.id, result.family)}\n`);
-        process.stdout.write(`${dim(`  ${shortenHome(result.modelDir)}`)}\n`);
-        if (result.moved) process.stdout.write(`${dim("  source removed")}\n`);
+  for (const pack of named) {
+    const bulk = pack.rows.length > 1;
+    if (!json && bulk) {
+      process.stdout.write(`[mba] adopting ${pack.rows.length}...\n`);
+    }
+    let groupMoved = false;
+    let groupOk = 0;
+    for (const row of pack.rows) {
+      if (!json && !bulk) process.stdout.write(`[mba] adopting ${row.id}...\n`);
+      try {
+        const result = await adoptOne(baseUrl, row.file.path, row.id, pack.family, doMove);
+        results.push(result);
+        groupOk += 1;
+        if (result.moved) groupMoved = true;
+        if (!json && bulk) {
+          process.stdout.write(`${adoptedIdLine(result.id)}\n`);
+        } else if (!json) {
+          printSingleton(result);
+        }
+      } catch (err) {
+        failed += 1;
+        process.stderr.write(
+          `[mba] error: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
       }
-    } catch (err) {
-      failed += 1;
-      process.stderr.write(
-        `[mba] error: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
+    }
+    if (!json && bulk && groupOk > 0) {
+      process.stdout.write("\n");
+      printBulkFooter(pack.family, groupMoved, groupOk);
     }
   }
   if (json) {
@@ -252,9 +391,9 @@ async function cmdMigrateModels(
   if (!dir) fail(MODELS_USAGE);
 
   const root = absPath(dir);
-  const skip = await hubSkip(baseUrl);
+  const { skip, families } = await hubCatalog(baseUrl);
   const found = dropCataloged(await scanRoots([root]), skip);
-  await adoptPicked(baseUrl, found, assumeNo, json, move);
+  await adoptPicked(baseUrl, found, assumeNo, json, move, families);
 }
 
 async function cmdMigrateFind(
@@ -287,9 +426,9 @@ async function cmdMigrateFind(
     return;
   }
 
-  const skip = await hubSkip(baseUrl);
+  const { skip, families } = await hubCatalog(baseUrl);
   const ranked = dropCataloged(rankGgufs(await scanRoots(roots), query), skip);
-  await adoptPicked(baseUrl, ranked, assumeNo, json, move);
+  await adoptPicked(baseUrl, ranked, assumeNo, json, move, families);
 }
 
 async function migrateMenu(

@@ -126,6 +126,11 @@ export function adoptedLine(id: string, family?: string): string {
   return `  ${paint("ADOPTED", BOLD, GRN)}  ${paint(id, BOLD)}${familyBit}    ${dim("next")}  mba s boot ${id}`;
 }
 
+/** Quiet ADOPTED row for a bulk (no family, no next). */
+export function adoptedIdLine(id: string): string {
+  return `  ${paint("ADOPTED", BOLD, GRN)}  ${paint(id, BOLD)}`;
+}
+
 export const HIDE_CURSOR = "\x1b[?25l";
 export const SHOW_CURSOR = "\x1b[?25h";
 

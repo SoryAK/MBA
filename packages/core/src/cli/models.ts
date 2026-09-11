@@ -18,6 +18,8 @@ import {
 } from "./interactive.js";
 import { listHfGgufs, searchHfModels } from "../model/hf-resolve.js";
 import { deriveModelId } from "../model/model-id.js";
+import { listHubFamilies } from "../model/suggest-family.js";
+import { askFamilyInteractive } from "./family-choices.js";
 import { handleRestartPrompt, parseValue } from "./restart.js";
 import type { ModelConfig, SetResult } from "./types.js";
 import { KNOWN_HARNESSES } from "../mba/envelope.js";
@@ -278,6 +280,18 @@ function deriveFamily(owner: string): string {
   );
 }
 
+async function hubFamilies(baseUrl: string) {
+  const { models } = await serviceGet<{ models: ModelEntry[] }>(baseUrl, "/models");
+  return listHubFamilies(models);
+}
+
+async function pickPullFamily(
+  baseUrl: string,
+  needles: readonly string[],
+): Promise<string | null> {
+  return askFamilyInteractive(needles, await hubFamilies(baseUrl));
+}
+
 export async function cmdModelsSearch(baseUrl: string): Promise<void> {
   const repoId = await searchHfInteractive((q) => searchHfModels(q));
   if (repoId === null) {
@@ -320,7 +334,7 @@ export async function cmdModelsSearch(baseUrl: string): Promise<void> {
     process.stdout.write("[mba] cancelled\n");
     return;
   }
-  const family = await askTextInteractive("family", deriveFamily(owner));
+  const family = await pickPullFamily(baseUrl, [id, repo, owner, deriveFamily(owner)]);
   if (family === null) {
     process.stdout.write("[mba] cancelled\n");
     return;
@@ -354,7 +368,15 @@ export async function dispatchModelsPull(
     else fail(`unknown flag for pull: ${a}\n${PULL_USAGE}`);
   }
   if (!url || !id) fail(PULL_USAGE);
-  await cmdModelsPull(baseUrl, url, id, sha256, family);
+  let resolvedFamily = family;
+  if (!resolvedFamily && process.stdin.isTTY) {
+    resolvedFamily = (await pickPullFamily(baseUrl, [id, url])) ?? undefined;
+    if (!resolvedFamily) {
+      process.stdout.write("[mba] cancelled\n");
+      return;
+    }
+  }
+  await cmdModelsPull(baseUrl, url, id, sha256, resolvedFamily);
 }
 
 const STAGE_USAGE =

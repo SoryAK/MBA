@@ -12,6 +12,7 @@ import {
   bootedLine,
   pulledLine,
   adoptedLine,
+  adoptedIdLine,
   BOLD,
   CYAN,
   colorEnabled,
@@ -66,6 +67,13 @@ describe("cli style", () => {
     process.env.NO_COLOR = "1";
     expect(adoptedLine("local_r1", "deepseek")).toBe(
       "  ADOPTED  local_r1  deepseek    next  mba s boot local_r1",
+    );
+  });
+
+  it("renders a quiet bulk ADOPTED row without next", () => {
+    process.env.NO_COLOR = "1";
+    expect(adoptedIdLine("llama-3-1-8b-instruct-q4-k-m")).toBe(
+      "  ADOPTED  llama-3-1-8b-instruct-q4-k-m",
     );
   });
 
