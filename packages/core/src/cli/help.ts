@@ -53,6 +53,7 @@ export function usageModels(): string {
     "",
     dim("  aliases    config → show   open → path   set pull"),
     dim("  --json     on list, show, and stage"),
+    dim("  TTY       family picker uses names already in the hub"),
     dim("  harness    built-in set, or a name from mba clients add"),
   ].join("\n");
 }
@@ -128,7 +129,7 @@ export function usageMigrate(): string {
     dim("  copies into the hub (hardlink when possible)"),
     dim("  find      ~/.cache/huggingface/hub and ~/models"),
     dim("  --from    limit find to one directory"),
-    dim("  TTY       asks whether to remove the source (enter = keep)"),
+    dim("  TTY       groups quants; adopt the group or edit files, then family once"),
     dim("  --move    remove source without asking"),
     dim("  --yes     skip asks; keeps source unless --move"),
     dim("  --json    same as --yes, machine-readable results"),
