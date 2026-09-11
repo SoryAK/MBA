@@ -1,5 +1,8 @@
 # Jenkins CI Pipeline
 
+> **The merge gate is GitHub Actions**, not this job. See [`docs/ci.md`](../docs/ci.md).
+> This page is the old local Poll SCM monitor ([ADR-0095](../docs/adr/0095-jenkins-ci-with-poll-scm.md)).
+
 ## Feature Name
 
 Automated build verification for the MBA repo — every push to `main` is typechecked, tested, and built by Jenkins.

@@ -1,0 +1,67 @@
+# Publish `@mba-ai/core` to npm on a version tag (`v0.1.16`).
+# Does not run on pull requests or on push to main.
+# Auth is npm Trusted Publisher (OIDC). No NPM_TOKEN.
+#
+# On npmjs.com → @mba-ai/core → Trusted Publisher → GitHub Actions:
+#   Organization or user: SoryAK
+#   Repository: MBA
+#   Workflow filename: publish.yml
+#   Environment: (leave empty)
+#   Allowed actions: npm publish
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: npm CLI for trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Tag matches core version and changelog
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(node -p "require('./packages/core/package.json').version")"
+          if [ "$tag" != "$ver" ]; then
+            echo "tag v$tag does not match @mba-ai/core $ver"
+            exit 1
+          fi
+          if ! grep -qE "^## \\[${ver}\\] " packages/core/CHANGELOG.md; then
+            echo "packages/core/CHANGELOG.md has no ## [$ver] section"
+            exit 1
+          fi
+          if grep -qE "^## \\[Unreleased\\]" packages/core/CHANGELOG.md; then
+            echo "changelog still has an Unreleased heading"
+            exit 1
+          fi
+
+      - name: Publish @mba-ai/core
+        run: npm publish -w @mba-ai/core

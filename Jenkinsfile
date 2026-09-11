@@ -1,4 +1,5 @@
-// MBA CI pipeline — runs on every push to main (see docs/ci.md for job setup).
+// MBA CI pipeline — local reference only. The merge gate is GitHub Actions
+// (.github/workflows/ci.yml) plus the Protect main ruleset; see docs/ci.md.
 // Requires a NodeJS tool named 'node-22' configured in Jenkins (Manage Jenkins → Tools).
 pipeline {
     agent any
