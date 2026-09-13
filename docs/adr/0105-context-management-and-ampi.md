@@ -4,7 +4,7 @@
 - **Date:** 2026-09-06
 - **Deciders:** project maintainer + agent
 - **Tags:** architecture, mba, ampi, cm, cgc, bcb, context
-- **Relates to:** ADR-0088 (AMPI power / termination), ADR-0101 (daemon-as-proxy + AMPI runner), ADR-0102 (catalog names recipes, not cuts), ADR-0104 (uncertainty BCB, deferred), ADR-0106 (State Management)
+- **Relates to:** [AMPI](../ampi.md) (living handbook), ADR-0088 (AMPI power / termination), ADR-0101 (daemon-as-proxy + AMPI runner), ADR-0102 (catalog names recipes, not cuts), ADR-0104 (uncertainty BCB, deferred), ADR-0106 (State Management)
 
 ## Context and Problem Statement
 
@@ -84,16 +84,12 @@ Today’s alias `sweep-duplicates` is `sanitize` + `duplicates`. `context-gc` is
 
 ### Catalog — four and four
 
-Same shape on both planes. Different words so a CM cut is never an AMPI function.
+Living names, modes, and ladder strings: [docs/ampi.md](../ampi.md). This
+section is the decision that the two planes share a shape and different
+words, so a CM cut is never an AMPI function.
 
-**AMPI — why we run** (ladder names one of these, plus a mode):
-
-| Function | Job |
-| --- | --- |
-| **Sanitize** | Mop dirt, stay on this thread. No new truth. |
-| **Assist** | Help forward: give what is missing, or steer. Not a penalty. |
-| **Sanction** | Punish or prevent after bad behavior. Consequence, not a handoff. |
-| **Recover** | Undo the bad stretch (rollback to a pin) or reset the chapter. |
+**AMPI — why we run** (ladder names one of these, plus a mode): Sanitize,
+Assist, Sanction, Recover.
 
 **CM — how the chat changes** (closed cuts):
 
@@ -114,16 +110,7 @@ Recover    ---------->  Mark + Sweep (rollback to pin)
 
 A new AMPI card is a **mode** of one of the four functions, or we are adding a fifth function on purpose. A new *kind* of CM target is an MBA change; a new use of an existing selector is just a mode.
 
-#### AMPI modes
-
-- **`sanitize`** — `{ what: duplicates | scratch | reasoning | phase, pin?: true }`
-- **`assist`** — `{ how: feed | clamp | redirect | lost }` (`lost` waits on ADR-0104)
-- **`sanction`** — `{ how: revoke }` — later; after Assist is real. Ladder mask/kill can stay the cheap form.
-- **`recover`** — `{ how: rollback | reset }` — needs `pin` first. v1 is context-only. Session/KV reset uses the llama.cpp slot row (ADR-0097 Phase 4: save / restore / erase in the G3 folder). Recover recipes still later; sanitize trip will hook this plane (prefix-cut on the next prompt, erase as fallback).
-
 Shipped `sweep-duplicates` is `sanitize` + `duplicates`. Keep the alias.
-
-Live ladder strings (ADR-0102: policy names AMPI only): `sanitize`, `sanitize/duplicates`, `sanitize/scratch`, `sanitize/reasoning`, `sanitize/phase`, `sanitize/pin`, plus optional `+pin` (e.g. `sanitize/phase+pin`). The daemon parses the string, then `runAmpi`. Compact still requires a TCB trip that names one of those recipes. The reasoning dial is read from the adapter at request time; off → no compact.
 
 #### CM cuts (five knives, four boxes)
 
@@ -186,7 +173,7 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 ### What this ADR does *not* change
 
 - TCB detection and the escalation ladder stay in BCB.
-- Default-config kill behavior is unchanged (no AMPI tier unless a user writes one).
+- Default loop ladders (`loopBreaker`, `readLoop`, and the global `repeatRun` seed) name `sanitize/duplicates` on the first trip. Mask/kill stay. EOF, binary block, and `readClamp` do not summon AMPI unless the user adds it.
 - Uncertainty / inner-state breakers (ADR-0104) stay proposed and unimplemented until this CM/AMPI split is implemented far enough that trips have a clean landing place.
 - State Management (ADR-0106) stays proposed until `compact` / `reasoning` and `sanitize` / `phase` exist. SM is not a fifth runner.
 
@@ -221,7 +208,7 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 3. **Done.** `compact` / `reasoning`; `sanitize` modes `reasoning` / `phase` / `pin` (`pin?: true` pins the trip before the mop).
 4. **Done.** Model-plane slot control (ADR-0097 Phase 4). Sanitize that actually changes the transcript erases the live llama.cpp slot after the port is known, then forwards. Marks-only (pin) does not erase. Ollama has no slots. Erase failure still forwards (prefix-cut is the fallback).
 5. **Parked.** SM v1 (ADR-0106) — local backlog (catch-up). Not the next build.
-6. `assist` / `clamp` then `feed`.
+6. `assist` / `supply`. Bound (held limits) is mask / SM, not an AMPI recipe.
 7. `recover` / `rollback` (needs `pin` first).
 8. `sanction` after Assist is real.
 9. `assist` / `lost` with ADR-0104, not before.

@@ -46,8 +46,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run build",
-    "dev": "tsx src/service/main.ts",
-    "start": "tsx src/service/main.ts",
+    "dev": "tsx src/cli/mba.ts start --foreground",
+    "start": "tsx src/cli/mba.ts start",
     "mba": "tsx src/cli/mba.ts",
     "sync-endpoints": "tsx src/service/sync-endpoints.ts",
     "resolve-server-recipe": "tsx src/service/resolve-server-recipe.ts"

@@ -1,5 +1,5 @@
 /**
- * Parse a ladder recipe string into a built-in name + sanitize mode.
+ * Parse a ladder recipe string into a built-in name + mode.
  *
  * Policy names AMPI only (ADR-0102 / 0105). Modes ride on the string:
  *   sanitize
@@ -7,6 +7,7 @@
  *   sanitize/reasoning+pin
  *   sweep-duplicates
  *
+ * Assist (`supply`) is named in the handbook; it is not a live recipe yet.
  * Unknown names are returned as-is so the engine can no-op.
  */
 

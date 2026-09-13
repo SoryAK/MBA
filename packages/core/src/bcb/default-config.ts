@@ -3,7 +3,9 @@
  *
  * These defaults are shipped automatically when the user has not created a
  * config file. They encode the loop patterns we have observed in production
- * Copilot/AI-Toolkit sessions with weak local models.
+ * Copilot/AI-Toolkit sessions with weak local models. `read_file` `repeatRun`
+ * mops duplicate pairs on the first trip; EOF / clamp / binary do not summon
+ * AMPI.
  */
 
 import type { ToolCircuitBreakerConfig } from "./types.js";
@@ -15,7 +17,13 @@ export function defaultToolCircuitBreakerConfig(): ToolCircuitBreakerConfig {
         repeatRun: {
           enabled: true,
           threshold: 2,
-          kill: { enabled: true, ignoredTrips: 1, action: "return-error" },
+          escalation: {
+            tiers: [
+              { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "sanitize/duplicates" },
+              { tier: "kill", afterIgnoredTrips: 1, action: "return-error" },
+            ],
+            counterMode: "monotonic",
+          },
         },
         readClamp: {
           enabled: true,

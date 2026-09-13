@@ -4,11 +4,86 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](https://github.com/SoryAK/MBA/pulls)
 
-**MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. It is not a model host (Ollama) and not a client (Cline). It is the per-model behavior layer and control plan on your machine.
+**MBA** is the per-model behavior layer on your machine. It is not a host (Ollama) and not a client (Cline). You give a model a house: how it boots, who may talk to it, and what the system watches while it works.
 
 ```text
 configure adapter → BCB (system watch) → AMPI (system live response)
 ```
+
+We are looking for **contributors and collaborators**. Issues, PRs, and design discussion are welcome — see [Contributing](#contributing).
+
+Node ≥ 22. llama.cpp on `PATH` if you boot the inference server today.
+
+## Install
+
+Two things: the **daemon** (owns the store, the boot, the watch) and **`mba`** (the remote). If the daemon is down, `mba` will say so.
+
+```sh
+npm install
+mba start                 # from a checkout: npm run mba -- start
+mba status
+```
+
+`mba start` runs the daemon in the background (systemd --user on Linux). `mba stop` stops it. A second `mba start` prints the URL already in use. `--foreground` is this terminal, if you want the logs.
+
+The service binds `127.0.0.1` on an OS-assigned port and writes `<state dir>/mba/service.json`. The CLI finds it there, or via `MBA_SERVICE_URL`.
+
+```sh
+mba                  # home menu on a TTY (after the CLI is on your PATH)
+```
+
+## Models you already have
+
+If the GGUFs are on this machine, bring them into the hub:
+
+```sh
+mba migrate models ~/models
+```
+
+That copies (or hardlinks) them in and scaffolds the house. You are not downloading anything.
+
+## No weights yet
+
+Pull a GGUF into the hub and scaffold the house:
+
+```sh
+mba models pull owner/repo:Q4_K_M --id qwen
+```
+
+HuggingFace search is the same path without a URL:
+
+```sh
+mba models search
+```
+
+`mba models pull` downloads the GGUF (resume + sha256). HuggingFace repos take the digest from LFS metadata; other sources need `--sha256`. After verify it parses the header locally, writes a TODO-marked adapter (and a family tier if that family is new), empty BCB/TCB/`server_setup` bindings, and empty `instructions.md` (the model reads this later) plus `notes.md` (you read this; never injected). A failed verify deletes the partial and leaves no scaffold.
+
+## The hour
+
+Boot this model. Then attach a client.
+
+```sh
+mba s boot qwen
+mba connect qwen --harness cursor
+mba status
+```
+
+Boot starts the **model inference server** with **this** model’s dials only — no client attached yet. Today that server is llama.cpp. More inference servers are coming; MBA is not locked to one. Connect stages the card and mints a token. After that, chat goes through MBA.
+
+You did not have to write a breaker file. `read_file` is already watched: overshoots get clamped, past-EOF gets a stop, a read-loop gets mopped. Empty `tcb.jsonl` in the house means inherit that, not “off.” See it with `mba models watch qwen`. Change it with `mba models watch qwen loop off` (or `inherit` / `on`).
+
+`mba models stage` copies a non-empty winning `instructions.md` into the file the harness already injects (`CLAUDE.local.md`, `.cursor/rules/mba.mdc`, …). The model id is in that card; the filename stays the harness slot. `mba connect` does that and mints a Bearer token; once any session exists, chat through the MBA proxy requires it. `notes.md` stays in the store.
+
+## BCB and AMPI
+
+**BCB** is the watch. **AMPI** is the live response when a breaker trips — a named recipe that runs and finishes. Sanitize (mop the window) is what actually runs on a loop today. The rest of AMPI is the charter, not a menu of products. The handbook is [AMPI](docs/ampi.md).
+
+When AMPI steps in, it is always doing one of four jobs:
+
+- **Sanitize** — mop the context window. Dirt from a trip or a closed chapter. Stay on this thread. No new truth.
+- **Assist** — help when the model is struggling. Supply what’s missing. Not a penalty. Not a rewind.
+- **Sanction** — punish or prevent. Consequence after bad behavior (privilege gone, hard residue, no handoff). Ladder mask/kill can stay the cheap form; AMPI Sanction is the consequence.
+- **Recover** — undo or reset. The stretch itself is bad: roll back to a pin, or reset the chapter. Not mopping while you continue (Sanitize). Not helping forward (Assist). Not punishing (Sanction).
 
 ## Why per model
 
@@ -27,57 +102,14 @@ Most stacks attach the last of those to the fleet — one endpoint, one context 
 
 MBA consolidates those factors into a **model behavioral adapter** — the configuration that belongs to this model. It is managed in one place, loaded before boot, and applied at runtime.
 
-## BCB and AMPI
-
-**BCB** (behavioral circuit breakers) is the monitoring system. You name the known failure modes to watch on this model, then configure an escalation ladder and a programmatic automated response. The ladder notices when a known bad behavior appears, and can clamp or hint *ahead of time*.
-
-**AMPI** (automated multi-process intervention) is that response when a breaker fires. It is not another model deciding what to do. It is a programmatic, configurable, deterministic named recipe: it runs, owns the next turn or turns, and finishes.
-
-Its main focus is four functions:
-
-- **Sanitize** — mop the context window. Dirt from a trip or a closed chapter. Stay on this thread. No new truth.
-- **Assist** — help when the model is struggling. Give what is missing, or steer onto a better next step. Not a penalty. Not a rewind.
-- **Sanction** — punish or prevent. Consequence after bad behavior (privilege gone, hard residue, no handoff). Ladder mask/kill can stay the cheap form; AMPI Sanction is the consequence.
-- **Recover** — undo or reset. The stretch itself is bad: roll back to a pin, or reset the chapter. Not mopping while you continue (Sanitize). Not helping forward (Assist). Not punishing (Sanction).
-
-## Run
-
-Node ≥ 22. llama.cpp on `PATH` if you boot with `mba servers boot`.
-
-```sh
-npm install
-npm run start:service
-```
-
-The service binds `127.0.0.1` on an OS-assigned port and writes `<state dir>/mba/service.json`. The CLI finds it there, or via `MBA_SERVICE_URL`.
-
-```sh
-npm run mba -- status
-mba                  # home menu on a TTY (after the CLI is on your PATH)
-```
-
-## Onboarding
-
-```sh
-mba models pull owner/repo:Q4_K_M --id qwen
-# download + sha256 verify → GGUF metadata / profile → family + adapter scaffold
-
-mba s boot qwen              # port optional (MBA_SWITCH_PORT, default 8080)
-# resolve adapter + server_setup (+ machine clamp) → flag preview → boot
-
-mba status
-```
-
-`mba models pull` downloads the GGUF (resume + sha256). HuggingFace repos take the digest from LFS metadata; other sources need `--sha256`. After verify it parses the header locally, writes a TODO-marked adapter (and a family tier if that family is new), empty BCB/TCB/`server_setup` bindings, and empty `instructions.md` (the model reads this later) plus `notes.md` (you read this; never injected). A failed verify deletes the partial and leaves no scaffold.
-
-`mba s boot` resolves that adapter tree into llama.cpp flags — the same chain as the preview — then boots. `mba models search` is the interactive HuggingFace path into the same pull. `mba models stage` copies a non-empty winning `instructions.md` into the file the harness already injects (`CLAUDE.local.md`, `.cursor/rules/mba.mdc`, …). The model id is in that card; the filename stays the harness slot. `mba connect` does that and mints a Bearer token; once any session exists, chat through the MBA proxy requires it. `notes.md` stays in the store.
-
 ## CLI
 
 `mba --help` and `mba <group> --help` are the command list.
 
 ```sh
 mba models               # pick and edit dials
+mba models watch qwen
+mba models watch qwen loop off
 mba models show qwen
 mba models stage qwen --harness cursor
 mba connect qwen --harness cursor
@@ -104,7 +136,7 @@ Defaults are OS-aware: XDG on Linux, `%APPDATA%` / `%LOCALAPPDATA%` on Windows, 
 
 ## MCP
 
-The service must already be running.
+The service must already be running (`mba start`).
 
 ```json
 {
@@ -139,9 +171,14 @@ npm run build
 
 After CLI changes, rebuild `@mba-ai/core` so a linked `mba` picks them up (`npm run build -w @mba-ai/core`, then `npm link` in `packages/core`).
 
+## Contributing
+
+MBA is looking for **contributors and collaborators** — implementation, inference-server support, docs, and design. Open an [issue](https://github.com/SoryAK/MBA/issues) or a [pull request](https://github.com/SoryAK/MBA/pulls).
+
 ## Docs
 
 - [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — system manual
+- [`docs/ampi.md`](docs/ampi.md) — AMPI (live-response subsystem)
 - [`docs/ci.md`](docs/ci.md) — merge gate (GitHub Actions)
 - [`docs/adr/`](docs/adr/) — architecture decision records
 

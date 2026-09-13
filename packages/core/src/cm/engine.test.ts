@@ -77,6 +77,35 @@ describe("CM engine", () => {
     expect(String(swept.messages[swept.messages.length - 1]!.content)).toContain("[[mba:");
   });
 
+  it("sweep scratch keeps a sibling call on the same assistant turn", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "q" },
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: "keep",
+            type: "function",
+            function: { name: "search", arguments: '{"q":"a"}' },
+          },
+          {
+            id: "junk",
+            type: "function",
+            function: { name: "search", arguments: '{"q":"b"}' },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "keep", content: "A" },
+      { role: "tool", tool_call_id: "junk", content: "B" },
+    ];
+    const scratched = applyCm(messages, { cut: "set-mark", tag: "scratch", toolCallId: "junk" }).messages;
+    const swept = applyCm(scratched, { cut: "sweep", what: "scratch" });
+    const assistant = swept.messages.find((m) => m.role === "assistant")!;
+    expect((assistant.tool_calls as Array<{ id?: string }>).map((c) => c.id)).toEqual(["keep"]);
+    expect(swept.messages.some((m) => m.tool_call_id === "junk")).toBe(false);
+    expect(swept.messages.some((m) => m.tool_call_id === "keep")).toBe(true);
+  });
+
   it("dispatches compact reasoning", () => {
     const messages: ChatMessage[] = [
       { role: "assistant", content: "<think>noise</think>\nkeep" },

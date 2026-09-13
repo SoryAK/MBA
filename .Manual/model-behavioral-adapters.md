@@ -224,8 +224,8 @@ name or an array applied in order) instead of `rule`:
 | Class | Members | Ladder |
 | --- | --- | --- |
 | `readSafety` | `readClamp`, `eofOverflow` (kill@2), `binaryBlock` (kill@3) | per-member kills |
-| `loopBreaker` | `repeatRun`, `directDuplication` | nudge → mask@2 → kill@4 |
-| `readLoop` | `repeatRun` only | nudge → mask@2 → kill@4 |
+| `loopBreaker` | `repeatRun`, `directDuplication` | nudge+sanitize/duplicates → mask@2 → kill@4 |
+| `readLoop` | `repeatRun` only | nudge+sanitize/duplicates → mask@2 → kill@4 |
 
 `readLoop` exists so `read_file` gets loop-breaking **without** the redundant
 `directDuplication` (which would double-guard reads and overwrite the
@@ -291,7 +291,8 @@ process** (not per-project). Files are truth under `~/.mba/`:
 └── mba/service.json                 # discovery: { port, pid, startedAt }
 ```
 
-- **Run it:** `npm run start:service` from the MBA repo root. Binds
+- **Run it:** `mba start` (from a checkout: `npm run mba -- start`). Background
+  daemon; `--foreground` is this terminal. Binds
   `127.0.0.1:0` (OS-assigned port) and writes `service.json` for discovery.
   Env: `MBA_BASE_DIR` (default `~/.mba`; `MBA_BASE_DIR` is a
   deprecated alias).

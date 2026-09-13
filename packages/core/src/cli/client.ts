@@ -19,22 +19,40 @@ export function fail(message: string): never {
 
 /** CLI copy when discovery finds no live daemon. */
 export const SERVICE_DOWN =
-  "MBA service not discovered — daemon is down. Start the MBA service or set MBA_SERVICE_URL";
+  "MBA service not discovered — daemon is down. Run mba start or set MBA_SERVICE_URL";
 
-export function resolveServiceUrl(): string | null {
-  const envUrl = process.env.MBA_SERVICE_URL;
-  if (envUrl && envUrl.length > 0) return envUrl;
-  const infoPath = join(defaultStateDir(), "mba", "service.json");
+/** Local daemon record from service.json (not MBA_SERVICE_URL). */
+export interface ServiceDiscovery {
+  readonly url: string;
+  readonly pid: number | null;
+}
+
+function serviceInfoPath(): string {
+  const override = process.env.MBA_BASE_DIR;
+  const base = override && override.length > 0 ? override : defaultStateDir();
+  return join(base, "mba", "service.json");
+}
+
+export function readServiceDiscovery(): ServiceDiscovery | null {
+  const infoPath = serviceInfoPath();
   if (!existsSync(infoPath)) return null;
   try {
     const raw = JSON.parse(readFileSync(infoPath, "utf8")) as unknown;
     if (typeof raw !== "object" || raw === null) return null;
     const port = (raw as Record<string, unknown>).port;
     if (typeof port !== "number" || !Number.isInteger(port)) return null;
-    return `http://127.0.0.1:${port}`;
+    const pidRaw = (raw as Record<string, unknown>).pid;
+    const pid = typeof pidRaw === "number" && Number.isInteger(pidRaw) ? pidRaw : null;
+    return { url: `http://127.0.0.1:${port}`, pid };
   } catch {
     return null;
   }
+}
+
+export function resolveServiceUrl(): string | null {
+  const envUrl = process.env.MBA_SERVICE_URL;
+  if (envUrl && envUrl.length > 0) return envUrl;
+  return readServiceDiscovery()?.url ?? null;
 }
 
 export async function serviceGet<T>(baseUrl: string, path: string): Promise<T> {

@@ -31,5 +31,7 @@ describe("parseAmpiRecipe", () => {
   it("leaves an unknown name alone", () => {
     expect(parseAmpiRecipe("sanitize/nope")).toEqual({ name: "sanitize/nope" });
     expect(parseAmpiRecipe("context-gc")).toEqual({ name: "context-gc" });
+    expect(parseAmpiRecipe("assist/bound")).toEqual({ name: "assist/bound" });
+    expect(parseAmpiRecipe("assist")).toEqual({ name: "assist" });
   });
 });

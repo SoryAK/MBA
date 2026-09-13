@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { usageMigrate, usageServers } from "./help.js";
+import { usageMigrate, usageModels, usageOverview, usageServers } from "./help.js";
 
 describe("help", () => {
   const prevNoColor = process.env.NO_COLOR;
@@ -7,6 +7,18 @@ describe("help", () => {
   afterEach(() => {
     if (prevNoColor === undefined) delete process.env.NO_COLOR;
     else process.env.NO_COLOR = prevNoColor;
+  });
+
+  it("names mba start and mba stop on the overview", () => {
+    process.env.NO_COLOR = "1";
+    const text = usageOverview();
+    expect(text).toContain("mba start");
+    expect(text).toContain("mba stop");
+  });
+
+  it("names mba models watch", () => {
+    process.env.NO_COLOR = "1";
+    expect(usageModels()).toContain("mba models watch");
   });
 
   it("keeps servers help short and still names slots, binaries, and boot flags", () => {

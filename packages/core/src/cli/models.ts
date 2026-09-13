@@ -3,7 +3,7 @@
  */
 
 import { fail, formatBytes, serviceGet, servicePost, servicePostSse } from "./client.js";
-import { brand, dim, heading, kv, paint, shortenHome, pulledLine, BOLD } from "./style.js";
+import { brand, dim, heading, kv, paint, shortenHome, pulledLine, BOLD, GRN, RED } from "./style.js";
 import { formatModelLine } from "./list-print.js";
 import { extraIde, harnessKind } from "../service/env-context.js";
 import {
@@ -21,11 +21,21 @@ import { deriveModelId } from "../model/model-id.js";
 import { listHubFamilies } from "../model/suggest-family.js";
 import { askFamilyInteractive } from "./family-choices.js";
 import { handleRestartPrompt, parseValue } from "./restart.js";
-import type { ModelConfig, SetResult } from "./types.js";
+import type { ModelConfig, ModelWatches, SetResult, WatchRow } from "./types.js";
 import { KNOWN_HARNESSES } from "../mba/envelope.js";
 import { harnessPickerRows } from "./harness-choices.js";
 
-function printConfig(cfg: ModelConfig): void {
+function printWatches(watches: readonly WatchRow[]): void {
+  process.stdout.write(`  ${heading("watches")}\n`);
+  for (const w of watches) {
+    const live = w.effective ? paint("on", GRN) : paint("off", RED);
+    const mode = w.mode === "inherit" ? dim("inherit") : w.mode;
+    process.stdout.write(`${kv(w.id, `${mode}  ${live}  ${dim(w.label)}`, 16)}\n`);
+  }
+  process.stdout.write("\n");
+}
+
+function printConfig(cfg: ModelConfig, watches?: readonly WatchRow[]): void {
   process.stdout.write(`${brand("show")}  ${paint(cfg.modelId, BOLD)}\n`);
   process.stdout.write(`${kv("yaml", shortenHome(cfg.files.yamlPath), 12)}\n`);
   process.stdout.write(`${kv("server_setup", shortenHome(cfg.files.serverSetupPath), 12)}\n`);
@@ -48,6 +58,19 @@ function printConfig(cfg: ModelConfig): void {
     }
     process.stdout.write("\n");
   }
+  if (watches) printWatches(watches);
+}
+
+async function loadWatches(baseUrl: string, modelId: string): Promise<readonly WatchRow[] | undefined> {
+  try {
+    const body = await serviceGet<ModelWatches>(
+      baseUrl,
+      `/models/watches?id=${encodeURIComponent(modelId)}`,
+    );
+    return body.watches;
+  } catch {
+    return undefined;
+  }
 }
 
 async function guidedFlow(baseUrl: string, modelId: string, assumeNo: boolean): Promise<void> {
@@ -55,7 +78,7 @@ async function guidedFlow(baseUrl: string, modelId: string, assumeNo: boolean): 
     baseUrl,
     `/models/config?id=${encodeURIComponent(modelId)}`,
   );
-  printConfig(cfg);
+  printConfig(cfg, await loadWatches(baseUrl, modelId));
   for (;;) {
     const picked = await pickFieldInteractive(cfg.fields);
     if (picked === null) {
@@ -148,11 +171,13 @@ export async function cmdModelsMenu(baseUrl: string, assumeNo: boolean): Promise
   for (;;) {
     const pick = await pickLabeledInteractive("models", [
       { label: "edit", value: "edit", preview: [["do", "pick a model and change dials"]] },
+      { label: "watches", value: "watches", preview: [["do", "clamp / eof / loop inherit|off|on"]] },
       { label: "stage", value: "stage", preview: [["do", "copy instructions.md into the project"]] },
       { label: "search", value: "search", preview: [["do", "HuggingFace search → pull"]] },
     ]);
     if (pick === null) return;
     if (pick === "edit") await cmdModelsPick(baseUrl, assumeNo);
+    else if (pick === "watches") await cmdModelsWatch(baseUrl, [], false);
     else if (pick === "stage") await cmdModelsStage(baseUrl, [], false);
     else await cmdModelsSearch(baseUrl);
   }
@@ -177,11 +202,12 @@ export async function cmdModelsShow(
     baseUrl,
     `/models/config?id=${encodeURIComponent(modelId)}`,
   );
+  const watches = await loadWatches(baseUrl, modelId);
   if (json) {
-    process.stdout.write(`${JSON.stringify(cfg, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...cfg, watches: watches ?? [] }, null, 2)}\n`);
     return;
   }
-  printConfig(cfg);
+  printConfig(cfg, watches);
 }
 
 export async function cmdModelsSet(
@@ -236,6 +262,57 @@ export async function cmdModelsOpen(
     fail(`unknown file '${file}' — use 'server_setup' or 'yaml'`);
   }
   process.stdout.write(path + "\n");
+}
+
+const WATCH_USAGE = "usage: mba models watch <id> [clamp|eof|loop] [inherit|off|on]";
+
+export async function cmdModelsWatch(
+  baseUrl: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<void> {
+  let [modelId, watch, mode] = args;
+  if (!modelId && process.stdin.isTTY) {
+    const models = await listModels(baseUrl);
+    if (models.length === 0) {
+      process.stdout.write("[mba] no models in the adapter tree\n");
+      return;
+    }
+    const picked = await pickModelInteractive(models);
+    if (picked === null) return;
+    modelId = picked.id;
+  }
+  if (!modelId) fail(WATCH_USAGE);
+
+  if (!watch) {
+    const body = await serviceGet<ModelWatches>(
+      baseUrl,
+      `/models/watches?id=${encodeURIComponent(modelId)}`,
+    );
+    if (json) {
+      process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(`${brand("watches")}  ${paint(modelId, BOLD)}\n`);
+    printWatches(body.watches);
+    process.stdout.write(
+      `  ${dim("mba models watch " + modelId + " <clamp|eof|loop> <inherit|off|on>")}\n`,
+    );
+    return;
+  }
+
+  if (!mode) fail(WATCH_USAGE);
+  const result = await servicePost<{
+    modelId: string;
+    watch: string;
+    before: string;
+    after: string;
+  }>(baseUrl, "/models/watches", { id: modelId, watch, mode });
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`[mba] ${result.modelId} ${result.watch}: ${result.before} → ${result.after}\n`);
 }
 
 interface PullResult {

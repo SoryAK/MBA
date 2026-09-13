@@ -5,6 +5,7 @@ import {
   isRuleClassRegistry,
   mergeRuleClassRegistries,
 } from "./rule-classes.js";
+import { defaultToolCircuitBreakerConfig } from "./default-config.js";
 import type { RuleClassDef, RuleClassRegistry } from "./rule-classes.js";
 
 describe("expandRuleClass", () => {
@@ -53,9 +54,35 @@ describe("BUILTIN_RULE_CLASSES", () => {
     expect(BUILTIN_RULE_CLASSES.loopBreaker!.escalation).toBeDefined();
   });
 
-  it("readLoop carries repeatRun only (no directDuplication) with a mask ladder", () => {
+  it("readLoop carries repeatRun only (no directDuplication) and mops on the first loop trip", () => {
     expect(Object.keys(BUILTIN_RULE_CLASSES.readLoop!.members)).toEqual(["repeatRun"]);
-    expect(BUILTIN_RULE_CLASSES.readLoop!.escalation?.tiers.some((t) => t.tier === "mask")).toBe(true);
+    const tiers = BUILTIN_RULE_CLASSES.readLoop!.escalation?.tiers ?? [];
+    expect(tiers.some((t) => t.tier === "mask")).toBe(true);
+    expect(tiers[0]).toMatchObject({
+      tier: "nudge",
+      action: "ampi",
+      recipe: "sanitize/duplicates",
+    });
+  });
+
+  it("loopBreaker mops on the first trip; readSafety does not", () => {
+    const loopNudge = BUILTIN_RULE_CLASSES.loopBreaker!.escalation?.tiers[0];
+    expect(loopNudge).toMatchObject({
+      tier: "nudge",
+      action: "ampi",
+      recipe: "sanitize/duplicates",
+    });
+    const safety = expandRuleClass(BUILTIN_RULE_CLASSES.readSafety!, true);
+    expect(JSON.stringify(safety)).not.toContain("sanitize/duplicates");
+  });
+
+  it("global read_file repeatRun seed mops; eof does not", () => {
+    const tcb = defaultToolCircuitBreakerConfig().tools.read_file;
+    expect(tcb?.repeatRun?.escalation?.tiers[0]).toMatchObject({
+      action: "ampi",
+      recipe: "sanitize/duplicates",
+    });
+    expect(JSON.stringify(tcb?.eofOverflow)).not.toContain("sanitize");
   });
 
   it("readSafety expands to a valid rule set", () => {

@@ -28,6 +28,21 @@ export interface SetResult {
   readonly modelLoaded: boolean;
 }
 
+export interface WatchRow {
+  readonly id: string;
+  readonly label: string;
+  readonly tool: string;
+  readonly rule: string;
+  readonly mode: "inherit" | "off" | "on";
+  readonly effective: boolean;
+}
+
+export interface ModelWatches {
+  readonly modelId: string | null;
+  readonly tcbPath?: string;
+  readonly watches: readonly WatchRow[];
+}
+
 /** One row of GET /servers (ADR-0097 Phase 2). */
 export interface ServerEntry {
   readonly id: string;

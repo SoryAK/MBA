@@ -50,6 +50,11 @@
  *        400 invalid field/value. REPORTS `modelLoaded` (probed from the
  *        upstream) so the caller can offer a restart — the route never
  *        restarts anything itself.
+ *   GET  /models/watches?id=<id>     → { modelId, watches: [{ id, mode, effective, … }] }
+ *        Known read_file watches (clamp / eof / loop). Omit id for the
+ *        global seed (all inherit, all on). Empty tcb.jsonl is inherit.
+ *   POST /models/watches             → { modelId, watch, before, after }
+ *        Body: { id, watch, mode: inherit|off|on }. Writes model tcb.jsonl.
  *   POST /models/stage               → { modelId, action, envelope, dest, source?, reason? }
  *        Body: { id, projectRoot, harness, ide? }. Copy the winning
  *        `instructions.md` into a harness-native file in the project.
@@ -95,6 +100,13 @@ import {
   type SwitchExecutor,
 } from "./model-switch.js";
 import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
+import {
+  defaultWatches,
+  parseWatchId,
+  parseWatchMode,
+  readModelWatches,
+  setModelWatch,
+} from "./model-watches.js";
 import { compactHarnessKey, envelopeRelativePath } from "../mba/envelope.js";
 import { readEnvelopeOwner } from "../mba/stage-instructions.js";
 import { stageModelCard, restageSlotsAfterRevoke, restagePairedSlotsForModel } from "./stage-model-card.js";
@@ -565,6 +577,51 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       modelFile: result.modelFile,
       modelLoaded: isLoadedPath(loaded, result.modelFile),
     });
+  });
+
+  app.get("/models/watches", (c) => {
+    const id = c.req.query("id");
+    if (!id || id.length === 0) {
+      return c.json(defaultWatches());
+    }
+    const watches = readModelWatches(opts.adapterDir ?? "", id);
+    if (!watches) {
+      return c.json({ error: `unknown model: ${id}` }, 404);
+    }
+    return c.json(watches);
+  });
+
+  app.post("/models/watches", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { id?: unknown; watch?: unknown; mode?: unknown };
+    if (
+      !input ||
+      typeof input !== "object" ||
+      typeof input.id !== "string" ||
+      input.id.length === 0 ||
+      typeof input.watch !== "string" ||
+      typeof input.mode !== "string"
+    ) {
+      return c.json({ error: "body must be { id, watch, mode }" }, 400);
+    }
+    const watch = parseWatchId(input.watch);
+    const mode = parseWatchMode(input.mode);
+    if (!watch) {
+      return c.json({ error: "watch must be clamp, eof, or loop" }, 400);
+    }
+    if (!mode) {
+      return c.json({ error: "mode must be inherit, off, or on" }, 400);
+    }
+    const result = setModelWatch(opts.adapterDir ?? "", input.id, watch, mode);
+    if ("error" in result) {
+      return c.json({ error: result.error }, result.status);
+    }
+    return c.json(result);
   });
 
   app.post("/models/stage", async (c) => {

@@ -27,6 +27,16 @@ export const DEFAULT_BINARY_EXTENSIONS: readonly string[] = [
   ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
 ];
 
+/** Loop classes: mop duplicate dirt on the first trip; mask then kill still hold. */
+const LOOP_LADDER: EscalationLadder = {
+  tiers: [
+    { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "sanitize/duplicates" },
+    { tier: "mask", afterIgnoredTrips: 2, revivalCalls: 3 },
+    { tier: "kill", afterIgnoredTrips: 4, action: "return-error" },
+  ],
+  counterMode: "monotonic",
+};
+
 /** Built-in rule classes. User classes may override these by name. */
 export const BUILTIN_RULE_CLASSES: RuleClassRegistry = {
   readSafety: {
@@ -44,14 +54,7 @@ export const BUILTIN_RULE_CLASSES: RuleClassRegistry = {
       repeatRun: { threshold: 4 },
       directDuplication: { threshold: 3 },
     },
-    escalation: {
-      tiers: [
-        { tier: "nudge", afterIgnoredTrips: 0 },
-        { tier: "mask", afterIgnoredTrips: 2, revivalCalls: 3 },
-        { tier: "kill", afterIgnoredTrips: 4, action: "return-error" },
-      ],
-      counterMode: "monotonic",
-    },
+    escalation: LOOP_LADDER,
   },
   readLoop: {
     // read-only loop breaker: repeatRun alone (no arg-hash directDuplication,
@@ -59,14 +62,7 @@ export const BUILTIN_RULE_CLASSES: RuleClassRegistry = {
     members: {
       repeatRun: { threshold: 4 },
     },
-    escalation: {
-      tiers: [
-        { tier: "nudge", afterIgnoredTrips: 0 },
-        { tier: "mask", afterIgnoredTrips: 2, revivalCalls: 3 },
-        { tier: "kill", afterIgnoredTrips: 4, action: "return-error" },
-      ],
-      counterMode: "monotonic",
-    },
+    escalation: LOOP_LADDER,
   },
 };
 
