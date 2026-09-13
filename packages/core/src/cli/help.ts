@@ -47,7 +47,7 @@ export function usageModels(): string {
     `${brand("models")}`,
     "",
     cmd("mba models", "edit / search (TTY menu)"),
-    cmd("mba models list", "print every model id"),
+    cmd("mba models list", "print every id · family  (commands take the id)"),
     cmd("mba models <id>", "edit one model's dials"),
     cmd("mba models show <id>", "print every dial"),
     cmd("mba models set <id> <field> <value>", "set one dial"),

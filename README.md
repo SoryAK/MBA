@@ -47,7 +47,7 @@ That copies (or hardlinks) them in and scaffolds the house. You are not download
 Pull a GGUF into the hub and scaffold the house:
 
 ```sh
-mba models pull owner/repo:Q4_K_M --id qwen
+mba models pull owner/repo:Q4_K_M --id qwen3.8-27b
 ```
 
 HuggingFace search is the same path without a URL:
@@ -63,14 +63,14 @@ mba models search
 Boot this model. Then attach a client.
 
 ```sh
-mba s boot qwen
-mba connect qwen --harness cursor
+mba s boot qwen3.8-27b
+mba connect qwen3.8-27b --harness cursor
 mba status
 ```
 
 Boot starts the **model inference server** with **this** model’s dials only — no client attached yet. Today that server is llama.cpp. More inference servers are coming; MBA is not locked to one. Connect stages the card and mints a token. After that, chat goes through MBA.
 
-You did not have to write a breaker file. `read_file` is already watched: overshoots get clamped, past-EOF gets a stop, a read-loop gets mopped. Empty `tcb.jsonl` in the house means inherit that, not “off.” See it with `mba models watch qwen`. Change it with `mba models watch qwen loop off` (or `inherit` / `on`).
+You did not have to write a breaker file. `read_file` is already watched: overshoots get clamped, past-EOF gets a stop, a read-loop gets mopped. Empty `tcb.jsonl` in the house means inherit that, not “off.” `mba models list` is **id · family**; commands take the id (left). See it with `mba models watch qwen3.8-27b`. Change it with `mba models watch qwen3.8-27b loop off` (or `inherit` / `on`).
 
 `mba models stage` copies a non-empty winning `instructions.md` into the file the harness already injects (`CLAUDE.local.md`, `.cursor/rules/mba.mdc`, …). The model id is in that card; the filename stays the harness slot. `mba connect` does that and mints a Bearer token; once any session exists, chat through the MBA proxy requires it. `notes.md` stays in the store.
 
@@ -108,11 +108,12 @@ MBA consolidates those factors into a **model behavioral adapter** — the confi
 
 ```sh
 mba models               # pick and edit dials
-mba models watch qwen
-mba models watch qwen loop off
-mba models show qwen
-mba models stage qwen --harness cursor
-mba connect qwen --harness cursor
+mba models list          # id · family; commands take the id
+mba models watch qwen3.8-27b
+mba models watch qwen3.8-27b loop off
+mba models show qwen3.8-27b
+mba models stage qwen3.8-27b --harness cursor
+mba connect qwen3.8-27b --harness cursor
 mba servers              # list / boot / stop (TTY)
 mba s logs <id>
 mba migrate models ~/models   # local GGUFs → hub (copy/hardlink)

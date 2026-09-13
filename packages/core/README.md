@@ -51,15 +51,15 @@ mba migrate models ~/models
 No weights yet:
 
 ```sh
-mba models pull owner/repo:Q4_K_M --id qwen
+mba models pull owner/repo:Q4_K_M --id qwen3.8-27b
 # or: mba models search
 ```
 
 The hour — boot the inference server, then attach a client:
 
 ```sh
-mba s boot qwen
-mba connect qwen --harness cursor
+mba s boot qwen3.8-27b
+mba connect qwen3.8-27b --harness cursor
 mba status
 ```
 
