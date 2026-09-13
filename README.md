@@ -10,7 +10,7 @@
 configure adapter → BCB (system watch) → AMPI (system live response)
 ```
 
-We are looking for **contributors and collaborators**. Issues, PRs, and design discussion are welcome — see [Contributing](#contributing).
+We are looking for **contributors and collaborators**. Issues, PRs, and design discussion are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Node ≥ 22. llama.cpp on `PATH` if you boot the inference server today.
 
@@ -174,10 +174,11 @@ After CLI changes, rebuild `@mba-ai/core` so a linked `mba` picks them up (`npm 
 
 ## Contributing
 
-MBA is looking for **contributors and collaborators** — implementation, inference-server support, docs, and design. Open an [issue](https://github.com/SoryAK/MBA/issues) or a [pull request](https://github.com/SoryAK/MBA/pulls).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Docs
 
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to help
 - [`.Manual/model-behavioral-adapters.md`](.Manual/model-behavioral-adapters.md) — system manual
 - [`docs/ampi.md`](docs/ampi.md) — AMPI (live-response subsystem)
 - [`docs/ci.md`](docs/ci.md) — merge gate (GitHub Actions)
