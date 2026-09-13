@@ -39,8 +39,8 @@ These are already decided. A PR that quietly reverses them will not land.
 - **Per-model house.** Dials, watches, and recipes belong to **this** model,
   not the fleet.
 - **Daemon owns state.** `mba` is a thin door (ADR-0096). It does not edit
-  adapter JSONL/YAML itself. Exception: `mba start` / `mba stop` (and
-  `--help`, `completion`, `estimate-memory`).
+  adapter JSONL/YAML itself. Exception: `mba start` / `mba stop` (ADR-0107)
+  (and `--help`, `completion`, `estimate-memory`).
 - **Escalation names AMPI only.** The ladder never names a context cut.
   Context Management splices `messages[]`.
 - **AMPI always finishes.** Bound/held limits are not AMPI. Assist is supply,

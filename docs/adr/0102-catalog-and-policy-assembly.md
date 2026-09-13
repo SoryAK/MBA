@@ -90,6 +90,11 @@ A class or recipe does not say *where* it runs. It is a playbook.
 | Project policy | This repo's work order: which playbooks, on which tools, which recipe |
 | Model `tcb.jsonl` / `bcb.jsonl` | Optional *model* quirks only (this GGUF false-trips at 4), not the main UX |
 
+Empty model `tcb.jsonl` means **inherit** (global seed + family), not off. The
+v1 operator door for the three shipped `read_file` watches is
+[ADR-0108](0108-known-watches-human-door.md) (`mba models watch`). Full catalog
+assembly stays this ADR.
+
 If a project file has to redefine `repeatRun`, the catalog failed. If global
 JSON inlines every member (current seed), the catalog is unused as the
 out-of-box layer.
