@@ -4,6 +4,29 @@ User-facing changes to `@mba-ai/core` on npm. Versions before **0.1.12** are not
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.16] — 2026-09-13
+
+### Added
+
+- `mba start` / `mba stop`: background daemon (systemd --user on Linux). `--foreground` is this terminal. A second start prints the URL already in use.
+- Known watches: `mba models watch <id>` for clamp / eof / loop (`inherit` | `off` | `on`). Empty house `tcb.jsonl` inherits on, not off.
+- Read-loop mop on first trip (Sanitize).
+- `mba migrate models` / `mba migrate find`: local GGUFs into the hub (copy or hardlink).
+- Bare boot (family+model dials only). `mba connect` stages the card and mints a token.
+- `mba clients`: pairing, hashed tokens, stage / revoke.
+- Per-model SQLite tool and trip history.
+
+### Changed
+
+- `mba start` is how the daemon runs. `npm start` is that verb; `--foreground` is `npm run dev`.
+- Boot does not attach a client env. `mba connect` does that after.
+- llama.cpp owns boot warmup (MBA does not POST `/completion`).
+- Package README follows install → migrate or pull → boot → connect. Commands take a model id (`mba models list` is id · family).
+
+### Removed
+
+- `mba migrate adapters` and `mba migrate-paths`. Use `mba migrate models` / `find`.
+
 ## [0.1.15] — 2026-09-08
 
 ### Added
