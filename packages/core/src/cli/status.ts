@@ -3,7 +3,7 @@ import { formatPairedSlotLines } from "./slot-print.js";
 import { formatServerLine } from "./list-print.js";
 import { brand, dim, heading, kv, paint, GRN, RED } from "./style.js";
 import type { ModelEntry } from "./interactive.js";
-import type { PairingSession, ServerEntry } from "./types.js";
+import type { PairingSession, ServerEntry, ModelWatches } from "./types.js";
 
 interface StatusBody {
   readonly pairing?: {
@@ -26,7 +26,7 @@ export async function cmdStatus(json: boolean): Promise<void> {
     }
     process.stdout.write(`${brand("status")}\n`);
     process.stdout.write(`${kv("service", paint("down", RED))}\n`);
-    process.stdout.write(`  ${dim("start the service or set MBA_SERVICE_URL")}\n`);
+    process.stdout.write(`  ${dim("mba start  or set MBA_SERVICE_URL")}\n`);
     return;
   }
 
@@ -34,6 +34,7 @@ export async function cmdStatus(json: boolean): Promise<void> {
   let servers: ServerEntry[] = [];
   let machine = "unknown";
   let pairing: StatusBody["pairing"];
+  let watches: ModelWatches | undefined;
   try {
     const [m, s, overlay, st] = await Promise.all([
       serviceGet<{ models: ModelEntry[] }>(url, "/models"),
@@ -60,6 +61,14 @@ export async function cmdStatus(json: boolean): Promise<void> {
 
   const loaded = models.filter((m) => m.loaded);
   const sessions = pairing?.sessions ?? [];
+  try {
+    const loadedId = loaded[0]?.id;
+    watches = loadedId
+      ? await serviceGet<ModelWatches>(url, `/models/watches?id=${encodeURIComponent(loadedId)}`)
+      : await serviceGet<ModelWatches>(url, "/models/watches");
+  } catch {
+    watches = undefined;
+  }
 
   if (json) {
     process.stdout.write(
@@ -72,6 +81,16 @@ export async function cmdStatus(json: boolean): Promise<void> {
             ? { active: pairing.active, count: pairing.count, sessions }
             : { active: false, count: 0, sessions: [] },
           loaded: loaded.map((m) => m.id),
+          watches: watches
+            ? {
+                modelId: watches.modelId,
+                watches: watches.watches.map((w) => ({
+                  id: w.id,
+                  mode: w.mode,
+                  effective: w.effective,
+                })),
+              }
+            : null,
           models: models.map((m) => ({ id: m.id, family: m.family, loaded: m.loaded })),
           servers: servers.map((s) => ({
             id: s.id,
@@ -98,6 +117,13 @@ export async function cmdStatus(json: boolean): Promise<void> {
     ? `${paint("locked", GRN)}  ${pairing.count}`
     : dim("off");
   process.stdout.write(`${kv("pairing", pairingLabel)}\n`);
+  if (watches) {
+    const bits = watches.watches
+      .map((w) => `${w.id} ${w.effective ? paint("on", GRN) : paint("off", RED)}`)
+      .join("  ");
+    const who = watches.modelId ?? "inherit";
+    process.stdout.write(`${kv("watches", `${bits}  ${dim(who)}`)}\n`);
+  }
 
   process.stdout.write(`\n  ${heading("clients")}\n`);
   if (sessions.length === 0) {

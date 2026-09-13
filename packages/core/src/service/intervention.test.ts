@@ -395,4 +395,70 @@ describe("intervene (ADR-0101 Step 2)", () => {
       expect(res.eraseSlot).toBeUndefined();
     }
   });
+
+  it("runs sanitize/scratch on the live path and keeps unmarked pairs", () => {
+    const ampiConfig: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          eofOverflow: {
+            enabled: true,
+            escalation: {
+              tiers: [
+                { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "sanitize/scratch" },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const body = JSON.stringify({
+      model: "m",
+      messages: [
+        { role: "system", content: "you are cline-ampi-scratch" },
+        { role: "user", content: "search then read" },
+        {
+          role: "assistant",
+          tool_calls: [
+            { id: "keep", type: "function", function: { name: "search", arguments: '{"q":"a"}' } },
+            { id: "junk", type: "function", function: { name: "search", arguments: '{"q":"b"}' } },
+          ],
+        },
+        { role: "tool", tool_call_id: "keep", content: "A" },
+        { role: "tool", tool_call_id: "junk", content: "B", mba: { mark: "scratch" } },
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "over",
+              type: "function",
+              function: {
+                name: "read_file",
+                arguments: JSON.stringify({ filePath: smallFile, startLine: 1, endLine: 100 }),
+              },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "over", content: "a\nb\nc" },
+      ],
+    });
+    const res = intervene(body, "copilot", ampiConfig, db);
+    expect(res.action).toBe("forward");
+    if (res.action === "forward") {
+      const parsed = JSON.parse(res.body) as {
+        messages: Array<{
+          role?: string;
+          tool_call_id?: string;
+          tool_calls?: Array<{ id?: string }>;
+          content?: unknown;
+        }>;
+      };
+      expect(parsed.messages.some((m) => m.tool_call_id === "junk")).toBe(false);
+      expect(parsed.messages.some((m) => m.tool_call_id === "keep")).toBe(true);
+      const searchTurn = parsed.messages.find((m) => m.tool_calls?.some((c) => c.id === "keep"));
+      expect(searchTurn?.tool_calls?.map((c) => c.id)).toEqual(["keep"]);
+      expect(String(parsed.messages[parsed.messages.length - 1]!.content)).toContain("[[mba:");
+      expect(res.eraseSlot).toBe(true);
+    }
+  });
 });

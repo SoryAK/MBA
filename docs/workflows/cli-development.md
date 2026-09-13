@@ -14,7 +14,7 @@ Industry notes (Claude Code architecture review + git/gh/kubectl): steal TTY-vs-
 
 ## What `mba` is
 
-A **thin client** of the MBA daemon. It does not own adapter files, sessions, or llama-server. Reads and writes go through the service (`GET` / `POST`). Local exceptions (no daemon): `estimate-memory`, `completion`, `--help`. Scan of operator GGUFs for `mba migrate` is local; the hub write is `POST /models/adopt`.
+A **thin client** of the MBA daemon. It does not own adapter files, sessions, or llama-server. Reads and writes go through the service (`GET` / `POST`). Local exceptions (no daemon): `mba start` / `mba stop` (systemd --user, or `--foreground` / SIGTERM), `estimate-memory`, `completion`, `--help`. Scan of operator GGUFs for `mba migrate` is local; the hub write is `POST /models/adopt`.
 
 Nouns: `models` (`m`), `servers` (`s`), `clients` (`c`), `migrate`, `machine`, `status`. Old flat verbs stay as aliases. `migrate` has no shortcut.
 
@@ -29,6 +29,8 @@ TTY and `--json` are two skins of the same route. JSON field names are the contr
 | `mba.ts` | argv → command; service URL; fail |
 | `route.ts` | parse argv (`parseMbaArgv`) |
 | `help.ts` | `--help` text |
+| `start.ts` | `mba start` / `mba stop` |
+| `systemd-user.ts` | generated `mba.service` (Restart=on-failure) |
 | `client.ts` | `fail`, `serviceGet` / `servicePost`, `resolveServiceUrl` |
 | `style.ts` | paint, `brand`, `kv`, `heading`, `shortenHome` |
 | `interactive.ts` | raw-mode pickers and one-line prompts |
@@ -48,7 +50,7 @@ Paint lives in `style.ts`. Do not add a second color kit. Honors `NO_COLOR` / `F
 3. **Print with `style.ts`.** `brand("status")`, `kv`, `heading`, `dim`, `paint(..., BOLD)`. New chrome copies an existing screen; it does not invent one.
 4. **Interactive?** Use `interactive.ts` (`pickLabeledInteractive`, `askValueInteractive`, …). New prompt kinds follow [add-interactive-cli-prompt.md](./add-interactive-cli-prompt.md).
 5. **Tests.** Route/parse always. Interactive against a fake stdin. Display helpers (`formatClientLabel`, envelope paths) as unit tests — do not snapshot whole TTY dumps unless the polish cut says so.
-6. **Build the binary the operator runs.** `mba` on PATH is `packages/core/dist/cli/mba.js` (`npm link`). The daemon is `tsx src/service/main.ts` and does not need this build.
+6. **Build the binary the operator runs.** `mba` on PATH is `packages/core/dist/cli/mba.js` (`npm link`). `mba start` writes/starts `~/.config/systemd/user/mba.service`. `--foreground` imports `service/main.ts` in-process.
    ```sh
    npm run build -w @mba-ai/core
    mba status
@@ -97,7 +99,7 @@ Still parked (CLI polish card): picker chrome (`interactive.ts` / `previewBox`).
 
 ## Gotchas
 
-- **Service vs CLI rebuild.** systemd unit runs `tsx …/src/service/main.ts` (source). Operator `mba` is `dist`. Rebuild CLI after UI changes; restart the unit after service-path changes.
+- **Service vs CLI rebuild.** `mba start` generates a user unit whose ExecStart is this install’s node + `service/main`. Operator `mba` on PATH is `dist`. Rebuild CLI after UI changes; `mba stop` && `mba start` after service-path changes. Machine env stays in `mba.service.d/local.conf`.
 - **Raw mode.** Restore `setRawMode(false)` in `finally`. Interactive only when `process.stdin.isTTY`.
 - **`--json` stability.** Scripts and tests key on field names. A polish may regroup TTY rows; it must not rename JSON. Additive fields (`envAttached`) are ok; `env.harness` values may change when the product does (`none` on boot).
 - **Boot then connect.** Boot never applies `environments/` from a leftover pairing or the Copilot default. Family + model dials only. `mba connect` attaches the client (card + token). Env overlays still apply when a caller passes an explicit harness (stage, proxy, `resolve-server-recipe --harness`).

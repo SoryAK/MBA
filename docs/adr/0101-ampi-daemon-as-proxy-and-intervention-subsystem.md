@@ -5,6 +5,7 @@
 - **Deciders:** project maintainer + agent
 - **Tags:** architecture, mba, bcb, tcb, ampi, daemon, proxy, uds, mcp
 - **Supersedes (partially):** ADR-0088 (AMPI subsystem boundary — the proxy-centric orchestrator assumption is replaced by the daemon-as-proxy model below)
+- **Relates to:** [AMPI](../ampi.md) (living handbook)
 
 ## Context and Problem Statement
 

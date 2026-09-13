@@ -17,13 +17,16 @@ export type ModelsAction =
   | "search"
   | "edit"
   | "stage"
-  | "connect";
+  | "connect"
+  | "watch";
 
 export type MigrateAction = "menu" | "models" | "find";
 
 export type MbaRoute =
   | { readonly cmd: "home" }
   | { readonly cmd: "help"; readonly topic: HelpTopic }
+  | { readonly cmd: "start"; readonly foreground: boolean }
+  | { readonly cmd: "stop" }
   | { readonly cmd: "status" }
   | { readonly cmd: "completion"; readonly args: readonly string[] }
   | { readonly cmd: "estimate-memory"; readonly args: readonly string[] }
@@ -40,7 +43,7 @@ export interface ParsedMba {
   readonly route: MbaRoute;
 }
 
-const FLAGS = new Set(["--yes", "--json"]);
+const FLAGS = new Set(["--yes", "--json", "--foreground"]);
 
 function wantsHelp(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h") || args[0] === "help";
@@ -83,6 +86,7 @@ function parseModels(rest: readonly string[]): MbaRoute {
   if (sub === "stage") return { cmd: "models", action: "stage", args: tail };
   if (sub === "connect") return { cmd: "models", action: "connect", args: tail };
   if (sub === "edit") return { cmd: "models", action: "edit", args: tail };
+  if (sub === "watch" || sub === "watches") return { cmd: "models", action: "watch", args: tail };
   return { cmd: "models", action: "edit", args: rest.filter((a) => a !== "--help" && a !== "-h") };
 }
 
@@ -95,6 +99,16 @@ export function parseMbaArgv(argv: readonly string[]): ParsedMba {
   if (!command) return { assumeNo, json, route: { cmd: "home" } };
   if (command === "help" || command === "--help" || command === "-h") {
     return { assumeNo, json, route: { cmd: "help", topic: helpTopic(rest[0]) } };
+  }
+  if (command === "start") {
+    if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "overview" } };
+    if (rest.length > 0) return { assumeNo, json, route: { cmd: "unknown", command: `start ${rest[0]}` } };
+    return { assumeNo, json, route: { cmd: "start", foreground: argv.includes("--foreground") } };
+  }
+  if (command === "stop") {
+    if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "overview" } };
+    if (rest.length > 0) return { assumeNo, json, route: { cmd: "unknown", command: `stop ${rest[0]}` } };
+    return { assumeNo, json, route: { cmd: "stop" } };
   }
   if (command === "status") {
     if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "status" } };

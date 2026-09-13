@@ -2,11 +2,13 @@
 
 The MCP control plane for MBA. Any MCP host (VS Code Copilot, Cline, Claude Desktop) can read and tune the daemon through this server.
 
-**MBA (Model Behavioral Adapter)** is a local-first system daemon focused on individual model behavior. This package is not that daemon. It is a thin stdio client over [`@mba-ai/core`](../core): zero framework dependency, no file writes of its own.
+**MBA** is the per-model behavior layer on your machine. This package is not that daemon. It is a thin stdio client over [`@mba-ai/core`](../core): zero framework dependency, no file writes of its own.
+
+Install and start the daemon first (`mba start`), then this server. The beginning process (install → migrate or pull → boot → connect) lives in the [repo README](../../README.md).
+
+We are looking for **contributors and collaborators**. See [Contributing](#contributing).
 
 The service must already be running for the service-backed tools. Discovery is `<state dir>/mba/service.json`, or `MBA_SERVICE_URL`.
-
-The operator story lives in the [repo README](../../README.md).
 
 ## Tools
 
@@ -28,6 +30,12 @@ Service-backed (fail soft if the daemon is down):
 
 ```sh
 npm install @mba-ai/mcp-server
+```
+
+Start the MBA daemon before the service-backed tools will do useful work:
+
+```sh
+mba start
 ```
 
 ## Run
@@ -75,7 +83,11 @@ VS Code `settings.json` uses `mcp.servers` with the same command. Set `MBA_WORKS
 
 `mba_file_metadata` rejects paths outside `MBA_WORKSPACE_ROOT`. Service-backed tools only reach `127.0.0.1`. The server runs with the permissions of the process that launches it.
 
+## Contributing
+
+MBA is looking for **contributors and collaborators** — implementation, inference-server support, docs, and design. Open an [issue](https://github.com/SoryAK/MBA/issues) or a [pull request](https://github.com/SoryAK/MBA/pulls). The operator walkthrough is the [repo README](../../README.md).
+
 ## Docs
 
-- [Repo README](../../README.md)
+- [Repo README](../../README.md) — install, migrate, pull, boot, connect
 - [`@mba-ai/core`](../core)

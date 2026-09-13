@@ -38,10 +38,15 @@ describe("parseMbaArgv", () => {
       action: "edit",
       args: ["qwen"],
     });
-    expect(parseMbaArgv(["models", "search"]).route).toEqual({
+    expect(parseMbaArgv(["models", "watch", "qwen", "loop", "off"]).route).toEqual({
       cmd: "models",
-      action: "search",
-      args: [],
+      action: "watch",
+      args: ["qwen", "loop", "off"],
+    });
+    expect(parseMbaArgv(["models", "watches", "qwen"]).route).toEqual({
+      cmd: "models",
+      action: "watch",
+      args: ["qwen"],
     });
     expect(parseMbaArgv(["models", "pull", "owner/repo", "--id", "qwen"]).route).toEqual({
       cmd: "models",
@@ -115,6 +120,15 @@ describe("parseMbaArgv", () => {
       args: ["boot", "qwen"],
     });
     expect(parseMbaArgv(["status"]).route).toEqual({ cmd: "status" });
+    expect(parseMbaArgv(["start"]).route).toEqual({ cmd: "start", foreground: false });
+    expect(parseMbaArgv(["start", "--foreground"]).route).toEqual({ cmd: "start", foreground: true });
+    expect(parseMbaArgv(["stop"]).route).toEqual({ cmd: "stop" });
+    expect(parseMbaArgv(["stop", "--help"]).route).toEqual({ cmd: "help", topic: "overview" });
+    expect(parseMbaArgv(["start", "--help"]).route).toEqual({ cmd: "help", topic: "overview" });
+    expect(parseMbaArgv(["start", "extra"]).route).toEqual({
+      cmd: "unknown",
+      command: "start extra",
+    });
     expect(parseMbaArgv(["models", "list", "--json"]).json).toBe(true);
     expect(parseMbaArgv(["models", "list", "--json"]).route).toEqual({
       cmd: "models",

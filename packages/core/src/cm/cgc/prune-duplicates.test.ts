@@ -87,4 +87,58 @@ describe("cm.cgc.pruneDuplicates", () => {
     expect(out.messages.some((m) => m.tool_call_id === "c")).toBe(false);
     expect(out.messages.some((m) => m.tool_call_id === "d")).toBe(false);
   });
+
+  it("does not drop a sibling tool_call on the same assistant turn", () => {
+    const loop = JSON.stringify({ q: "loop" });
+    const messages: ChatMessage[] = [
+      { role: "user", content: "both" },
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: "dup1",
+            type: "function",
+            function: { name: "search", arguments: loop },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "dup1", content: "first" },
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: "dup2",
+            type: "function",
+            function: { name: "search", arguments: loop },
+          },
+          {
+            id: "keep",
+            type: "function",
+            function: { name: "search", arguments: JSON.stringify({ q: "one" }) },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "dup2", content: "second" },
+      { role: "tool", tool_call_id: "keep", content: "ok" },
+    ];
+    const out = pruneDuplicates({
+      messages,
+      trip: {
+        tool: "search",
+        rule: "directDuplication",
+        toolCallId: "dup2",
+        message: "dup",
+        meta: {},
+        targetKey: "search:loop",
+      },
+    });
+    const assistants = out.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(2);
+    expect(
+      (assistants[1]!.tool_calls as Array<{ id?: string }>).map((c) => c.id),
+    ).toEqual(["keep"]);
+    expect(out.messages.some((m) => m.tool_call_id === "keep")).toBe(true);
+    expect(out.messages.some((m) => m.tool_call_id === "dup1")).toBe(true);
+    expect(out.messages.some((m) => m.tool_call_id === "dup2")).toBe(false);
+  });
 });

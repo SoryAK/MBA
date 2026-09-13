@@ -393,6 +393,10 @@ bindings:
     const dd = resolved.bcbConfig.tools.meta_tool?.directDuplication;
     expect(dd?.threshold).toBe(9);
     expect(dd?.escalation?.tiers.some((t) => t.tier === "mask")).toBe(true);
+    expect(dd?.escalation?.tiers[0]).toMatchObject({
+      action: "ampi",
+      recipe: "sanitize/duplicates",
+    });
   });
 
   it("lets a user rule-classes.json override a built-in and reports the collision", () => {
@@ -459,6 +463,10 @@ bindings:
     // readLoop member with its mask ladder, and NO directDuplication:
     expect(rs?.repeatRun?.enabled).toBe(true);
     expect(rs?.repeatRun?.escalation?.tiers.some((t) => t.tier === "mask")).toBe(true);
+    expect(rs?.repeatRun?.escalation?.tiers[0]).toMatchObject({
+      action: "ampi",
+      recipe: "sanitize/duplicates",
+    });
     expect(rs?.directDuplication).toBeUndefined();
   });
 

@@ -4,7 +4,7 @@
 - **Date:** 2026-09-05
 - **Deciders:** project maintainer + agent
 - **Tags:** architecture, mba, bcb, tcb, ampi, policy, rule-class, config
-- **Relates to:** ADR-0084 (adapter spec), ADR-0087 (rule classes, in-code), ADR-0088 / ADR-0101 (AMPI recipes), ADR-0092 (daemon as orchestrator)
+- **Relates to:** ADR-0084 (adapter spec), ADR-0087 (rule classes, in-code), ADR-0088 / ADR-0101 (AMPI recipes), ADR-0092 (daemon as orchestrator), [AMPI](../ampi.md)
 
 ## Context and Problem Statement
 
@@ -112,8 +112,8 @@ watch:
   "*": [loopBreaker]
 
 on:
-  loopBreaker: { at: kill, recipe: sweep-duplicates }
-  readLoop:    { at: kill, recipe: sweep-duplicates }
+  loopBreaker: { at: nudge, recipe: sanitize/duplicates }
+  readLoop:    { at: nudge, recipe: sanitize/duplicates }
 
 overrides:
   readLoop.repeatRun.threshold: 2
@@ -129,7 +129,7 @@ First-boot global policy should **attach classes**, not expand members into
 
 - `read_file` → `readSafety` + `readLoop`
 - other tools → `loopBreaker`
-- `on kill → sweep-duplicates` when recipes exist (AMPI recipe name, not a CGC cut)
+- `on` first loop trip → `sanitize/duplicates` (AMPI recipe name, not a CGC cut). Mask then kill stay. Not on `readSafety`.
 
 The expanded `ToolCircuitBreakerConfig` is a **resolve-time view** (debug /
 engine input), not the source of truth. `POST /set_rules` should eventually

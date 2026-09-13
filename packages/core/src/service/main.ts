@@ -5,7 +5,7 @@
  * writes a discovery file (`<state>/mba/service.json`) so consumers (the
  * proxy) can find it, and stays up until SIGINT/SIGTERM.
  *
- * Run with: `npm run dev -w @mba-ai/core` (or `npm start -w @mba-ai/core`).
+ * Run with: `mba start` (or `npm start -w @mba-ai/core`).
  *
  * Env:
  *   MBA_BASE_DIR         — store base dir (default: OS-aware, see service/paths.ts)

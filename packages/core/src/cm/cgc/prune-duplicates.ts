@@ -12,6 +12,7 @@
 import type { ChatMessage } from "../../chat-message.js";
 import { orderedToolCalls } from "../../bcb/parse-calls.js";
 import type { ToolCircuitBreakerTrip } from "../../bcb/types.js";
+import { dropToolCallIds } from "../drop-pairs.js";
 import type { CmEditContext, CmEditResult } from "../types.js";
 
 export const CGC_MARKER_PREFIX = "[[mba:";
@@ -96,13 +97,17 @@ export function pruneDuplicates(ctx: CmEditContext): CmEditResult {
     return { messages: ctx.messages, cut: "sweep", progress: 0 };
   }
 
-  const drop = new Set<number>();
-  for (const pair of run.slice(1)) {
-    drop.add(pair.assistantIndex);
-    if (pair.resultIndex !== undefined) drop.add(pair.resultIndex);
+  const dropIds = new Set(run.slice(1).map((pair) => pair.toolCallId));
+  const kept = dropToolCallIds(ctx.messages, dropIds);
+  if (kept === ctx.messages) {
+    return { messages: ctx.messages, cut: "sweep", progress: 0 };
   }
-  const kept: ChatMessage[] = ctx.messages.filter((_, i) => !drop.has(i));
-  kept.push({ role: "user", content: formatMarker(run[0]!.tool, extra) });
-
-  return { messages: kept, cut: "sweep", progress: 0 };
+  return {
+    messages: [
+      ...kept,
+      { role: "user", content: formatMarker(run[0]!.tool, extra) },
+    ],
+    cut: "sweep",
+    progress: 0,
+  };
 }

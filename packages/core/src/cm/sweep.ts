@@ -9,6 +9,7 @@
 import type { ChatMessage } from "../chat-message.js";
 import type { ToolCircuitBreakerTrip } from "../bcb/types.js";
 import { pruneDuplicates } from "./cgc/prune-duplicates.js";
+import { dropToolCallIds } from "./drop-pairs.js";
 import { readMark } from "./types.js";
 import type { CmEditResult, CmSweepWhat } from "./types.js";
 
@@ -25,17 +26,26 @@ function residue(kind: string): ChatMessage {
   };
 }
 
-function sweepScratch(messages: readonly ChatMessage[]): CmEditResult {
-  const drop = new Set<number>();
-  for (let i = 0; i < messages.length; i += 1) {
-    if (readMark(messages[i]!) === "scratch") drop.add(i);
+function scratchIds(messages: readonly ChatMessage[]): Set<string> {
+  const pinned = new Set<string>();
+  const scratched = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "tool" || typeof message.tool_call_id !== "string") continue;
+    const mark = readMark(message);
+    if (mark === "pin") pinned.add(message.tool_call_id);
+    if (mark === "scratch") scratched.add(message.tool_call_id);
   }
-  if (drop.size === 0) {
+  for (const id of pinned) scratched.delete(id);
+  return scratched;
+}
+
+function sweepScratch(messages: readonly ChatMessage[]): CmEditResult {
+  const ids = scratchIds(messages);
+  const kept = dropToolCallIds(messages, ids);
+  if (kept === messages) {
     return { messages, cut: "sweep", progress: 0 };
   }
-  const kept = messages.filter((_, i) => !drop.has(i));
-  kept.push(residue("scratch"));
-  return { messages: kept, cut: "sweep", progress: 0 };
+  return { messages: [...kept, residue("scratch")], cut: "sweep", progress: 0 };
 }
 
 export function sweep(ctx: SweepArgs): CmEditResult {
