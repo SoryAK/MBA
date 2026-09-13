@@ -27,12 +27,16 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: npm CLI for trusted publishing
@@ -64,4 +68,4 @@ jobs:
           fi
 
       - name: Publish @mba-ai/core
-        run: npm publish -w @mba-ai/core
+        run: npm publish -w @mba-ai/core --access public

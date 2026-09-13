@@ -44,6 +44,8 @@ It does not run on PRs or on `main`. `@mba-ai/mcp-server` is not in this
 workflow.
 
 GitHub Actions authenticates to npm with OIDC. There is no `NPM_TOKEN`.
+`setup-node` must set `registry-url: https://registry.npmjs.org` or npm
+never requests that token (`ENEEDAUTH`).
 
 One-time on [npmjs.com](https://www.npmjs.com/package/@mba-ai/core) → package
 settings → **Trusted Publisher** → **GitHub Actions**:
