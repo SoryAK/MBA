@@ -8,7 +8,7 @@ The companion [`@mba-ai/mcp-server`](../mcp-server) is a thin MCP client over th
 
 The beginning process (install → migrate or pull → boot → connect) lives in the [repo README](../../README.md). AMPI lives in [docs/ampi.md](../../docs/ampi.md).
 
-We are looking for **contributors and collaborators**. See [Contributing](#contributing).
+We are looking for **contributors and collaborators**. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ```text
 configure adapter → BCB (system watch) → AMPI (system live response)
@@ -96,7 +96,7 @@ After CLI changes, rebuild this package so a linked `mba` picks them up.
 
 ## Contributing
 
-MBA is looking for **contributors and collaborators** — implementation, inference-server support, docs, and design. Open an [issue](https://github.com/SoryAK/MBA/issues) or a [pull request](https://github.com/SoryAK/MBA/pulls). The operator walkthrough is the [repo README](../../README.md).
+See [CONTRIBUTING.md](../../CONTRIBUTING.md). Conduct: [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md). The operator walkthrough is the [repo README](../../README.md).
 
 ## Docs
 

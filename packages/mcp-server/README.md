@@ -6,7 +6,7 @@ The MCP control plane for MBA. Any MCP host (VS Code Copilot, Cline, Claude Desk
 
 Install and start the daemon first (`mba start`), then this server. The beginning process (install → migrate or pull → boot → connect) lives in the [repo README](../../README.md).
 
-We are looking for **contributors and collaborators**. See [Contributing](#contributing).
+We are looking for **contributors and collaborators**. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 The service must already be running for the service-backed tools. Discovery is `<state dir>/mba/service.json`, or `MBA_SERVICE_URL`.
 
@@ -85,7 +85,7 @@ VS Code `settings.json` uses `mcp.servers` with the same command. Set `MBA_WORKS
 
 ## Contributing
 
-MBA is looking for **contributors and collaborators** — implementation, inference-server support, docs, and design. Open an [issue](https://github.com/SoryAK/MBA/issues) or a [pull request](https://github.com/SoryAK/MBA/pulls). The operator walkthrough is the [repo README](../../README.md).
+See [CONTRIBUTING.md](../../CONTRIBUTING.md). Conduct: [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md). The operator walkthrough is the [repo README](../../README.md).
 
 ## Docs
 
