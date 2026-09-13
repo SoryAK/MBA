@@ -53,7 +53,7 @@ settings → **Trusted Publisher** → **GitHub Actions**:
 | Field | Value |
 | --- | --- |
 | Organization or user | `SoryAK` |
-| Repository | `MBA` |
+| Repository | `MBA` (the name only, not the git URL) |
 | Workflow filename | `publish.yml` |
 | Environment | leave empty |
 | Allowed actions | `npm publish` |
