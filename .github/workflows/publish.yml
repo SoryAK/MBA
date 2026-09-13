@@ -39,6 +39,13 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
+      - name: Drop empty npm token so OIDC can publish
+        run: |
+          cfg="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          if [ -f "$cfg" ]; then
+            sed -i '/_authToken/d' "$cfg"
+          fi
+
       - name: npm CLI for trusted publishing
         run: |
           npm install -g npm@latest
@@ -68,4 +75,5 @@ jobs:
           fi
 
       - name: Publish @mba-ai/core
-        run: npm publish -w @mba-ai/core --access public
+        working-directory: packages/core
+        run: npm publish --access public
