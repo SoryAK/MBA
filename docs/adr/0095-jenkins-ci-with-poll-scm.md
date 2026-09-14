@@ -1,9 +1,9 @@
 # ADR-0095: Jenkins CI with Poll SCM (local, no internet exposure)
 
-**Status:** Accepted for the local Jenkins trigger. The **merge gate** on the
-public repo is GitHub Actions plus the Protect main ruleset; see
-[docs/ci.md](../ci.md). This ADR remains the record of why Poll SCM was
-chosen when the repo could not use Actions.
+**Status:** Superseded. GitHub Actions is the merge gate
+([docs/ci.md](../ci.md)). The `Jenkinsfile` and local Poll SCM job are
+removed. This ADR remains the record of why Poll SCM was chosen when the
+repo could not use Actions.
 
 ## Context
 
@@ -33,4 +33,4 @@ Use **Jenkins with Poll SCM** (schedule `H/5 * * * *`, every 5 minutes) rather t
 - **Only builds while the machine is on and Jenkins is running.** A push made while the machine is off builds on the next poll after boot.
 - **`main`-only.** Branch/PR builds would need a Multibranch Pipeline — deferred, not needed yet.
 
-**Reversibility:** switching to a webhook later is a config change (GitHub plugin + payload URL `http://<jenkins-host>:8080/github-webhook/`) plus removing the poll schedule — no code changes. Documented in `docs/ci.md` §4.
+**Reversibility (historical):** a webhook would have been a Jenkins job-config change, not a repo change. That path was never taken. GitHub Actions replaced the local job; see [docs/ci.md](../ci.md).

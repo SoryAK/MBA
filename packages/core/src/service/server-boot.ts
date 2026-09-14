@@ -370,7 +370,7 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   // ollama has no binary to spawn; the daemon talks to the ollama host over HTTP.
   //
   // When the caller injects `spawnImpl` they own process creation (tests /
-  // CI). Skip the on-disk check so Jenkins does not need llama.cpp installed
+  // CI). Skip the on-disk check so CI does not need llama.cpp installed
   // just to exercise the boot route.
   const usingInjectedSpawn = input.seams?.spawnImpl !== undefined;
   const binaryPath =
