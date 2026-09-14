@@ -1,4 +1,6 @@
 # Publish `@mba-ai/core` to npm on a version tag (`v0.1.16`).
+# After npm succeeds, open a GitHub Release from that version's changelog
+# section (notice board — npm is still the artifact).
 # Does not run on pull requests or on push to main.
 # Auth is npm Trusted Publisher (OIDC). No NPM_TOKEN.
 #
@@ -17,7 +19,7 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -28,7 +30,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -57,6 +59,8 @@ jobs:
       - run: npm run build
 
       - name: Tag matches core version and changelog
+        env:
+          NOTES_FILE: ${{ runner.temp }}/release-notes.md
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
@@ -65,15 +69,35 @@ jobs:
             echo "tag v$tag does not match @mba-ai/core $ver"
             exit 1
           fi
-          if ! grep -qE "^## \\[${ver}\\] " packages/core/CHANGELOG.md; then
-            echo "packages/core/CHANGELOG.md has no ## [$ver] section"
-            exit 1
-          fi
           if grep -qE "^## \\[Unreleased\\]" packages/core/CHANGELOG.md; then
             echo "changelog still has an Unreleased heading"
             exit 1
           fi
+          section="$(node .github/scripts/changelog-section.mjs "$ver" packages/core/CHANGELOG.md)"
+          {
+            echo "@mba-ai/core ${ver} is on [npm](https://www.npmjs.com/package/@mba-ai/core/v/${ver})."
+            echo
+            printf "%s\n" "$section"
+          } > "$NOTES_FILE"
 
       - name: Publish @mba-ai/core
         working-directory: packages/core
         run: npm publish --access public
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES_FILE: ${{ runner.temp }}/release-notes.md
+        run: |
+          set -euo pipefail
+          ver="$(node -p "require('./packages/core/package.json').version")"
+          title="@mba-ai/core ${ver}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "$title" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$title" \
+              --notes-file "$NOTES_FILE" \
+              --latest \
+              --verify-tag
+          fi
