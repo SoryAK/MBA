@@ -45,7 +45,7 @@ docs/backlog/
 /instructions.md
 
 # Cursor — local only (project rules, staged cards, index). Public agent
-# guidance is AGENTS.md.
+# guidance is AGENTS.md and `skills/`.
 .cursor/
 .cursorignore
 .cursorindexingignore

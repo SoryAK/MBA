@@ -2,6 +2,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SoryAK/MBA/ci.yml?branch=main&label=CI)](https://github.com/SoryAK/MBA/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@mba-ai/core?label=npm)](https://www.npmjs.com/package/@mba-ai/core)
+[![release](https://img.shields.io/github/v/release/SoryAK/MBA?label=release)](https://github.com/SoryAK/MBA/releases)
 [![license](https://img.shields.io/github/license/SoryAK/MBA)](LICENSE)
 [![stars](https://img.shields.io/github/stars/SoryAK/MBA)](https://github.com/SoryAK/MBA/stargazers)
 [![downloads](https://img.shields.io/npm/dm/@mba-ai/core?label=downloads)](https://www.npmjs.com/package/@mba-ai/core)
@@ -144,6 +145,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CO
 - `[.Manual/model-behavioral-adapters.md](.Manual/model-behavioral-adapters.md)` — system manual
 - `[docs/ampi.md](docs/ampi.md)` — AMPI (live-response subsystem)
 - `[docs/ci.md](docs/ci.md)` — merge gate (GitHub Actions)
+- [Releases](https://github.com/SoryAK/MBA/releases) — what shipped (`@mba-ai/core` changelog)
 - `[docs/adr/](docs/adr/)` — architecture decision records
 
 ## License

@@ -40,8 +40,10 @@ The repo owner can still bypass in an emergency. Treat that as exceptional.
 
 `@mba-ai/core` publishes from [`.github/workflows/publish.yml`](../.github/workflows/publish.yml)
 when you push a tag that matches the package version (`v0.1.16` → `0.1.16`).
-It does not run on PRs or on `main`. `@mba-ai/mcp-server` is not in this
-workflow.
+After npm succeeds, the same job opens a [GitHub Release](https://github.com/SoryAK/MBA/releases)
+from that version’s `CHANGELOG.md` section (notice board — do not attach
+binaries; npm is the artifact). It does not run on PRs or on `main`.
+`@mba-ai/mcp-server` is not in this workflow.
 
 GitHub Actions authenticates to npm with OIDC. There is no `NPM_TOKEN`.
 `setup-node` must set `registry-url: https://registry.npmjs.org` or npm
@@ -62,7 +64,9 @@ Keep two-factor authentication required on the account.
 
 Release path: bump `packages/core/package.json` (and the lockfile), add a
 `## [x.y.z]` section to `packages/core/CHANGELOG.md`, merge to `main`, then
-`git tag vX.Y.Z && git push origin vX.Y.Z`.
+`git tag vX.Y.Z && git push origin vX.Y.Z`. Operators follow
+[Releases](https://github.com/SoryAK/MBA/releases); the package page is
+https://www.npmjs.com/package/@mba-ai/core.
 
 If a check ever needs this machine’s GPU or LAN, add a self-hosted
 Actions runner — not a second CI product.

@@ -195,4 +195,6 @@ npm run build -w @mba-ai/core    # after CLI changes; then npm link in packages/
 | CLI change | [`docs/workflows/cli-development.md`](docs/workflows/cli-development.md) |
 | AMPI | [`docs/ampi.md`](docs/ampi.md) |
 | Merge gate | [`docs/ci.md`](docs/ci.md) |
+| Open a PR | [`skills/open-pr/SKILL.md`](skills/open-pr/SKILL.md) |
+| Release `@mba-ai/core` | [`skills/release-core/SKILL.md`](skills/release-core/SKILL.md) |
 | Decisions | [`docs/adr/`](docs/adr/) |
