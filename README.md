@@ -116,8 +116,8 @@ The service must already be running (`mba start`).
 
 | Package                                     | Role                                      |
 | ------------------------------------------- | ----------------------------------------- |
-| `[@mba-ai/core](packages/core)`             | Framework, BCB engine, service, `mba` CLI |
-| `[@mba-ai/mcp-server](packages/mcp-server)` | MCP client over that service              |
+| [`@mba-ai/core`](packages/core) | Framework, BCB engine, service, `mba` CLI |
+| [`@mba-ai/mcp-server`](packages/mcp-server) | MCP client over that service |
 
 
 ```sh
@@ -142,11 +142,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CO
 ## Docs
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to help
-- `[.Manual/model-behavioral-adapters.md](.Manual/model-behavioral-adapters.md)` — system manual
-- `[docs/ampi.md](docs/ampi.md)` — AMPI (live-response subsystem)
-- `[docs/ci.md](docs/ci.md)` — merge gate (GitHub Actions)
+- [System manual](.Manual/model-behavioral-adapters.md)
+- [AMPI](docs/ampi.md) — live-response subsystem
+- [CI](docs/ci.md) — merge gate (GitHub Actions)
 - [Releases](https://github.com/SoryAK/MBA/releases) — what shipped (`@mba-ai/core` changelog)
-- `[docs/adr/](docs/adr/)` — architecture decision records
+- [ADRs](docs/adr/) — architecture decision records
+- [SECURITY.md](SECURITY.md) — report a vulnerability privately
 
 ## License
 
