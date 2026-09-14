@@ -42,15 +42,10 @@ docs/backlog/
 .codex/
 /CLAUDE.md
 /GEMINI.md
-/AGENTS.md
 /instructions.md
 
-# Cursor — keep committed project rules; ignore the rest of .cursor/
-.cursor/*
-!.cursor/rules/
-!.cursor/rules/**
-# Live MBA-staged cards (named after the connected model)
-.cursor/rules/*.mdc
-!.cursor/rules/npm-publish.mdc
+# Cursor — local only (project rules, staged cards, index). Public agent
+# guidance is AGENTS.md.
+.cursor/
 .cursorignore
 .cursorindexingignore
