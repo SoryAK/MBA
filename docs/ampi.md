@@ -12,26 +12,33 @@ the next turn, or a few, does that job, and gets out. It always finishes.
 That is the whole point — a response that owns the moment, then hands the
 thread back.
 
-## The four functions
+## What is live
 
-When AMPI steps in, it is always doing one of four jobs. A recipe is just
-a way of doing one of these.
+**Sanitize** is the job that ships. The window picked up dirt from a trip
+or a closed stretch of work. Clean it up, stay on this thread, and don’t
+put new truth in the model’s mouth. Loop first-trip is
+`sanitize/duplicates`.
 
-**Sanitize** is mopping. The window picked up dirt from a trip or a
-closed stretch of work. Clean it up, stay on this thread, and don’t put
-new truth in the model’s mouth.
+AMPI is that response engine: a named recipe, a finish, a hand-back. It
+is not a four-item product menu.
 
-**Assist** is help. The model is stuck — missing a piece. Supply what’s
-missing. That isn’t a slap on the wrist, and it isn’t rewinding the chat.
+## What is not a menu
 
-**Sanction** is the consequence. After bad behavior, something actually
-happens: a privilege gone, a mark left in the window the model can’t
-shrug off. Hint, mask, and kill on the ladder are still the cheap
-version. AMPI Sanction is when the system means it.
+ADR-0105 named three more jobs as a starting inventory: **Assist**
+(supply what’s missing), **Sanction** (a consequence the ladder’s
+hint/mask/kill is not), **Recover** (undo a stretch). Those names are a
+hypothesis, not recipes on the ladder, and not the next build queue.
 
-**Recover** is undo. The stretch itself was the problem. Roll back to a
-pin, or reset the chapter. That’s not mopping so you can keep going, and
-it’s not helping you forward.
+What we already know not to build under those names:
+
+- Help that re-opens a file the client refused is a confused deputy.
+  Clamp already lives on TCB. Do not add an MBA file allowlist.
+- A “real” punish is likely still mask/kill, not a fourth runner.
+- Undo is likely CM mark + sweep, which Sanitize already names (`pin`,
+  `scratch`, `phase`).
+
+A second AMPI function waits on a *different* “do” that does not open
+files or add operator lists. Until then the engine is Sanitize.
 
 ## What AMPI is not
 
@@ -111,31 +118,32 @@ are specified; they are not what the built-ins use today.
 ## Functions, modes, and CM
 
 Same shape on both planes, different words, so a CM cut is never an AMPI
-function.
+function. The four-row map below is the ADR-0105 inventory. Only
+**Sanitize** is a loadable recipe today.
 
 ```text
 AMPI (why)              CM (how)
-Assist     ---------->  Write
+Sanitize   ---------->  Sweep, Compact     ← live
+Assist     ---------->  Write              ← not on the ladder
 Sanction   ---------->  Write (hard residue, no handoff)
-Sanitize   ---------->  Sweep, Compact
 Recover    ---------->  Mark + Sweep (rollback to pin)
 ```
 
-| AMPI function | Job | CM it usually asks |
-| --- | --- | --- |
-| Sanitize | Mop dirt, stay on this thread. No new truth. | Sweep, Compact |
-| Assist | Help forward: supply what’s missing. | Write |
-| Sanction | Consequence after bad behavior. No handoff. | Write |
-| Recover | Undo the bad stretch, or reset the chapter. | Mark + Sweep |
+| AMPI function | Job | Status | CM it usually asks |
+| --- | --- | --- | --- |
+| Sanitize | Mop dirt, stay on this thread. No new truth. | Live | Sweep, Compact |
+| Assist | Help forward: supply what’s missing. | Hypothesis | Write |
+| Sanction | Consequence after bad behavior. No handoff. | Hypothesis | Write |
+| Recover | Undo the bad stretch, or reset the chapter. | Hypothesis | Mark + Sweep |
 
 ### AMPI modes
 
 A mode is how a function is carried out, not a fifth function.
 
-- **`sanitize`** — `{ what: duplicates | scratch | reasoning | phase | pin, pin?: true }`
-- **`assist`** — `{ how: supply | redirect | lost }`
-- **`sanction`** — `{ how: revoke }`
-- **`recover`** — `{ how: rollback | reset }` — needs `pin` first
+- **`sanitize`** — `{ what: duplicates | scratch | reasoning | phase | pin, pin?: true }` — live
+- **`assist`** — `{ how: supply | redirect | lost }` — named in ADR-0105, not registered
+- **`sanction`** — `{ how: revoke }` — named, not registered
+- **`recover`** — `{ how: rollback | reset }` — named, not registered; needs `pin` first
 
 ### Ladder strings
 
