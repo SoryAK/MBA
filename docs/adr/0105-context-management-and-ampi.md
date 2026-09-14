@@ -218,5 +218,6 @@ CM’s cut menu stays closed, same spirit as AMPI’s function set. The five cut
 - **ADR-0088 / 0101:** AMPI’s Notch-1, termination, and daemon-as-proxy runner are unchanged. This ADR splits *context editing* out of “AMPI is the whole intervention product.”
 - **ADR-0101 Step 4:** The first shipped path is `sanitize` / `duplicates` (alias `sweep-duplicates` → `sweep` / `duplicates`). Neither name is `context-gc`.
 - **ADR-0102:** Policy names an AMPI function (or the `sweep-duplicates` alias), never a CM cut.
+- **ADR-0108:** Human door for clamp / eof / loop (`inherit` / `off` / `on`). Loop `off` disables the detector (and the mop); it does not rename the recipe.
 - **ADR-0104:** Uncertainty BCB is a detector family. It must not be built until this plane exists far enough to receive a sweep.
 - **ADR-0106:** State Management is the sandbox / door. Intent folds into SM later (like CGC under CM). Do not build SM before this ADR’s compact + `sanitize` / `phase`.
