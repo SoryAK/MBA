@@ -64,11 +64,5 @@ Release path: bump `packages/core/package.json` (and the lockfile), add a
 `## [x.y.z]` section to `packages/core/CHANGELOG.md`, merge to `main`, then
 `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
-## Jenkins (reference only)
-
-[`Jenkinsfile`](../Jenkinsfile) is the old local Poll SCM monitor
-([ADR-0095](adr/0095-jenkins-ci-with-poll-scm.md)). It is not the merge gate.
-Keep the file as a map of the same stages. If a local Jenkins job is still
-polling `main`, turn that poll off so you are not running two monitors.
-A self-hosted Actions runner is the replacement if a check ever needs this
-machine’s GPU or LAN — not a second CI product.
+If a check ever needs this machine’s GPU or LAN, add a self-hosted
+Actions runner — not a second CI product.

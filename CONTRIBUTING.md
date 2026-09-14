@@ -1,19 +1,17 @@
 # Contributing to MBA
 
 MBA is the per-model behavior layer on your machine. It is not a host (Ollama)
-and not a client (Cline). You give a model a house: how it boots, who may talk
-to it, and what the system watches while it works.
+and not a client (Cline).
 
-We want **contributors and collaborators** — implementation, another inference
-server, docs, and design. Read this before you write code.
+We want **contributors and collaborators** — implementation, docs, and design.
+Read this before you write code. Product direction lives in issues and
+[`docs/adr/`](docs/adr/), not in this file.
 
 ## How to help
 
 - **Issue** — a bug, a missing door, a design question.
 - **PR** — a focused fix or a feature that already has an issue.
 - **Docs** — README walkthrough, ADRs, AMPI handbook, this file.
-- **Inference servers** — MBA boots llama.cpp today. More servers are welcome;
-  do not lock the product to one.
 
 Share what you build. Use MBA on a real model. That is the best review.
 
@@ -23,37 +21,15 @@ Share what you build. Use MBA on a real model. That is the best review.
    [PRs](https://github.com/SoryAK/MBA/pulls). Duplicates get closed.
 2. **Features start with an issue**, not a PR. Let the design land first.
    Bug fixes may go straight to a PR if they include a test.
-3. One concern per PR. Do not mix a CLI polish with an AMPI recipe.
+3. One concern per PR. Do not mix unrelated surfaces in the same change.
 4. New public CLI verbs and daemon routes have a higher bar than internal
    tests. Say why an existing door is not enough.
-5. A green checklist does not guarantee a merge. MBA is opinionated about
-   what belongs in the product.
+5. A green checklist does not guarantee a merge. Architecture is in
+   [`docs/adr/`](docs/adr/). A PR that quietly reverses an accepted ADR
+   will not land.
 
 If you are new: keep **one** open PR. Skip drive-by typo-only PRs unless they
 fix something an operator will actually hit.
-
-## Product lines (do not fight these)
-
-These are already decided. A PR that quietly reverses them will not land.
-
-- **Per-model house.** Dials, watches, and recipes belong to **this** model,
-  not the fleet.
-- **Daemon owns state.** `mba` is a thin door (ADR-0096). It does not edit
-  adapter JSONL/YAML itself. Exception: `mba start` / `mba stop` (ADR-0107)
-  (and `--help`, `completion`, `estimate-memory`).
-- **Escalation names AMPI only.** The ladder never names a context cut.
-  Context Management splices `messages[]`.
-- **AMPI always finishes.** Bound/held limits are not AMPI. Assist is supply,
-  not a clamp. Sanitize is the live recipe today; Assist / Sanction / Recover
-  stay parked until their cut is named.
-- **Boot is bare.** Connect attaches the client. Pairing must not silently
-  pick an env overlay.
-- **Commands take a model id.** `mba models list` is **id · family** (left
-  column is what you type).
-
-Architecture lives in [`docs/adr/`](docs/adr/). AMPI lives in
-[`docs/ampi.md`](docs/ampi.md). The operator walkthrough is the
-[README](README.md).
 
 ## Repo setup
 
@@ -113,6 +89,9 @@ CI must be green (`test` job). CodeQL also runs; it is not the merge gate.
 Expect review comments. Rebase onto `main` if the PR goes stale. Maintainers
 squash-merge.
 
+By contributing you agree that your contributions are licensed under the
+project’s [Apache-2.0](LICENSE) license.
+
 ## AI
 
 You may use AI. You are responsible for every line, however it was produced.
@@ -137,6 +116,11 @@ Low-quality or unreviewed dumps will be closed.
 
 If you had to read the source to use something, add a sentence where the next
 person will look.
+
+## Security
+
+Do not open a public issue for a vulnerability. Use
+[GitHub private vulnerability reporting](https://github.com/SoryAK/MBA/security/advisories/new).
 
 ## Conduct
 
