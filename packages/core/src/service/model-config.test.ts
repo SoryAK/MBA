@@ -11,7 +11,9 @@ import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   findModelFiles,
+  notesPreview,
   readModelDials,
+  readModelShelf,
   setModelDial,
   SERVER_SETUP_FIELDS,
   CLIENT_FIELDS,
@@ -252,6 +254,113 @@ describe("readModelDials", () => {
 
   it("returns null for an unknown model id", () => {
     expect(readModelDials(root, "nope")).toBeNull();
+  });
+});
+
+function writeShelfTree(adapterDir: string, opts?: { emptyNotes?: boolean; modelNotes?: boolean }): void {
+  const familyDir = join(adapterDir, "qwen3-coder");
+  const modelDir = join(familyDir, "qwen3-coder-30b");
+  mkdirSync(modelDir, { recursive: true });
+  writeFileSync(
+    join(familyDir, "family.yaml"),
+    [
+      "apiVersion: mba.ai/v1alpha1",
+      "kind: ModelBehavioralAdapter",
+      "metadata:",
+      "  id: qwen3-coder-family",
+      "  family: qwen3-coder",
+      "identity:",
+      "  model:",
+      "    family: qwen3-coder",
+      "bindings:",
+      '  instructions: "./instructions.md"',
+      '  notes: "./notes.md"',
+    ].join("\n"),
+  );
+  writeFileSync(join(familyDir, "instructions.md"), "# family playbook\n");
+  writeFileSync(join(familyDir, "notes.md"), "Family default: grep before glob.\n");
+  writeFileSync(
+    join(modelDir, "qwen3-coder-30b.yaml"),
+    [
+      "apiVersion: mba.ai/v1alpha1",
+      "kind: ModelBehavioralAdapter",
+      "metadata:",
+      "  id: qwen3-coder-30b",
+      "  name: qwen3-coder-30b",
+      "  family: qwen3-coder",
+      "identity:",
+      "  model:",
+      "    name: qwen3-coder-30b",
+      "    family: qwen3-coder",
+      '    file: "./m.gguf"',
+      "bindings:",
+      '  server_setup: "./server_setup.json"',
+      ...(opts?.modelNotes === false
+        ? []
+        : ['  instructions: "./instructions.md"', '  notes: "./notes.md"']),
+    ].join("\n"),
+  );
+  writeFileSync(join(modelDir, "server_setup.json"), JSON.stringify({ "llama.cpp": { ctxSize: 4096 } }));
+  writeFileSync(join(modelDir, "m.gguf"), "gguf");
+  if (opts?.modelNotes !== false) {
+    writeFileSync(join(modelDir, "instructions.md"), "# model playbook\n");
+    writeFileSync(
+      join(modelDir, "notes.md"),
+      opts?.emptyNotes ? "" : "Prefers grep before glob.\nLoop mop fired twice.\n",
+    );
+  }
+}
+
+describe("readModelShelf", () => {
+  it("returns the model notes when the model file exists", () => {
+    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    const adapterDir = join(root, "mba", "adapters");
+    writeShelfTree(adapterDir);
+    const shelf = readModelShelf(adapterDir, "qwen3-coder-30b");
+    expect(shelf?.notes?.source).toBe("model");
+    expect(shelf?.notes?.empty).toBe(false);
+    expect(shelf?.notes?.text).toContain("Prefers grep before glob.");
+    expect(shelf?.instructions?.source).toBe("model");
+    expect(notesPreview(shelf?.notes)).toEqual({
+      empty: false,
+      excerpt: "Prefers grep before glob.",
+    });
+  });
+
+  it("marks an empty stub empty", () => {
+    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    const adapterDir = join(root, "mba", "adapters");
+    writeShelfTree(adapterDir, { emptyNotes: true });
+    const shelf = readModelShelf(adapterDir, "qwen3-coder-30b");
+    expect(shelf?.notes?.empty).toBe(true);
+    expect(shelf?.notes?.text).toBe("");
+    expect(notesPreview(shelf?.notes)).toEqual({ empty: true });
+  });
+
+  it("inherits family notes when the model yaml omits the binding", () => {
+    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    const adapterDir = join(root, "mba", "adapters");
+    writeShelfTree(adapterDir, { modelNotes: false });
+    const shelf = readModelShelf(adapterDir, "qwen3-coder-30b");
+    expect(shelf?.notes?.source).toBe("family");
+    expect(shelf?.notes?.text).toContain("Family default");
+    expect(shelf?.instructions?.source).toBe("family");
+  });
+
+  it("returns null for an unknown model", () => {
+    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    const adapterDir = join(root, "mba", "adapters");
+    writeShelfTree(adapterDir);
+    expect(readModelShelf(adapterDir, "nope")).toBeNull();
+  });
+});
+
+describe("readModelDials machine hints", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "mba-model-config-"));
+    writeFixture(root);
   });
 
   it("includes machine-aware hints when machine info is provided", () => {

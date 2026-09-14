@@ -448,4 +448,66 @@ describe("GET /models/config (ADR-0096)", () => {
       expect(f.machineHint).toBeUndefined();
     }
   });
+
+  it("returns winning notes and instructions from the resolver", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mba-svc-mcfg-shelf-"));
+    adapterDir = join(root, "mba", "adapters");
+    mkdirSync(adapterDir, { recursive: true });
+    const familyDir = join(adapterDir, "qwen3-coder");
+    const modelDir = join(familyDir, "qwen3-coder-30b");
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(
+      join(familyDir, "family.yaml"),
+      [
+        "apiVersion: mba.ai/v1alpha1",
+        "kind: ModelBehavioralAdapter",
+        "metadata:",
+        "  id: qwen3-coder-family",
+        "  family: qwen3-coder",
+        "identity:",
+        "  model:",
+        "    family: qwen3-coder",
+        "bindings:",
+        '  notes: "./notes.md"',
+        '  instructions: "./instructions.md"',
+      ].join("\n"),
+    );
+    writeFileSync(join(familyDir, "notes.md"), "family notes\n");
+    writeFileSync(join(familyDir, "instructions.md"), "family card\n");
+    writeFileSync(
+      join(modelDir, "qwen3-coder-30b.yaml"),
+      [
+        "apiVersion: mba.ai/v1alpha1",
+        "kind: ModelBehavioralAdapter",
+        "metadata:",
+        "  id: qwen3-coder-30b",
+        "  family: qwen3-coder",
+        "identity:",
+        "  model:",
+        "    name: qwen3-coder-30b",
+        "    family: qwen3-coder",
+        '    file: "./m.gguf"',
+        "bindings:",
+        '  server_setup: "./server_setup.json"',
+        '  notes: "./notes.md"',
+        '  instructions: "./instructions.md"',
+      ].join("\n"),
+    );
+    writeFileSync(join(modelDir, "server_setup.json"), JSON.stringify({ "llama.cpp": {} }));
+    writeFileSync(join(modelDir, "m.gguf"), "gguf");
+    writeFileSync(join(modelDir, "notes.md"), "Prefers grep before glob.\n");
+    writeFileSync(join(modelDir, "instructions.md"), "# model playbook\n");
+    paths = defaultStorePaths(join(root, "state"));
+    const app = createMbaServiceApp({ paths, adapterDir });
+    const res = await app.request("/models/config?id=qwen3-coder-30b");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      notes?: { source: string; empty: boolean; text: string };
+      instructions?: { source: string };
+    };
+    expect(body.notes?.source).toBe("model");
+    expect(body.notes?.empty).toBe(false);
+    expect(body.notes?.text).toContain("Prefers grep before glob.");
+    expect(body.instructions?.source).toBe("model");
+  });
 });

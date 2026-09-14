@@ -5,6 +5,13 @@
 
 import type { ModelDial } from "./interactive.js";
 
+export interface ModelShelfCard {
+  readonly path: string;
+  readonly source: "model" | "family";
+  readonly empty: boolean;
+  readonly text: string;
+}
+
 export interface ModelConfig {
   readonly modelId: string;
   readonly files: {
@@ -16,6 +23,8 @@ export interface ModelConfig {
     readonly modelFile?: string;
   };
   readonly fields: ModelDial[];
+  readonly notes?: ModelShelfCard;
+  readonly instructions?: ModelShelfCard;
 }
 
 export interface SetResult {

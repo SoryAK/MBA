@@ -23,8 +23,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import YAML, { type YAMLMap } from "yaml";
+import { resolveMbaConfig } from "../mba/resolver.js";
 import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
 import {
   findMaxFittingCtxSize,
@@ -151,6 +152,22 @@ export interface ModelConfigFiles {
   readonly maxContextLength?: number;
 }
 
+/** Winning markdown card. Operator shelf — never injected. */
+export type ShelfSource = "model" | "family";
+
+export interface ModelShelfCard {
+  readonly path: string;
+  readonly source: ShelfSource;
+  readonly empty: boolean;
+  readonly text: string;
+}
+
+/** List/picker glance: omit the object when there is no winning file. */
+export interface ModelNotesPreview {
+  readonly empty: boolean;
+  readonly excerpt?: string;
+}
+
 function findField(file: ModelDialFile, field: string): ModelDialFieldSpec | undefined {
   return ALL_FIELDS.find((f) => f.file === file && f.field === field);
 }
@@ -221,14 +238,101 @@ export function findModelFiles(adapterDir: string, modelId: string): ModelConfig
   };
 }
 
+function isInside(dir: string, file: string): boolean {
+  const rel = relative(dir, file);
+  return rel.length > 0 && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+function firstLineExcerpt(text: string, max = 72): string | undefined {
+  const line = text
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find((s) => s.length > 0);
+  if (!line) return undefined;
+  if (line.length <= max) return line;
+  return `${line.slice(0, max - 1)}…`;
+}
+
+function shelfCard(path: string | undefined, modelDir: string): ModelShelfCard | undefined {
+  if (!path) return undefined;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  const empty = raw.trim().length === 0;
+  return {
+    path,
+    source: isInside(modelDir, path) ? "model" : "family",
+    empty,
+    text: empty ? "" : raw.replace(/\s+$/, ""),
+  };
+}
+
+/**
+ * Winning `notes.md` / `instructions.md` for one catalog id (family then
+ * model, last-specific wins). Same resolver as stage. Notes are never a
+ * stage source; this is the operator shelf only.
+ */
+export function readModelShelf(
+  adapterDir: string,
+  modelId: string,
+): { readonly notes?: ModelShelfCard; readonly instructions?: ModelShelfCard } | null {
+  const catalog = readModelCatalog(adapterDir);
+  const entry = catalog.find((e) => e.id === modelId);
+  if (!entry) return null;
+
+  let declaredName: string | undefined;
+  let declaredFamily: string | undefined;
+  try {
+    const raw = YAML.parse(readFileSync(entry.yamlPath, "utf8")) as {
+      identity?: { model?: { name?: string; family?: string } };
+    };
+    declaredName = raw.identity?.model?.name;
+    declaredFamily = raw.identity?.model?.family;
+  } catch {
+    // Fall through to catalog name / family.
+  }
+
+  const resolved = resolveMbaConfig(
+    dirname(adapterDir),
+    {
+      modelName: declaredName ?? entry.name,
+      modelFamily: declaredFamily ?? entry.family,
+      harness: "none",
+    },
+    { applyEnvFolders: false },
+  );
+  const modelDir = dirname(entry.yamlPath);
+  return {
+    notes: shelfCard(resolved.notesPath, modelDir),
+    instructions: shelfCard(resolved.instructionsPath, modelDir),
+  };
+}
+
+export function notesPreview(card: ModelShelfCard | undefined): ModelNotesPreview | undefined {
+  if (!card) return undefined;
+  if (card.empty) return { empty: true };
+  const excerpt = firstLineExcerpt(card.text);
+  return excerpt ? { empty: false, excerpt } : { empty: true };
+}
+
 /** Read the current values of every known dial for a model. */
 export function readModelDials(
   adapterDir: string,
   modelId: string,
   machineInfo?: MachineInfo,
-): { readonly modelId: string; readonly files: ModelConfigFiles; readonly fields: ModelDial[] } | null {
+): {
+  readonly modelId: string;
+  readonly files: ModelConfigFiles;
+  readonly fields: ModelDial[];
+  readonly notes?: ModelShelfCard;
+  readonly instructions?: ModelShelfCard;
+} | null {
   const files = findModelFiles(adapterDir, modelId);
   if (!files) return null;
+  const shelf = readModelShelf(adapterDir, modelId);
 
   const setup = readJsonOrNull(files.serverSetupPath) as
     | { "llama.cpp"?: Record<string, unknown> }
@@ -251,7 +355,7 @@ export function readModelDials(
     machineHint: machineHints[spec.field as keyof MachineDialHints],
   }));
 
-  return { modelId, files, fields };
+  return { modelId, files, fields, notes: shelf?.notes, instructions: shelf?.instructions };
 }
 
 /**

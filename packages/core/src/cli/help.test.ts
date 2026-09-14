@@ -19,6 +19,8 @@ describe("help", () => {
   it("names mba models watch", () => {
     process.env.NO_COLOR = "1";
     expect(usageModels()).toContain("mba models watch");
+    expect(usageModels()).toContain("notes");
+    expect(usageModels()).toContain("instructions");
   });
 
   it("keeps servers help short and still names slots, binaries, and boot flags", () => {
