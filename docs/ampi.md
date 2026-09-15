@@ -19,6 +19,11 @@ or a closed stretch of work. Clean it up, stay on this thread, and don’t
 put new truth in the model’s mouth. Loop first-trip is
 `sanitize/duplicates`.
 
+For now, AMPI **is** Sanitize. Hint, mask, kill, and clamp already live
+on the ladder and TCB. A second function waits on a *different* kind of
+do — not mop, not tell, not hide-or-kill. Until that job shows up, do
+not implement Assist, Sanction, or Recover.
+
 AMPI is that response engine: a named recipe, a finish, a hand-back. It
 is not a four-item product menu.
 
@@ -38,7 +43,8 @@ What we already know not to build under those names:
   `scratch`, `phase`).
 
 A second AMPI function waits on a *different* “do” that does not open
-files or add operator lists. Until then the engine is Sanitize.
+files or add operator lists. Until then the engine is Sanitize (settled
+for now — see [What is live](#what-is-live)).
 
 ## What AMPI is not
 
