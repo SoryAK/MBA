@@ -20,6 +20,7 @@ describe("help", () => {
   it("names mba models watch", () => {
     process.env.NO_COLOR = "1";
     expect(usageModels()).toContain("mba models watch");
+    expect(usageModels()).toContain("mba models history");
     expect(usageModels()).toContain("notes");
     expect(usageModels()).toContain("instructions");
   });
@@ -42,5 +43,6 @@ describe("help", () => {
     expect(text).toContain("--from");
     expect(text).toContain("--move");
     expect(text).toContain("--yes");
+    expect(text).toContain("progress");
   });
 });

@@ -29,6 +29,7 @@ import {
   cmdModelsStage,
   cmdModelsConnect,
   cmdModelsWatch,
+  cmdModelsHistory,
 } from "./models.js";
 import { parseMbaArgv } from "./route.js";
 import { cmdMigrate } from "./migrate.js";
@@ -155,6 +156,9 @@ async function main(argv: readonly string[]): Promise<void> {
             return;
           case "watch":
             await cmdModelsWatch(baseUrl, route.args, json);
+            return;
+          case "history":
+            await cmdModelsHistory(baseUrl, route.args, json);
             return;
         }
     }

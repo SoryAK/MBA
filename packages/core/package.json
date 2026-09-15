@@ -13,7 +13,7 @@
     "model-adapter",
     "tool-circuit-breaker",
     "mcp",
-    "behavioral-profile", 
+    "behavioral-profile",
     "bcb",
     "ai-safety",
     "ai-tools",
@@ -54,6 +54,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "copy-file": "^11.1.0",
     "hono": "^4.13.7",
     "yaml": "^2.7.0"
   },

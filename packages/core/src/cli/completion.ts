@@ -4,7 +4,7 @@
  */
 
 const GROUPS = "start stop restart models m servers server s clients client c migrate machine status help completion estimate-memory connect";
-const MODEL_SUB = "list show set open path pull search edit stage connect watch watches";
+const MODEL_SUB = "list show set open path pull search edit stage connect watch watches history";
 const SERVER_SUB = "list boot stop logs slots binaries builds";
 const CLIENT_SUB = "list add connect revoke remove";
 const MIGRATE_SUB = "models find";
@@ -30,7 +30,7 @@ _mba() {
         local ids
         ids=$(mba models list --json 2>/dev/null | command sed -n 's/.*"id": "\\([^"]*\\)".*/\\1/p')
         COMPREPLY=( $(compgen -W "${MODEL_SUB} \$ids" -- "\$cur") )
-        elif [[ "\$prev" == "show" || "\$prev" == "set" || "\$prev" == "open" || "\$prev" == "path" || "\$prev" == "edit" || "\$prev" == "stage" || "\$prev" == "connect" ]]; then
+        elif [[ "\$prev" == "show" || "\$prev" == "set" || "\$prev" == "open" || "\$prev" == "path" || "\$prev" == "edit" || "\$prev" == "stage" || "\$prev" == "connect" || "\$prev" == "history" ]]; then
         local ids
         ids=$(mba models list --json 2>/dev/null | command sed -n 's/.*"id": "\\([^"]*\\)".*/\\1/p')
         COMPREPLY=( $(compgen -W "\$ids" -- "\$cur") )
@@ -75,7 +75,7 @@ function zshScript(): string {
 _mba() {
   local -a groups modelsubs serversubs clientsubs migratesubs
   groups=(start stop restart models m servers server s clients client c migrate machine status help completion estimate-memory connect)
-  modelsubs=(list show set open path pull search edit stage connect watch watches)
+  modelsubs=(list show set open path pull search edit stage connect watch watches history)
   serversubs=(list boot stop logs slots binaries builds)
   clientsubs=(list add connect revoke remove)
   migratesubs=(models find)

@@ -77,6 +77,7 @@ Boot starts this model’s inference server with no client attached. Connect att
 mba models               # pick and edit dials
 mba models list          # id · family; commands take the id
 mba models watch <id>
+mba models history <id>
 mba s logs <id>
 mba machine              # enforce | warn | off
 ```

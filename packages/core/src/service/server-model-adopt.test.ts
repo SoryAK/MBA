@@ -38,8 +38,19 @@ function makeGgufBuffer(arch: string): Buffer {
 const GGUF = makeGgufBuffer("general.architecture");
 const SHA256 = createHash("sha256").update(GGUF).digest("hex");
 
+async function parseSse(res: Response): Promise<Array<Record<string, unknown>>> {
+  const text = await res.text();
+  const events: Array<Record<string, unknown>> = [];
+  for (const frame of text.split("\n\n")) {
+    const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+    if (!dataLine) continue;
+    events.push(JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>);
+  }
+  return events;
+}
+
 describe("POST /models/adopt", () => {
-  it("copies a local GGUF into the adapter dir and returns the house", async () => {
+  it("streams a done event and returns the house", async () => {
     const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-svc-adopt-")));
     const adapterDir = mkdtempSync(join(tmpdir(), "mba-svc-adopt-adapters-"));
     const srcDir = mkdtempSync(join(tmpdir(), "mba-svc-adopt-src-"));
@@ -54,11 +65,19 @@ describe("POST /models/adopt", () => {
         body: JSON.stringify({ path: source, id: "local-model" }),
       });
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { id: string; sha256: string; placed: string; moved: boolean };
-      expect(body.id).toBe("local-model");
-      expect(body.sha256).toBe(SHA256);
-      expect(["hardlink", "copy"]).toContain(body.placed);
-      expect(body.moved).toBe(false);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const events = await parseSse(res);
+      expect(events[events.length - 1]?.type).toBe("done");
+      const result = events[events.length - 1]?.result as {
+        id: string;
+        sha256: string;
+        placed: string;
+        moved: boolean;
+      };
+      expect(result.id).toBe("local-model");
+      expect(result.sha256).toBe(SHA256);
+      expect(["hardlink", "copy"]).toContain(result.placed);
+      expect(result.moved).toBe(false);
       expect(existsSync(join(adapterDir, "local-model", "local-model", "weights.gguf"))).toBe(true);
       expect(existsSync(source)).toBe(true);
     } finally {
@@ -68,7 +87,7 @@ describe("POST /models/adopt", () => {
     }
   });
 
-  it("returns 400 without path/id, 404 when the source is missing, 409 on conflict", async () => {
+  it("returns 400 without path/id; missing source and conflict are SSE errors", async () => {
     const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-svc-adopt-")));
     const adapterDir = mkdtempSync(join(tmpdir(), "mba-svc-adopt-adapters-"));
     const srcDir = mkdtempSync(join(tmpdir(), "mba-svc-adopt-src-"));
@@ -89,20 +108,25 @@ describe("POST /models/adopt", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ path: join(srcDir, "nope.gguf"), id: "gone" }),
       });
-      expect(missing.status).toBe(404);
+      expect(missing.status).toBe(200);
+      const missingEvents = await parseSse(missing);
+      expect(missingEvents[missingEvents.length - 1]?.type).toBe("error");
+      expect(String(missingEvents[missingEvents.length - 1]?.message)).toMatch(/not found/i);
 
       const first = await app.request("/models/adopt", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ path: source, id: "dup" }),
       });
-      expect(first.status).toBe(200);
+      expect((await parseSse(first)).at(-1)?.type).toBe("done");
       const second = await app.request("/models/adopt", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ path: source, id: "dup" }),
       });
-      expect(second.status).toBe(409);
+      const secondEvents = await parseSse(second);
+      expect(secondEvents[secondEvents.length - 1]?.type).toBe("error");
+      expect(String(secondEvents[secondEvents.length - 1]?.message)).toMatch(/already exists/i);
     } finally {
       rmSync(paths.baseDir, { recursive: true, force: true });
       rmSync(adapterDir, { recursive: true, force: true });
@@ -125,8 +149,10 @@ describe("POST /models/adopt", () => {
         body: JSON.stringify({ path: source, id: "moved-model", move: true }),
       });
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { moved: boolean; placed: string };
-      expect(body.moved).toBe(true);
+      const events = await parseSse(res);
+      const result = events[events.length - 1]?.result as { moved: boolean; placed: string };
+      expect(events[events.length - 1]?.type).toBe("done");
+      expect(result.moved).toBe(true);
       expect(existsSync(source)).toBe(false);
       expect(existsSync(join(adapterDir, "moved-model", "moved-model", "weights.gguf"))).toBe(true);
     } finally {

@@ -18,7 +18,8 @@ export type ModelsAction =
   | "edit"
   | "stage"
   | "connect"
-  | "watch";
+  | "watch"
+  | "history";
 
 export type MigrateAction = "menu" | "models" | "find";
 
@@ -88,6 +89,7 @@ function parseModels(rest: readonly string[]): MbaRoute {
   if (sub === "connect") return { cmd: "models", action: "connect", args: tail };
   if (sub === "edit") return { cmd: "models", action: "edit", args: tail };
   if (sub === "watch" || sub === "watches") return { cmd: "models", action: "watch", args: tail };
+  if (sub === "history") return { cmd: "models", action: "history", args: tail };
   return { cmd: "models", action: "edit", args: rest.filter((a) => a !== "--help" && a !== "-h") };
 }
 
