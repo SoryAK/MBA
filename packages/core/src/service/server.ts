@@ -56,6 +56,9 @@
  *        global seed (all inherit, all on). Empty tcb.jsonl is inherit.
  *   POST /models/watches             → { modelId, watch, before, after }
  *        Body: { id, watch, mode: inherit|off|on }. Writes model tcb.jsonl.
+ *   GET  /models/history?id=<id>     → { modelId, events: [{ ts, kind, tool, … }] }
+ *        Per-model tool + trip ledger. `lines` is last N (default 100).
+ *        400 missing id / bad lines, 404 unknown model. Empty ledger is [].
  *   POST /models/stage               → { modelId, action, envelope, dest, source?, reason? }
  *        Body: { id, projectRoot, harness, ide? }. Copy the winning
  *        `instructions.md` into a harness-native file in the project.
@@ -88,7 +91,12 @@ import {
   type MbaStorePaths,
 } from "./config-store.js";
 import { openBcbDb } from "../bcb/kill-state.js";
-import { openModelHistoryDb } from "./model-history.js";
+import {
+  DEFAULT_HISTORY_LIMIT,
+  openModelHistoryDb,
+  queryModelHistory,
+  toHistoryEvent,
+} from "./model-history.js";
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
@@ -625,6 +633,28 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       return c.json({ error: result.error }, result.status);
     }
     return c.json(result);
+  });
+
+  app.get("/models/history", (c) => {
+    const id = c.req.query("id");
+    if (!id || id.length === 0) {
+      return c.json({ error: "query param id is required" }, 400);
+    }
+    const catalog = readModelCatalog(opts.adapterDir ?? "");
+    if (!catalog.some((e) => e.id === id)) {
+      return c.json({ error: `unknown model: ${id}` }, 404);
+    }
+    const linesParam = c.req.query("lines");
+    let limit = DEFAULT_HISTORY_LIMIT;
+    if (linesParam !== undefined) {
+      const parsed = Number(linesParam);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return c.json({ error: "query param 'lines' must be a non-negative integer" }, 400);
+      }
+      limit = parsed;
+    }
+    const events = queryModelHistory(historyDb, id, { limit }).map(toHistoryEvent);
+    return c.json({ modelId: id, events });
   });
 
   app.post("/models/stage", async (c) => {

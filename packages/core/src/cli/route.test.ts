@@ -48,6 +48,11 @@ describe("parseMbaArgv", () => {
       action: "watch",
       args: ["qwen"],
     });
+    expect(parseMbaArgv(["models", "history", "qwen", "--lines", "20"]).route).toEqual({
+      cmd: "models",
+      action: "history",
+      args: ["qwen", "--lines", "20"],
+    });
     expect(parseMbaArgv(["models", "pull", "owner/repo", "--id", "qwen"]).route).toEqual({
       cmd: "models",
       action: "pull",

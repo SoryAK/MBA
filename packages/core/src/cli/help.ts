@@ -56,9 +56,10 @@ export function usageModels(): string {
     cmd("mba models search", "HuggingFace search → pull"),
     cmd("mba models stage [id] --harness <name>", "copy instructions.md into the project"),
     cmd("mba models watch <id>", "clamp / eof / loop  inherit|off|on"),
+    cmd("mba models history <id>", "tools and trips  [--lines N]"),
     "",
     dim("  aliases    config → show   open → path   set pull"),
-    dim("  --json     on list, show, stage, and watch"),
+    dim("  --json     on list, show, stage, watch, and history"),
     dim("  TTY       family picker uses names already in the hub"),
     dim("  harness    built-in set, or a name from mba clients add"),
   ].join("\n");

@@ -19,6 +19,7 @@ describe("help", () => {
   it("names mba models watch", () => {
     process.env.NO_COLOR = "1";
     expect(usageModels()).toContain("mba models watch");
+    expect(usageModels()).toContain("mba models history");
     expect(usageModels()).toContain("notes");
     expect(usageModels()).toContain("instructions");
   });

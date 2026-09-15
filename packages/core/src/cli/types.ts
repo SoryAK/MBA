@@ -52,6 +52,23 @@ export interface ModelWatches {
   readonly watches: readonly WatchRow[];
 }
 
+/** One row of GET /models/history (`events`). */
+export interface ModelHistoryEvent {
+  readonly ts: number;
+  readonly kind: string;
+  readonly tool: string;
+  readonly toolCallId: string;
+  readonly rule: string;
+  readonly harness: string;
+  readonly targetKey: string;
+  readonly tier: string;
+}
+
+export interface ModelHistory {
+  readonly modelId: string;
+  readonly events: readonly ModelHistoryEvent[];
+}
+
 /** One row of GET /servers (ADR-0097 Phase 2). */
 export interface ServerEntry {
   readonly id: string;

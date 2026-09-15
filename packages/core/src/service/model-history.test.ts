@@ -12,7 +12,9 @@ import {
   lastTurnToolCalls,
   listModelEvents,
   openModelHistoryDb,
+  queryModelHistory,
   recordModelHistory,
+  toHistoryEvent,
 } from "./model-history.js";
 import { incrementBcbKillState, openBcbDb, resetBcbKillState } from "../bcb/kill-state.js";
 
@@ -106,6 +108,25 @@ describe("recordModelHistory", () => {
     expect(listModelEvents(history, "m")).toHaveLength(2);
     history.close();
     kill.close();
+  });
+
+  it("queryModelHistory returns the last N in time order", () => {
+    const db = openModelHistoryDb(join(dir, "hist-query.db"));
+    for (let i = 0; i < 3; i++) {
+      recordModelHistory(db, {
+        modelId: "qwen",
+        harness: "cursor",
+        tools: [{ tool: "read_file", toolCallId: `call_${i}` }],
+        trips: [],
+        now: 1_700_000_000_000 + i,
+      });
+    }
+    const rows = queryModelHistory(db, "qwen", { limit: 2 });
+    expect(rows.map((r) => r.toolCallId)).toEqual(["call_1", "call_2"]);
+    expect(toHistoryEvent(rows[0]!).toolCallId).toBe("call_1");
+    expect("id" in toHistoryEvent(rows[0]!)).toBe(false);
+    expect(queryModelHistory(db, "missing")).toEqual([]);
+    db.close();
   });
 });
 
