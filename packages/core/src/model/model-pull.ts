@@ -29,7 +29,6 @@
 
 import { createHash, type Hash } from "node:crypto";
 import {
-  copyFileSync,
   createReadStream,
   createWriteStream,
   existsSync,
@@ -43,6 +42,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { copyFile } from "copy-file";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -491,6 +491,11 @@ export interface AdoptLocalOptions {
    * name; a cross-device copy deletes the original after dest is complete.
    */
   move?: boolean;
+  /**
+   * Byte-copy progress (cross-device only). Hardlink and clone skip this —
+   * they finish before a bar would help. Same shape as pull: written / total.
+   */
+  onProgress?: (written: number, total: number) => void;
 }
 
 export interface AdoptModelResult {
@@ -513,11 +518,37 @@ function realOrAbs(path: string): string {
   }
 }
 
+const LINK_FALLBACK = new Set(["EXDEV", "EPERM", "ENOTSUP", "EACCES"]);
+
+/**
+ * Byte-copy with optional progress. Passing `onProgress` disables clone
+ * (copy-file streams so it can report). Omit it to clone when the FS allows.
+ */
+export async function copyAdoptedFile(
+  source: string,
+  dest: string,
+  onProgress?: (written: number, size: number) => void,
+): Promise<void> {
+  await copyFile(source, dest, {
+    overwrite: false,
+    onProgress: onProgress
+      ? (p) => {
+          onProgress(p.writtenBytes, p.size);
+        }
+      : undefined,
+  });
+}
+
 /**
  * Place `source` at `dest`: hardlink when the filesystems match, otherwise
- * copy. Source is left in place. Same inode already at dest is a no-op.
+ * copy (clone when possible; progress only on a real cross-device copy).
+ * Source is left in place. Same inode already at dest is a no-op.
  */
-function placeWeights(source: string, dest: string): AdoptPlacement {
+async function placeWeights(
+  source: string,
+  dest: string,
+  onProgress?: (written: number, total: number) => void,
+): Promise<AdoptPlacement> {
   const srcReal = realOrAbs(source);
   if (existsSync(dest)) {
     if (realOrAbs(dest) === srcReal) return "inplace";
@@ -529,8 +560,9 @@ function placeWeights(source: string, dest: string): AdoptPlacement {
     return "hardlink";
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === "EXDEV" || code === "EPERM" || code === "ENOTSUP" || code === "EACCES") {
-      copyFileSync(srcReal, dest);
+    if (code && LINK_FALLBACK.has(code)) {
+      // EXDEV cannot clone; stream with progress. Same-disk fallback clones.
+      await copyAdoptedFile(srcReal, dest, code === "EXDEV" ? onProgress : undefined);
       return "copy";
     }
     throw err;
@@ -589,7 +621,7 @@ export async function adoptLocalGguf(opts: AdoptLocalOptions): Promise<AdoptMode
   mkdirSync(modelDir, { recursive: true });
   let placed: AdoptPlacement;
   try {
-    placed = placeWeights(source, dest);
+    placed = await placeWeights(source, dest, opts.onProgress);
   } catch (err) {
     if (err instanceof PullConflictError) throw err;
     throw err;

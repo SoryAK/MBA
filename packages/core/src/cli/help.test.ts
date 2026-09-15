@@ -42,5 +42,6 @@ describe("help", () => {
     expect(text).toContain("--from");
     expect(text).toContain("--move");
     expect(text).toContain("--yes");
+    expect(text).toContain("progress");
   });
 });

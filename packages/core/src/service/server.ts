@@ -38,11 +38,13 @@
  *        sha256 mismatch, download failure) arrives as an `error` event —
  *        the HTTP status is 200 for the whole stream; the CLI renders the
  *        message and exits non-zero.
- *   POST /models/adopt               → AdoptModelResult
+ *   POST /models/adopt               → SSE stream (text/event-stream)
  *        Body: { path, id, family?, move? }. Copy (or hardlink) a local GGUF
  *        into the model store and finish the same house as pull. `move`
  *        unlinks the source after success (not when source is already dest).
- *        400 bad id/path, 404 source missing, 409 model folder exists.
+ *        Same progress events as pull while a cross-device copy runs.
+ *        Hardlink / clone skip progress. 400 bad body; missing source,
+ *        folder exists, and copy failures arrive as SSE `error`.
  *   GET  /models/config?id=<id>      → { modelId, files, fields, notes?, instructions? }
  *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
  *        Body: { id, file: 'server_setup'|'client', field, value }. The
@@ -137,9 +139,6 @@ import { createModelProxyRoutes } from "./model-proxy.js";
 import { reasoningGateForModel } from "./reasoning-gate.js";
 import {
   adoptLocalGguf,
-  AdoptSourceError,
-  PullConflictError,
-  PullValidationError,
   pullModel,
 } from "../model/model-pull.js";
 import {
@@ -505,22 +504,34 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
-    try {
-      const result = await adoptLocalGguf({
-        sourcePath: input.path,
-        id: input.id,
-        family: input.family,
-        move: input.move,
-        storeRoot: opts.adapterDir,
-      });
-      return c.json(result);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (err instanceof AdoptSourceError) return c.json({ error: message }, 404);
-      if (err instanceof PullValidationError) return c.json({ error: message }, 400);
-      if (err instanceof PullConflictError) return c.json({ error: message }, 409);
-      return c.json({ error: message }, 500);
-    }
+    const sourcePath = input.path;
+    const id = input.id;
+    const family = input.family;
+    const move = input.move;
+    return streamSSE(c, async (stream) => {
+      let lastEmit = 0;
+      try {
+        const result = await adoptLocalGguf({
+          sourcePath,
+          id,
+          family,
+          move,
+          storeRoot: opts.adapterDir,
+          onProgress: (written, total) => {
+            const now = Date.now();
+            if (now - lastEmit < 250 && written < total) return;
+            lastEmit = now;
+            void stream.writeSSE({
+              data: JSON.stringify({ type: "progress", downloaded: written, total }),
+            });
+          },
+        });
+        await stream.writeSSE({ data: JSON.stringify({ type: "done", result }) });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await stream.writeSSE({ data: JSON.stringify({ type: "error", message }) });
+      }
+    });
   });
 
   app.get("/models/config", (c) => {
