@@ -24,6 +24,7 @@ import {
   CYAN,
   RED,
 } from "./style.js";
+import { notesPreviewRow } from "./shelf-print.js";
 
 /** Leave raw mode and pause stdin so Node can exit (resume() keeps the loop alive). */
 function endInteractive(
@@ -135,6 +136,7 @@ export interface ModelEntry {
   readonly family?: string;
   readonly modelFile?: string;
   readonly loaded: boolean;
+  readonly notes?: { readonly empty: boolean; readonly excerpt?: string };
 }
 
 export interface ModelDial {
@@ -183,17 +185,18 @@ function tokenizeKeys(chunk: string): string[] {
 export function pickModelInteractive(models: ModelEntry[]): Promise<ModelEntry | null> {
   return pickPreviewInteractive(
     "models",
-    models.map((m) => ({
-      label: m.id,
-      value: m.id,
-      preview: [
+    models.map((m) => {
+      const preview: Array<readonly [string, string]> = [
         ["id", m.id],
         ["name", m.name],
         ["family", m.family ?? "—"],
         ["loaded", m.loaded ? "yes" : "no"],
         ["file", m.modelFile ? shortenHome(m.modelFile) : "—"],
-      ],
-    })),
+      ];
+      const notes = notesPreviewRow(m.notes);
+      if (notes) preview.push(notes);
+      return { label: m.id, value: m.id, preview };
+    }),
   ).then((id) => (id === null ? null : (models.find((m) => m.id === id) ?? null)));
 }
 

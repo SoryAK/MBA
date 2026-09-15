@@ -51,7 +51,7 @@ export function usageModels(): string {
     cmd("mba models <id>", "edit one model's dials"),
     cmd("mba models show <id>", "print every dial"),
     cmd("mba models set <id> <field> <value>", "set one dial"),
-    cmd("mba models path <id> <file>", "print path (server_setup | yaml)"),
+    cmd("mba models path <id> <file>", "print path (server_setup | yaml | notes | instructions)"),
     cmd("mba models pull <url|owner/repo> --id <id>", "download and scaffold"),
     cmd("mba models search", "HuggingFace search → pull"),
     cmd("mba models stage [id] --harness <name>", "copy instructions.md into the project"),

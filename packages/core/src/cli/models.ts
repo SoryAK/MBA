@@ -5,6 +5,7 @@
 import { fail, formatBytes, serviceGet, servicePost, servicePostSse } from "./client.js";
 import { brand, dim, heading, kv, paint, shortenHome, pulledLine, BOLD, GRN, RED } from "./style.js";
 import { formatModelLine } from "./list-print.js";
+import { formatNotesSection, formatShelfPathRow } from "./shelf-print.js";
 import { extraIde, harnessKind } from "../service/env-context.js";
 import {
   askTextInteractive,
@@ -39,6 +40,12 @@ function printConfig(cfg: ModelConfig, watches?: readonly WatchRow[]): void {
   process.stdout.write(`${brand("show")}  ${paint(cfg.modelId, BOLD)}\n`);
   process.stdout.write(`${kv("yaml", shortenHome(cfg.files.yamlPath), 12)}\n`);
   process.stdout.write(`${kv("server_setup", shortenHome(cfg.files.serverSetupPath), 12)}\n`);
+  if (cfg.notes) {
+    process.stdout.write(`${formatShelfPathRow("notes", cfg.notes)}\n`);
+  }
+  if (cfg.instructions) {
+    process.stdout.write(`${formatShelfPathRow("instructions", cfg.instructions)}\n`);
+  }
   if (cfg.files.blockCount !== undefined) {
     process.stdout.write(`${kv("blocks", String(cfg.files.blockCount), 12)}\n`);
   }
@@ -46,6 +53,11 @@ function printConfig(cfg: ModelConfig, watches?: readonly WatchRow[]): void {
     process.stdout.write(`${kv("max ctx", String(cfg.files.maxContextLength), 12)}\n`);
   }
   process.stdout.write("\n");
+  if (cfg.notes) {
+    for (const line of formatNotesSection(cfg.notes)) {
+      process.stdout.write(`${line}\n`);
+    }
+  }
   for (const file of ["server_setup", "client"] as const) {
     const fields = cfg.fields.filter((f) => f.file === file);
     process.stdout.write(`  ${heading(file === "server_setup" ? "server" : "client")}\n`);
@@ -257,9 +269,17 @@ export async function cmdModelsOpen(
       ? cfg.files.serverSetupPath
       : file === "yaml" || file === "adapter"
         ? cfg.files.yamlPath
-        : null;
+        : file === "notes" || file === "notes.md"
+          ? cfg.notes?.path
+          : file === "instructions" || file === "instructions.md"
+            ? cfg.instructions?.path
+            : null;
   if (!path) {
-    fail(`unknown file '${file}' — use 'server_setup' or 'yaml'`);
+    if (file === "notes" || file === "notes.md") fail(`no notes.md for ${modelId}`);
+    if (file === "instructions" || file === "instructions.md") {
+      fail(`no instructions.md for ${modelId}`);
+    }
+    fail(`unknown file '${file}' — use 'server_setup', 'yaml', 'notes', or 'instructions'`);
   }
   process.stdout.write(path + "\n");
 }

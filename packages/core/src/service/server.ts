@@ -17,9 +17,10 @@
  *   GET  /status                     → { version, uptimeMs, pairing, paths }
  *
  * Model plane (ADR-0093 Phase 1):
- *   GET  /models                     → { models: [{ id, name, family, modelFile, loaded }] }
+ *   GET  /models                     → { models: [{ id, name, family, modelFile, loaded, notes? }] }
  *        Always on, read-only. Catalog from the adapter tree + live loaded
- *        state probed from the upstream llama-server.
+ *        state probed from the upstream llama-server. `notes` is a picker
+ *        glance (`empty`, `excerpt`); omit when there is no winning file.
  *   POST /models/ensure              → { status: loaded|switched|disabled|unknown|failed, id }
  *        OFF by default (409 "disabled") — armed via `switchEnabled`
  *        (env `MBA_MODEL_SWITCH=on`). Idempotent: a loaded model is a no-op.
@@ -42,7 +43,7 @@
  *        into the model store and finish the same house as pull. `move`
  *        unlinks the source after success (not when source is already dest).
  *        400 bad id/path, 404 source missing, 409 model folder exists.
- *   GET  /models/config?id=<id>      → { modelId, files, fields: [{ field, file, current, restartRequired, hint?, machineHint? }] }
+ *   GET  /models/config?id=<id>      → { modelId, files, fields, notes?, instructions? }
  *   POST /models/config              → { file, field, before, after, restartRequired, modelLoaded }
  *        Body: { id, file: 'server_setup'|'client', field, value }. The
  *        per-model dial write door (ADR-0096): validates and writes ONE
@@ -99,7 +100,7 @@ import {
   probeLoadedModel,
   type SwitchExecutor,
 } from "./model-switch.js";
-import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
+import { readModelDials, notesPreview, readModelShelf, setModelDial, type ModelDialFile } from "./model-config.js";
 import {
   defaultWatches,
   parseWatchId,
@@ -357,6 +358,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 
   app.get("/models", async (c) => {
     const catalog = readModelCatalog(opts.adapterDir ?? "");
+    const adapterDir = opts.adapterDir ?? "";
     return c.json({
       models: await Promise.all(
         catalog.map(async (e) => ({
@@ -368,6 +370,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
             await probeModelLoaded(e, paths, opts.upstreamUrl, opts.fetch),
             e.modelFile,
           ),
+          notes: notesPreview(readModelShelf(adapterDir, e.id)?.notes),
         })),
       ),
     });
