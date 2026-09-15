@@ -59,9 +59,8 @@ npm run build -w @mba-ai/core
 ```
 
 If you `npm link` in `packages/core`, rebuild again so the linked bin matches.
-The daemon can still run from source (`tsx`); restart the user unit after
-service-path changes (`mba stop` then `mba start`, or `mba start --foreground`
-for this terminal).
+The daemon can still run from source (`tsx`); `mba restart` after
+service-path changes (`mba start --foreground` for this terminal).
 
 ### Tests
 

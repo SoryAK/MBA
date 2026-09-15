@@ -1,5 +1,5 @@
 /**
- * systemd --user unit for the MBA daemon (`mba start` / `mba stop`).
+ * systemd --user unit for the MBA daemon (`mba start` / `mba stop` / `mba restart`).
  *
  * Same supervisor as a hand-rolled `~/.config/systemd/user/mba.service`:
  * Type=simple, Restart=on-failure. Generated so ExecStart is this install's

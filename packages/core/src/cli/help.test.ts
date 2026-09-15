@@ -9,11 +9,12 @@ describe("help", () => {
     else process.env.NO_COLOR = prevNoColor;
   });
 
-  it("names mba start and mba stop on the overview", () => {
+  it("names mba start, mba stop, and mba restart on the overview", () => {
     process.env.NO_COLOR = "1";
     const text = usageOverview();
     expect(text).toContain("mba start");
     expect(text).toContain("mba stop");
+    expect(text).toContain("mba restart");
   });
 
   it("names mba models watch", () => {

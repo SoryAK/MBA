@@ -2,8 +2,9 @@
 /**
  * `mba` — thin door over the MBA service (ADR-0096).
  *
- * Exception: `mba start` installs/starts the background daemon (systemd --user
- * on Linux). `--foreground` is this process. `mba stop` stops it.
+ * Exception: `mba start` / `mba stop` / `mba restart` install and supervise the
+ * background daemon (systemd --user on Linux). `--foreground` is this process
+ * (`start` only).
  * Nouns: models, servers, machine. Local tools stay top-level.
  * Old flat verbs (config / set / open / pull / machine-overlay) are aliases.
  */
@@ -32,7 +33,7 @@ import {
 import { parseMbaArgv } from "./route.js";
 import { cmdMigrate } from "./migrate.js";
 import { cmdServers } from "./servers.js";
-import { cmdStart, cmdStop } from "./start.js";
+import { cmdStart, cmdStop, cmdRestart } from "./start.js";
 import { cmdStatus } from "./status.js";
 
 async function main(argv: readonly string[]): Promise<void> {
@@ -65,6 +66,10 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (route.cmd === "stop") {
     await cmdStop();
+    return;
+  }
+  if (route.cmd === "restart") {
+    await cmdRestart();
     return;
   }
   if (route.cmd === "status") {
