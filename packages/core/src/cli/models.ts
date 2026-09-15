@@ -5,6 +5,7 @@
 import { fail, formatBytes, serviceGet, servicePost, servicePostSse } from "./client.js";
 import { brand, dim, heading, kv, paint, shortenHome, pulledLine, BOLD, GRN, RED } from "./style.js";
 import { formatModelLine } from "./list-print.js";
+import { formatHistoryLines } from "./history-print.js";
 import { formatNotesSection, formatShelfPathRow } from "./shelf-print.js";
 import { extraIde, harnessKind } from "../service/env-context.js";
 import {
@@ -22,7 +23,7 @@ import { deriveModelId } from "../model/model-id.js";
 import { listHubFamilies } from "../model/suggest-family.js";
 import { askFamilyInteractive } from "./family-choices.js";
 import { handleRestartPrompt, parseValue } from "./restart.js";
-import type { ModelConfig, ModelWatches, SetResult, WatchRow } from "./types.js";
+import type { ModelConfig, ModelHistory, ModelWatches, SetResult, WatchRow } from "./types.js";
 import { KNOWN_HARNESSES } from "../mba/envelope.js";
 import { harnessPickerRows } from "./harness-choices.js";
 
@@ -184,12 +185,14 @@ export async function cmdModelsMenu(baseUrl: string, assumeNo: boolean): Promise
     const pick = await pickLabeledInteractive("models", [
       { label: "edit", value: "edit", preview: [["do", "pick a model and change dials"]] },
       { label: "watches", value: "watches", preview: [["do", "clamp / eof / loop inherit|off|on"]] },
+      { label: "history", value: "history", preview: [["do", "tools and trips that already fired"]] },
       { label: "stage", value: "stage", preview: [["do", "copy instructions.md into the project"]] },
       { label: "search", value: "search", preview: [["do", "HuggingFace search → pull"]] },
     ]);
     if (pick === null) return;
     if (pick === "edit") await cmdModelsPick(baseUrl, assumeNo);
     else if (pick === "watches") await cmdModelsWatch(baseUrl, [], false);
+    else if (pick === "history") await cmdModelsHistory(baseUrl, [], false);
     else if (pick === "stage") await cmdModelsStage(baseUrl, [], false);
     else await cmdModelsSearch(baseUrl);
   }
@@ -333,6 +336,59 @@ export async function cmdModelsWatch(
     return;
   }
   process.stdout.write(`[mba] ${result.modelId} ${result.watch}: ${result.before} → ${result.after}\n`);
+}
+
+const HISTORY_USAGE = "usage: mba models history <id> [--lines N]";
+
+function takeHistoryArgs(args: readonly string[]): { modelId?: string; lines?: number } {
+  const leftover: string[] = [];
+  let lines: number | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === undefined) continue;
+    if (a === "--lines") {
+      const raw = args[i + 1];
+      const n = Number(raw);
+      if (raw === undefined || !Number.isInteger(n) || n < 0) fail(HISTORY_USAGE);
+      lines = n;
+      i += 1;
+      continue;
+    }
+    leftover.push(a);
+  }
+  if (leftover.length > 1) fail(HISTORY_USAGE);
+  return { modelId: leftover[0], lines };
+}
+
+export async function cmdModelsHistory(
+  baseUrl: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<void> {
+  const parsed = takeHistoryArgs(args);
+  let modelId = parsed.modelId;
+  if (!modelId && process.stdin.isTTY) {
+    const models = await listModels(baseUrl);
+    if (models.length === 0) {
+      process.stdout.write("[mba] no models in the adapter tree\n");
+      return;
+    }
+    const picked = await pickModelInteractive(models);
+    if (picked === null) return;
+    modelId = picked.id;
+  }
+  if (!modelId) fail(HISTORY_USAGE);
+
+  const qs = new URLSearchParams({ id: modelId });
+  if (parsed.lines !== undefined) qs.set("lines", String(parsed.lines));
+  const body = await serviceGet<ModelHistory>(baseUrl, `/models/history?${qs.toString()}`);
+  if (json) {
+    process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);
+    return;
+  }
+  for (const line of formatHistoryLines(body.modelId, body.events)) {
+    process.stdout.write(`${line}\n`);
+  }
 }
 
 interface PullResult {

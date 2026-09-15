@@ -50,6 +50,62 @@ export interface ModelHistoryRow {
   readonly tier: string;
 }
 
+/** One ledger row on GET /models/history — no sqlite id. */
+export interface ModelHistoryEvent {
+  readonly ts: number;
+  readonly kind: string;
+  readonly tool: string;
+  readonly toolCallId: string;
+  readonly rule: string;
+  readonly harness: string;
+  readonly targetKey: string;
+  readonly tier: string;
+}
+
+/** Default window for GET /models/history when `lines` is omitted. */
+export const DEFAULT_HISTORY_LIMIT = 100;
+
+type HistorySqlRow = {
+  id: number;
+  ts: number;
+  model_id: string;
+  kind: string;
+  tool: string;
+  tool_call_id: string;
+  rule: string;
+  harness: string;
+  target_key: string;
+  tier: string;
+};
+
+function mapHistoryRow(r: HistorySqlRow): ModelHistoryRow {
+  return {
+    id: r.id,
+    ts: r.ts,
+    modelId: r.model_id,
+    kind: r.kind,
+    tool: r.tool,
+    toolCallId: r.tool_call_id,
+    rule: r.rule,
+    harness: r.harness,
+    targetKey: r.target_key,
+    tier: r.tier,
+  };
+}
+
+export function toHistoryEvent(row: ModelHistoryRow): ModelHistoryEvent {
+  return {
+    ts: row.ts,
+    kind: row.kind,
+    tool: row.tool,
+    toolCallId: row.toolCallId,
+    rule: row.rule,
+    harness: row.harness,
+    targetKey: row.targetKey,
+    tier: row.tier,
+  };
+}
+
 export interface RecordModelHistoryInput {
   readonly modelId: string;
   readonly harness: string;
@@ -132,30 +188,24 @@ export function listModelEvents(db: DatabaseSync, modelId?: string): ModelHistor
     modelId
       ? db.prepare(`SELECT * FROM model_events WHERE model_id = ? ORDER BY id`).all(modelId)
       : db.prepare(`SELECT * FROM model_events ORDER BY id`).all()
-  ) as Array<{
-    id: number;
-    ts: number;
-    model_id: string;
-    kind: string;
-    tool: string;
-    tool_call_id: string;
-    rule: string;
-    harness: string;
-    target_key: string;
-    tier: string;
-  }>;
-  return rows.map((r) => ({
-    id: r.id,
-    ts: r.ts,
-    modelId: r.model_id,
-    kind: r.kind,
-    tool: r.tool,
-    toolCallId: r.tool_call_id,
-    rule: r.rule,
-    harness: r.harness,
-    targetKey: r.target_key,
-    tier: r.tier,
-  }));
+  ) as HistorySqlRow[];
+  return rows.map(mapHistoryRow);
+}
+
+/**
+ * Last `limit` events for one model, oldest of that window first.
+ * Default window is {@link DEFAULT_HISTORY_LIMIT}.
+ */
+export function queryModelHistory(
+  db: DatabaseSync,
+  modelId: string,
+  opts: { readonly limit?: number } = {},
+): ModelHistoryRow[] {
+  const limit = opts.limit ?? DEFAULT_HISTORY_LIMIT;
+  const rows = db
+    .prepare(`SELECT * FROM model_events WHERE model_id = ? ORDER BY id DESC LIMIT ?`)
+    .all(modelId, limit) as HistorySqlRow[];
+  return rows.map(mapHistoryRow).reverse();
 }
 
 /**
