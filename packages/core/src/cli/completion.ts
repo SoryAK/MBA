@@ -3,7 +3,7 @@
  * Install: eval "$(mba completion)"  or  mba completion zsh
  */
 
-const GROUPS = "start stop models m servers server s clients client c migrate machine status help completion estimate-memory connect";
+const GROUPS = "start stop restart models m servers server s clients client c migrate machine status help completion estimate-memory connect";
 const MODEL_SUB = "list show set open path pull search edit stage connect watch watches history";
 const SERVER_SUB = "list boot stop logs slots binaries builds";
 const CLIENT_SUB = "list add connect revoke remove";
@@ -74,7 +74,7 @@ function zshScript(): string {
   return `#compdef mba
 _mba() {
   local -a groups modelsubs serversubs clientsubs migratesubs
-  groups=(start stop models m servers server s clients client c migrate machine status help completion estimate-memory connect)
+  groups=(start stop restart models m servers server s clients client c migrate machine status help completion estimate-memory connect)
   modelsubs=(list show set open path pull search edit stage connect watch watches history)
   serversubs=(list boot stop logs slots binaries builds)
   clientsubs=(list add connect revoke remove)

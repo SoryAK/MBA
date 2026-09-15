@@ -86,9 +86,9 @@ Source in `packages/core/src/`:
 
 1. `mba` parses argv (`cli/route.ts`) and calls the service (`GET` / `POST`).
 2. The daemon reads/writes the adapter tree and state dir.
-3. Exceptions that do not need the daemon: `mba start` / `mba stop`,
-   `--help`, `completion`, `estimate-memory`. `mba migrate` scans local
-   GGUFs; the hub write is still `POST /models/adopt`.
+3. Exceptions that do not need the daemon: `mba start` / `mba stop` /
+   `mba restart`, `--help`, `completion`, `estimate-memory`. `mba migrate`
+   scans local GGUFs; the hub write is still `POST /models/adopt`.
 
 **MCP**
 
@@ -172,6 +172,7 @@ always; printers as small units.
 npm install
 npm run typecheck && npm test && npm run build
 mba start                 # or: npm run mba -- start
+mba restart               # after a service-path rebuild
 mba status
 npm run build -w @mba-ai/core    # after CLI changes; then npm link in packages/core
 ```

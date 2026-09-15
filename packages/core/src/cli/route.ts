@@ -28,6 +28,7 @@ export type MbaRoute =
   | { readonly cmd: "help"; readonly topic: HelpTopic }
   | { readonly cmd: "start"; readonly foreground: boolean }
   | { readonly cmd: "stop" }
+  | { readonly cmd: "restart" }
   | { readonly cmd: "status" }
   | { readonly cmd: "completion"; readonly args: readonly string[] }
   | { readonly cmd: "estimate-memory"; readonly args: readonly string[] }
@@ -111,6 +112,14 @@ export function parseMbaArgv(argv: readonly string[]): ParsedMba {
     if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "overview" } };
     if (rest.length > 0) return { assumeNo, json, route: { cmd: "unknown", command: `stop ${rest[0]}` } };
     return { assumeNo, json, route: { cmd: "stop" } };
+  }
+  if (command === "restart") {
+    if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "overview" } };
+    if (argv.includes("--foreground")) {
+      return { assumeNo, json, route: { cmd: "unknown", command: "restart --foreground" } };
+    }
+    if (rest.length > 0) return { assumeNo, json, route: { cmd: "unknown", command: `restart ${rest[0]}` } };
+    return { assumeNo, json, route: { cmd: "restart" } };
   }
   if (command === "status") {
     if (wantsHelp(rest)) return { assumeNo, json, route: { cmd: "help", topic: "status" } };

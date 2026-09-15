@@ -1,6 +1,7 @@
 /**
- * `mba start` / `mba stop` — background daemon (systemd --user when available).
- * `--foreground` is this process. Every other `mba` verb stays a thin client.
+ * `mba start` / `mba stop` / `mba restart` — background daemon (systemd --user
+ * when available). `--foreground` is this process (`start` only). Every other
+ * `mba` verb stays a thin client.
  */
 
 import { fail, readServiceDiscovery } from "./client.js";
@@ -101,6 +102,11 @@ export async function cmdStart(foreground: boolean = false): Promise<void> {
     return;
   }
 
+  const url = await startBackground();
+  process.stdout.write(`[mba] started at ${url}\n`);
+}
+
+async function startBackground(): Promise<string> {
   if (hasUserSystemd()) {
     try {
       installUserUnit();
@@ -110,17 +116,16 @@ export async function cmdStart(foreground: boolean = false): Promise<void> {
     }
     const url = await waitUntilAnswering();
     if (!url) fail("daemon unit started but is not answering yet — mba status");
-    process.stdout.write(`[mba] started at ${url}\n`);
-    return;
+    return url;
   }
 
   spawnDetachedDaemon();
   const url = await waitUntilAnswering();
   if (!url) fail("daemon spawned but is not answering yet — try mba start --foreground");
-  process.stdout.write(`[mba] started at ${url}\n`);
+  return url;
 }
 
-export async function cmdStop(): Promise<void> {
+async function ensureStopped(): Promise<"stopped" | "not-running"> {
   if (hasUserSystemd() && systemdUnitActive()) {
     try {
       stopUserUnit();
@@ -132,8 +137,7 @@ export async function cmdStop(): Promise<void> {
       const dead = await waitUntilDead(disc.pid);
       if (!dead) fail(`pid ${disc.pid} still running after systemctl stop`);
     }
-    process.stdout.write("[mba] stopped\n");
-    return;
+    return "stopped";
   }
 
   const disc = readServiceDiscovery();
@@ -141,10 +145,7 @@ export async function cmdStop(): Promise<void> {
   const answering = disc && pidAlive ? await isServiceAnswering(disc.url) : false;
   const plan = planStop(disc, pidAlive, answering);
 
-  if (plan === "not-running") {
-    process.stdout.write("[mba] not running\n");
-    return;
-  }
+  if (plan === "not-running") return "not-running";
   if (plan === "stale-pid" && disc?.pid !== null && disc?.pid !== undefined) {
     fail(
       `service.json pid ${disc.pid} is alive but not answering at ${disc.url} — not sending SIGTERM`,
@@ -152,10 +153,7 @@ export async function cmdStop(): Promise<void> {
   }
 
   const pid = disc?.pid;
-  if (typeof pid !== "number") {
-    process.stdout.write("[mba] not running\n");
-    return;
-  }
+  if (typeof pid !== "number") return "not-running";
 
   try {
     process.kill(pid, "SIGTERM");
@@ -165,5 +163,17 @@ export async function cmdStop(): Promise<void> {
 
   const dead = await waitUntilDead(pid);
   if (!dead) fail(`pid ${pid} still running after SIGTERM`);
-  process.stdout.write("[mba] stopped\n");
+  return "stopped";
+}
+
+export async function cmdStop(): Promise<void> {
+  const outcome = await ensureStopped();
+  process.stdout.write(outcome === "not-running" ? "[mba] not running\n" : "[mba] stopped\n");
+}
+
+/** Stop if running, then start. Rewrites the user unit so a rebuild is picked up. */
+export async function cmdRestart(): Promise<void> {
+  await ensureStopped();
+  const url = await startBackground();
+  process.stdout.write(`[mba] restarted at ${url}\n`);
 }

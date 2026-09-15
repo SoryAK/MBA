@@ -34,7 +34,7 @@ proxy.
   on the box. `mba start` must not wipe them.
 - **Idempotent start.** A second `mba start` prints the URL already in use. A
   live pid that is not answering is refuse, not a second spawn.
-- **Thin-client rule stands.** Only start/stop (and `--help`, `completion`,
+- **Thin-client rule stands.** Only start/stop/restart (and `--help`, `completion`,
   `estimate-memory`) may run with the daemon down.
 
 ## Considered Options
@@ -52,7 +52,10 @@ proxy.
 
 ## Decision
 
-**`mba start` runs the daemon in the background. `mba stop` stops it.**
+**`mba start` runs the daemon in the background. `mba stop` stops it.
+`mba restart` is stop then start** (rewrites the generated unit so a rebuild
+is the next ExecStart). Not `--foreground`. A live pid that is not answering
+is still refuse.
 
 ### Linux with user systemd
 

@@ -134,6 +134,11 @@ describe("parseMbaArgv", () => {
       cmd: "unknown",
       command: "start extra",
     });
+    expect(parseMbaArgv(["restart"]).route).toEqual({ cmd: "restart" });
+    expect(parseMbaArgv(["restart", "--foreground"]).route).toEqual({
+      cmd: "unknown",
+      command: "restart --foreground",
+    });
     expect(parseMbaArgv(["models", "list", "--json"]).json).toBe(true);
     expect(parseMbaArgv(["models", "list", "--json"]).route).toEqual({
       cmd: "models",

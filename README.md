@@ -29,7 +29,7 @@ mba status
 mba                  # home menu on a TTY (after the CLI is on your PATH)
 ```
 
-`mba start` runs the daemon in the background (systemd --user on Linux). `mba stop` stops it. A second `mba start` prints the URL already in use. `--foreground` is this terminal, if you want the logs.
+`mba start` runs the daemon in the background (systemd --user on Linux). `mba stop` stops it. `mba restart` is stop then start (picks up a rebuild). A second `mba start` prints the URL already in use. `--foreground` is this terminal, if you want the logs.
 
 The service binds `127.0.0.1` on an OS-assigned port and writes `<state dir>/mba/service.json`. The CLI finds it there, or via `MBA_SERVICE_URL`.
 

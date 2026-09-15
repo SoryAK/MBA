@@ -20,7 +20,7 @@ configure adapter → BCB (system watch) → AMPI (system live response)
 - **BCB** — behavioral circuit breakers. You name known failure modes on this model and configure an escalation ladder plus a programmatic response.
 - **AMPI** — automated multi-process intervention. A named recipe that runs when a breaker fires and always finishes. See [docs/ampi.md](../../docs/ampi.md).
 - **Service** — binds `127.0.0.1` on an OS-assigned port and writes `<state dir>/mba/service.json`.
-- **CLI** — `mba` (`start`, `stop`, `models`, `servers`, `clients`, `migrate`, `machine`, `status`). `mba start` runs the daemon in the background; `mba stop` stops it; every other verb talks to it. Known watches: `mba models watch`. Tool and trip ledger: `mba models history`.
+- **CLI** — `mba` (`start`, `stop`, `restart`, `models`, `servers`, `clients`, `migrate`, `machine`, `status`). `mba start` runs the daemon in the background; `mba stop` stops it; `mba restart` is stop then start; every other verb talks to it. Known watches: `mba models watch`. Tool and trip ledger: `mba models history`.
 
 ## Install (library)
 
@@ -40,7 +40,7 @@ mba start                 # from a checkout: npm run mba -- start
 mba status
 ```
 
-`mba start` runs the daemon in the background (systemd --user on Linux). `mba stop` stops it. `--foreground` is this terminal. `npm start` in this package is the same verb; `npm run dev` is `--foreground`.
+`mba start` runs the daemon in the background (systemd --user on Linux). `mba stop` stops it. `mba restart` is stop then start (picks up a rebuild). `--foreground` is this terminal. `npm start` in this package is the same verb; `npm run dev` is `--foreground`.
 
 Models you already have:
 

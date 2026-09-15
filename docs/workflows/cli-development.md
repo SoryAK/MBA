@@ -14,7 +14,7 @@ Industry notes (Claude Code architecture review + git/gh/kubectl): steal TTY-vs-
 
 ## What `mba` is
 
-A **thin client** of the MBA daemon. It does not own adapter files, sessions, or llama-server. Reads and writes go through the service (`GET` / `POST`). Local exceptions (no daemon): `mba start` / `mba stop` (systemd --user, or `--foreground` / SIGTERM), `estimate-memory`, `completion`, `--help`. Scan of operator GGUFs for `mba migrate` is local; the hub write is `POST /models/adopt`.
+A **thin client** of the MBA daemon. It does not own adapter files, sessions, or llama-server. Reads and writes go through the service (`GET` / `POST`). Local exceptions (no daemon): `mba start` / `mba stop` / `mba restart` (systemd --user, or `--foreground` / SIGTERM), `estimate-memory`, `completion`, `--help`. Scan of operator GGUFs for `mba migrate` is local; the hub write is `POST /models/adopt`.
 
 Nouns: `models` (`m`), `servers` (`s`), `clients` (`c`), `migrate`, `machine`, `status`. Old flat verbs stay as aliases. `migrate` has no shortcut.
 
@@ -29,7 +29,7 @@ TTY and `--json` are two skins of the same route. JSON field names are the contr
 | `mba.ts` | argv → command; service URL; fail |
 | `route.ts` | parse argv (`parseMbaArgv`) |
 | `help.ts` | `--help` text |
-| `start.ts` | `mba start` / `mba stop` |
+| `start.ts` | `mba start` / `mba stop` / `mba restart` |
 | `systemd-user.ts` | generated `mba.service` (Restart=on-failure) |
 | `client.ts` | `fail`, `serviceGet` / `servicePost`, `resolveServiceUrl` |
 | `style.ts` | paint, `brand`, `kv`, `heading`, `shortenHome` |
@@ -99,7 +99,7 @@ Still parked (CLI polish card): picker chrome (`interactive.ts` / `previewBox`).
 
 ## Gotchas
 
-- **Service vs CLI rebuild.** `mba start` generates a user unit whose ExecStart is this install’s node + `service/main`. Operator `mba` on PATH is `dist`. Rebuild CLI after UI changes; `mba stop` && `mba start` after service-path changes. Machine env stays in `mba.service.d/local.conf`.
+- **Service vs CLI rebuild.** `mba start` generates a user unit whose ExecStart is this install’s node + `service/main`. Operator `mba` on PATH is `dist`. Rebuild CLI after UI changes; `mba restart` after service-path changes. Machine env stays in `mba.service.d/local.conf`.
 - **Raw mode.** Restore `setRawMode(false)` in `finally`. Interactive only when `process.stdin.isTTY`.
 - **`--json` stability.** Scripts and tests key on field names. A polish may regroup TTY rows; it must not rename JSON. Additive fields (`envAttached`) are ok; `env.harness` values may change when the product does (`none` on boot).
 - **Boot then connect.** Boot never applies `environments/` from a leftover pairing or the Copilot default. Family + model dials only. `mba connect` attaches the client (card + token). Env overlays still apply when a caller passes an explicit harness (stage, proxy, `resolve-server-recipe --harness`).

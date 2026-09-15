@@ -35,9 +35,9 @@ changed on a model that is currently loaded, the CLI must offer to reboot the
   adapter files directly. All reads go through `GET /models/config?id=<id>`,
   all writes through `POST /models/config`. The service remains the single
   writer and single source of truth (ADR-0093 model-plane ownership).
-- **Exception:** `mba start` / `mba stop` are how the daemon lives — see
+- **Exception:** `mba start` / `mba stop` / `mba restart` are how the daemon lives — see
   [ADR-0107](0107-mba-start-stop-and-user-systemd.md). `--foreground` is this
-  process. Every other verb still talks to a running daemon.
+  process (`start` only). Every other verb still talks to a running daemon.
 - **New service route:** `GET /models/config?id=<id>` returns every known dial
   with its current value, file grouping, and `restartRequired` flag. Reuses
   `readModelDials` from the same capability block as the POST route.
