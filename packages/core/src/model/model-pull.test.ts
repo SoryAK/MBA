@@ -9,6 +9,7 @@ import YAML from "yaml";
 import {
   adoptLocalGguf,
   AdoptSourceError,
+  copyAdoptedFile,
   PullConflictError,
   PullValidationError,
   pullModel,
@@ -679,6 +680,28 @@ describe("adoptLocalGguf", () => {
     } finally {
       rmSync(store, { recursive: true, force: true });
       rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("copyAdoptedFile", () => {
+  it("reports byte progress and does not overwrite", async () => {
+    const dir = freshStore();
+    try {
+      const source = join(dir, "src.bin");
+      const dest = join(dir, "dest.bin");
+      writeFileSync(source, Buffer.alloc(256 * 1024, 7));
+      const ticks: Array<{ written: number; size: number }> = [];
+      await copyAdoptedFile(source, dest, (written, size) => {
+        ticks.push({ written, size });
+      });
+      expect(readFileSync(dest)).toEqual(readFileSync(source));
+      expect(ticks.length).toBeGreaterThan(0);
+      expect(ticks[ticks.length - 1]?.written).toBe(256 * 1024);
+      expect(ticks[ticks.length - 1]?.size).toBe(256 * 1024);
+      await expect(copyAdoptedFile(source, dest)).rejects.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

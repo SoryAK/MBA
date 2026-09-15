@@ -7,7 +7,7 @@
 
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { fail, formatBytes, serviceGet, servicePost } from "./client.js";
+import { fail, formatBytes, serviceGet, servicePostSse } from "./client.js";
 import {
   askTextInteractive,
   askYesNoInteractive,
@@ -230,7 +230,9 @@ async function adoptOne(
 ): Promise<AdoptResult> {
   const body: Record<string, unknown> = { path, id, family };
   if (move) body.move = true;
-  return servicePost<AdoptResult>(baseUrl, "/models/adopt", body);
+  return servicePostSse<AdoptResult>(baseUrl, "/models/adopt", body, {
+    progressLabel: "copying",
+  });
 }
 
 function printSingleton(

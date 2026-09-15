@@ -132,7 +132,7 @@ export function usageMigrate(): string {
     cmd("mba migrate models [dir]", "GGUFs in that folder → hub"),
     cmd("mba migrate find [query]", "fuzzy-find GGUFs → hub"),
     "",
-    dim("  copies into the hub (hardlink when possible)"),
+    dim("  copies into the hub (hardlink when possible; progress on a real copy)"),
     dim("  find      ~/.cache/huggingface/hub and ~/models"),
     dim("  --from    limit find to one directory"),
     dim("  TTY       groups quants; adopt the group or edit files, then family once"),

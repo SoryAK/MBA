@@ -91,15 +91,16 @@ export function formatBytes(n: number): string {
 }
 
 /**
- * POST to an SSE endpoint and render download progress live. The daemon
- * streams `progress` events while bytes arrive, then a terminal `done`
- * (result) or `error` event. Progress is re-rendered on the same line (\r)
- * and throttled to ~10/s so a fast download does not spam the terminal.
+ * POST to an SSE endpoint and render progress live. The daemon streams
+ * `progress` events while bytes move, then a terminal `done` (result) or
+ * `error` event. Progress is re-rendered on the same line (\r) and throttled
+ * to ~10/s. `progressLabel` is the verb on that line (`downloading` / `copying`).
  */
 export async function servicePostSse<T>(
   baseUrl: string,
   path: string,
   body: unknown,
+  opts?: { readonly progressLabel?: string },
 ): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
@@ -126,6 +127,7 @@ export async function servicePostSse<T>(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const label = opts?.progressLabel ?? "downloading";
   let lastRender = 0;
 
   const renderProgress = (downloaded: number, total: number | null, force: boolean): void => {
@@ -134,8 +136,8 @@ export async function servicePostSse<T>(
     lastRender = now;
     const line =
       total !== null && total > 0
-        ? `[mba] downloading ${formatBytes(downloaded)} / ${formatBytes(total)} (${Math.round((downloaded / total) * 100)}%)`
-        : `[mba] downloading ${formatBytes(downloaded)}`;
+        ? `[mba] ${label} ${formatBytes(downloaded)} / ${formatBytes(total)} (${Math.round((downloaded / total) * 100)}%)`
+        : `[mba] ${label} ${formatBytes(downloaded)}`;
     process.stdout.write(`\r\x1b[K${line}`);
   };
 
@@ -169,9 +171,9 @@ export async function servicePostSse<T>(
         return event.result as T;
       } else if (event.type === "error") {
         process.stdout.write("\r\x1b[K");
-        throw new Error(event.message ?? "pull failed");
+        throw new Error(event.message ?? "stream failed");
       }
     }
   }
-  throw new Error("pull stream ended without a result");
+        throw new Error("stream ended without a result");
 }
