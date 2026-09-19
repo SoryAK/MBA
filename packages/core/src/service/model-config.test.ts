@@ -383,6 +383,42 @@ describe("readModelDials machine hints", () => {
     expect(byField.get("gpuLayers")?.machineHint).toMatch(/^≤ \d+ \(VRAM\)$/);
   });
 
+  it("hints ctxSize against RAM and omits VRAM layers on unified memory", () => {
+    writeMachineHintFixture(root);
+    const machine: MachineInfo = {
+      os: "linux",
+      cpuCores: 4,
+      totalRamBytes: 2 * 1024 * 1024 * 1024,
+      gpus: [{ name: "AMD Strix Halo" }],
+    };
+    const dials = readModelDials(root, "tiny-model", machine);
+    expect(dials).not.toBeNull();
+    const byField = new Map(dials!.fields.map((f) => [f.field, f]));
+    expect(byField.get("ctxSize")?.machineHint).toMatch(/^≤ \d+ \(RAM, unified\)$/);
+    expect(byField.get("gpuLayers")?.machineHint).toBeUndefined();
+  });
+
+  it("hints ctxSize against host RAM on UMA carve-out, not the carve-out figure", () => {
+    writeMachineHintFixture(root);
+    const machine: MachineInfo = {
+      os: "linux",
+      cpuCores: 4,
+      totalRamBytes: 2 * 1024 * 1024 * 1024,
+      gpus: [
+        {
+          name: "AMD Strix Halo",
+          vramBytes: 64 * 1024 * 1024 * 1024,
+          vramSource: "uma",
+        },
+      ],
+    };
+    const dials = readModelDials(root, "tiny-model", machine);
+    expect(dials).not.toBeNull();
+    const byField = new Map(dials!.fields.map((f) => [f.field, f]));
+    expect(byField.get("ctxSize")?.machineHint).toMatch(/^≤ \d+ \(RAM, unified\)$/);
+    expect(byField.get("gpuLayers")?.machineHint).toBeUndefined();
+  });
+
   it("omits machine hints when no machine info is provided", () => {
     writeMachineHintFixture(root);
     const dials = readModelDials(root, "tiny-model");

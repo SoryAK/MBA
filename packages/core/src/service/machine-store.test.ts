@@ -165,4 +165,13 @@ describe("machine-store", () => {
     writeMachineInfo(paths, badInfo as typeof INFO);
     expect(readMachineInfo(paths)).toBeUndefined();
   });
+
+  it("rejects a profile with an unknown GPU VRAM source", () => {
+    const badInfo = {
+      ...INFO,
+      gpus: [{ name: "Example GPU", vramBytes: 1024, vramSource: "shared" }],
+    };
+    writeMachineInfo(paths, badInfo as MachineInfo);
+    expect(readMachineInfo(paths)).toBeUndefined();
+  });
 });

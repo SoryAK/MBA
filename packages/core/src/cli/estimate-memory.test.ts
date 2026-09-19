@@ -153,6 +153,54 @@ describe("estimate-memory CLI", () => {
     expect(result.machineFits!.maxCtxSize).toBeLessThan(100000);
   });
 
+  it("budgets a UMA recipe against host RAM without adding the carve-out", () => {
+    const path = createMinimalGgufFile(dir, {
+      blockCount: 8,
+      hiddenSize: 512,
+      headCount: 8,
+      headCountKv: 2,
+      fileSizeBytes: 100 * 1024 * 1024,
+    });
+    const paths = defaultStorePaths(dir);
+    const hostRam = 500 * 1024 * 1024;
+    const nameOnly: MachineInfo = {
+      os: "linux",
+      cpuCores: 4,
+      totalRamBytes: hostRam,
+      gpus: [{ name: "AMD APU" }],
+    };
+    writeMachineInfo(paths, nameOnly);
+    const withoutCarveOut = runEstimateMemory({
+      modelPath: path,
+      ctxSize: 100000,
+      gpuLayers: 8,
+      paths,
+    });
+
+    writeMachineInfo(paths, {
+      ...nameOnly,
+      gpus: [
+        {
+          name: "AMD APU",
+          vramBytes: 64 * 1024 * 1024 * 1024,
+          vramSource: "uma",
+        },
+      ],
+    });
+    const withCarveOut = runEstimateMemory({
+      modelPath: path,
+      ctxSize: 100000,
+      gpuLayers: 8,
+      paths,
+    });
+
+    expect(withCarveOut.estimate.vramBytes).toBeGreaterThan(0);
+    expect(withoutCarveOut.machineFits?.availableVramBytes).toBeUndefined();
+    expect(withCarveOut.machineFits?.availableVramBytes).toBeUndefined();
+    expect(withCarveOut.machineFits?.fits).toBe(false);
+    expect(withCarveOut.machineFits?.maxCtxSize).toBe(withoutCarveOut.machineFits?.maxCtxSize);
+  });
+
   it("prints the estimate without crashing", () => {
     const path = createMinimalGgufFile(dir, {
       blockCount: 8,

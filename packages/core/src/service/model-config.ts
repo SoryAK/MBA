@@ -33,6 +33,7 @@ import {
   type GgufRecipeShape,
 } from "./gguf-memory-estimator.js";
 import type { MachineInfo } from "./machine-info.js";
+import { gpuMemoryKind } from "./machine-overlay.js";
 
 /** The two writable files per model. */
 export type ModelDialFile = "server_setup" | "client";
@@ -416,9 +417,10 @@ const VRAM_HEADROOM = 0.9;
 
 /**
  * Compute machine-aware constraint hints for the dials that are bounded by
- * the detected host: ctxSize (RAM), gpuLayers (VRAM), threads/parallel (CPU
- * cores). Returns an empty object when no machine info is available or the
- * model file cannot be read by the estimator.
+ * the detected host: ctxSize (RAM, or RAM unified on APUs), gpuLayers
+ * (discrete VRAM only), threads/parallel (CPU cores). Returns an empty
+ * object when no machine info is available or the model file cannot be
+ * read by the estimator.
  */
 export function computeMachineHints(
   files: ModelConfigFiles,
@@ -430,10 +432,13 @@ export function computeMachineHints(
   const shape = buildRecipeShape(files, setupBlock);
   if (!shape) return {};
 
+  const kind = gpuMemoryKind(machineInfo);
+  const unified = kind === "unified";
   const availableRam = Math.floor(machineInfo.totalRamBytes * RAM_HEADROOM);
-  const gpuWithVram = machineInfo.gpus?.find(
-    (g) => g.vramBytes !== undefined && g.vramBytes > 0,
-  );
+  const gpuWithVram =
+    kind === "discrete"
+      ? machineInfo.gpus?.find((g) => g.vramBytes !== undefined && g.vramBytes > 0)
+      : undefined;
   const availableVram =
     gpuWithVram?.vramBytes !== undefined
       ? Math.floor(gpuWithVram.vramBytes * VRAM_HEADROOM)
@@ -451,9 +456,10 @@ export function computeMachineHints(
     availableRam,
     availableVram,
     files.maxContextLength ?? 1_000_000,
+    { unified },
   );
   if (maxCtx !== undefined && maxCtx > 0) {
-    hints.ctxSize = `≤ ${maxCtx} (RAM)`;
+    hints.ctxSize = unified ? `≤ ${maxCtx} (RAM, unified)` : `≤ ${maxCtx} (RAM)`;
   }
 
   if (availableVram !== undefined && files.blockCount !== undefined) {

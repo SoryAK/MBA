@@ -54,6 +54,13 @@ function isValidMachineInfo(value: unknown): value is MachineInfo {
       if (!isPlainObject(gpu)) return false;
       if (gpu.name !== undefined && typeof gpu.name !== "string") return false;
       if (gpu.vramBytes !== undefined && typeof gpu.vramBytes !== "number") return false;
+      if (
+        gpu.vramSource !== undefined &&
+        gpu.vramSource !== "discrete" &&
+        gpu.vramSource !== "uma"
+      ) {
+        return false;
+      }
     }
   }
   return true;
@@ -94,7 +101,11 @@ export function writeMachineInfo(paths: MbaStorePaths, info: MachineInfo): void 
 function normalizeGpu(gpu: GpuInfo): string {
   const parts: string[] = [];
   if (gpu.name) parts.push(gpu.name);
-  if (gpu.vramBytes !== undefined) parts.push(`${formatBytes(gpu.vramBytes)} VRAM`);
+  if (gpu.vramBytes !== undefined) {
+    parts.push(
+      `${formatBytes(gpu.vramBytes)} ${gpu.vramSource === "uma" ? "UMA" : "VRAM"}`,
+    );
+  }
   return parts.length > 0 ? parts.join(" ") : "unknown GPU";
 }
 

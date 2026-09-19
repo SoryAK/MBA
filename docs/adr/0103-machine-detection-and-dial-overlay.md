@@ -71,12 +71,14 @@ Example profile:
 | Field | Linux | macOS | Windows (deferred) |
 |-------|-------|-------|--------------------|
 | `totalRamBytes` | `/proc/meminfo` | `host_statistics` / `sysctl` | `wmic` |
-| `gpus[].vramBytes` | `nvidia-smi` | `system_profiler` (limited) | `wmic` |
-| `gpus[].name` | `nvidia-smi` | `system_profiler` | `wmic` |
+| `gpus[].vramBytes` | `nvidia-smi` when present (`vramSource` omitted / discrete); else amdgpu `mem_info_vram_total` with `vramSource: "uma"` | `system_profiler` (limited) | `wmic` |
+| `gpus[].name` | `nvidia-smi`, else `lspci` | `system_profiler` | `wmic` |
 | `cpuCores` | `os.cpus().length` | `os.cpus().length` | `os.cpus().length` |
 | `os` | `process.platform` | `process.platform` | `process.platform` |
 
-First implementation targets Linux (`nvidia-smi`) and macOS (RAM + CPU only). If detection fails for any field, that field is `undefined` and the overlay skips the related clamp.
+First implementation targets Linux (`nvidia-smi`, then `lspci` names) and macOS (RAM + CPU only). If detection fails for any field, that field is `undefined`.
+
+Missing `vramBytes` on a **named** GPU is unified memory: keep `gpuLayers`, and fit weights+KV against **host RAM only**. Linux amdgpu may attach `mem_info_vram_total` as `vramSource: "uma"` so the overlay does not treat an APU carve-out as discrete NVIDIA VRAM (that would zero or clamp layers). The carve-out is recorded, not added to the RAM budget — BIOS UMA size is firmware, not MBA policy. Empty `gpus` still means no GPU (`gpuLayers` → 0). Do not add GTT or invent a second VRAM pool from ROCm “VRAM total”.
 
 Re-validation happens on **daemon restart** and on explicit refresh via the CLI/API. If the profile changes, the daemon rewrites the file and logs a diff.
 
@@ -99,8 +101,8 @@ After the full recipe resolution (built-in defaults → global → family → mo
 
 | Dial | Clamp rule |
 |------|-----------|
-| `ctxSize` | ≤ model `maxContextLength` (already enforced) AND ≤ the largest context that fits in available RAM / VRAM per the estimator |
-| `gpuLayers` | ≤ model `blockCount + 1` (already enforced) AND ≤ the most layers that fit in VRAM per the estimator |
+| `ctxSize` | ≤ model `maxContextLength` (already enforced) AND ≤ the largest context that fits: discrete = RAM and VRAM separately; unified = `totalBytes` vs host RAM (BIOS UMA / GTT not added) |
+| `gpuLayers` | **none** (empty `gpus`) → 0. **discrete** (`vramBytes` without uma) → ≤ the most layers that fit in that VRAM. **unified** (GPU named, including `vramSource: "uma"`) → leave the recipe's layers alone |
 | `threads` | ≤ `cpuCores` |
 | `parallel` | ≤ a conservative heuristic based on `ctxSize` and RAM |
 
@@ -135,5 +137,5 @@ The daemon detects machine info at boot, persists it, and caches it in the servi
 ## Open questions
 
 1. What is the right safety margin to reserve for the OS and other processes? We will measure on a few local machines before finalizing.
-2. Should `ctxSize` clamp consider RAM + sum of all GPU VRAM, or the smallest available resource? Likely the bottleneck resource for the chosen offload split.
+2. Discrete vs unified `ctxSize`: discrete uses the bottleneck of the RAM/VRAM split; unified uses `totalBytes` against `totalRamBytes`. A `vramSource: "uma"` figure is recorded so layers are not clamped as discrete VRAM; it is not summed into the RAM budget. Mixing iGPU + dGPU on one box is still the discrete path if any GPU reports discrete `vramBytes`.
 3. How do we validate the TypeScript estimator against real llama.cpp runs? We will collect a small set of reference models and compare predicted vs. actual peak RAM/VRAM.

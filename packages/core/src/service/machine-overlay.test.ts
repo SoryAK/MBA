@@ -153,6 +153,24 @@ describe("applyMachineOverlay", () => {
     expect(result.annotations).toContain("gpuLayers clamped to 0 (no GPU detected)");
   });
 
+  it("keeps gpuLayers on a named GPU that has no VRAM figure (unified memory)", () => {
+    const model = createMinimalGgufFile(dir, {
+      blockCount: 8,
+      hiddenSize: 512,
+      headCount: 8,
+      headCountKv: 2,
+      fileSizeBytes: 10 * 1024 * 1024,
+    });
+    const m = machine({
+      cpuCores: 8,
+      totalRamBytes: 16 * 1024 * 1024 * 1024,
+      gpus: [{ name: "AMD Strix Halo" }],
+    });
+    const result = applyMachineOverlay(baseFlags({ gpuLayers: 10, ctxSize: 2048 }), model, m);
+    expect(result.flags.gpuLayers).toBe(10);
+    expect(result.annotations).not.toContain("gpuLayers clamped to 0 (no GPU detected)");
+  });
+
   it("does not clamp gpuLayers when a GPU with VRAM is detected", () => {
     const model = createMinimalGgufFile(dir, {
       blockCount: 8,
@@ -211,6 +229,61 @@ describe("applyMachineOverlay", () => {
     expect(result.annotations.some((a) => a.startsWith("gpuLayers clamped from 32"))).toBe(true);
     expect(result.clampedFits).toBe(true);
     expect(result.originalFits).toBe(false);
+  });
+
+  it("on unified memory clamps ctxSize against host RAM total, not gpuLayers", () => {
+    const model = createMinimalGgufFile(dir, {
+      blockCount: 8,
+      hiddenSize: 512,
+      headCount: 8,
+      headCountKv: 2,
+      fileSizeBytes: 1 * 1024 * 1024,
+    });
+    const m = machine({
+      cpuCores: 4,
+      totalRamBytes: 500 * 1024 * 1024,
+      gpus: [{ name: "AMD Strix Halo" }],
+    });
+    const result = applyMachineOverlay(baseFlags({ ctxSize: 65536, gpuLayers: 8 }), model, m);
+    expect(result.flags.gpuLayers).toBe(8);
+    expect(result.flags.ctxSize).toBeDefined();
+    expect(result.flags.ctxSize).toBeLessThan(65536);
+    expect(result.annotations.some((a) => a.startsWith("ctxSize clamped"))).toBe(true);
+    expect(result.clampedFits).toBe(true);
+  });
+
+  it("on UMA carve-out keeps layers and still budgets ctxSize against host RAM", () => {
+    const model = createMinimalGgufFile(dir, {
+      blockCount: 8,
+      hiddenSize: 512,
+      headCount: 8,
+      headCountKv: 2,
+      fileSizeBytes: 1 * 1024 * 1024,
+    });
+    const ramOnly = machine({
+      cpuCores: 4,
+      totalRamBytes: 500 * 1024 * 1024,
+      gpus: [{ name: "AMD Strix Halo" }],
+    });
+    const withCarveOut = machine({
+      cpuCores: 4,
+      totalRamBytes: 500 * 1024 * 1024,
+      gpus: [
+        {
+          name: "AMD Strix Halo",
+          vramBytes: 8 * 1024 * 1024 * 1024,
+          vramSource: "uma",
+        },
+      ],
+    });
+    const flags = baseFlags({ ctxSize: 65536, gpuLayers: 8 });
+    const starved = applyMachineOverlay(flags, model, ramOnly);
+    const uma = applyMachineOverlay(flags, model, withCarveOut);
+    expect(starved.flags.gpuLayers).toBe(8);
+    expect(starved.flags.ctxSize).toBeLessThan(65536);
+    expect(uma.flags.gpuLayers).toBe(8);
+    expect(uma.flags.ctxSize).toBe(starved.flags.ctxSize);
+    expect(uma.annotations).not.toContain("gpuLayers clamped to 0 (no GPU detected)");
   });
 
   it("clamps ctxSize to fit RAM", () => {

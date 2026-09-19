@@ -7,6 +7,12 @@
  * *reduces* dials, never increases them, and it never adds a GPU layer count if
  * the recipe left `gpuLayers` undefined.
  *
+ * GPU memory: **none** (empty `gpus` → layers 0), **discrete** (`vramBytes`
+ * without `vramSource: "uma"` → clamp layers to that VRAM), **unified**
+ * (named GPU, including Linux APU `vramSource: "uma"`) → keep layers; fit
+ * `totalBytes` against host RAM only. A UMA figure is recorded, not added
+ * to the budget — BIOS caps (e.g. 96 GB of 128 GB) are firmware, not MBA.
+ *
  * The overlay is a separate step so the same recipe resolution chain can be run
  * with or without machine info (e.g., the `resolve-server-recipe` CLI does not
  * need to read `machine.json`).
@@ -45,14 +51,34 @@ function recipeFits(
   estimate: ReturnType<typeof estimateRecipeMemory>,
   availableRam: number,
   availableVram: number | undefined,
+  unified: boolean,
 ): boolean {
   if (estimate === undefined) return false;
+  if (unified) {
+    // APU / unified: keep layers, budget the whole recipe against host RAM.
+    // Do not add a BIOS UMA carve-out — that cap is firmware, not overlay policy.
+    return estimate.totalBytes <= availableRam;
+  }
   const fitsRam = estimate.ramBytes <= availableRam;
   // If the recipe needs any VRAM but the machine has no usable GPU, it does
   // not fit, even when the RAM-only check passes.
   if (estimate.vramBytes > 0 && availableVram === undefined) return false;
   const fitsVram = availableVram === undefined || estimate.vramBytes <= availableVram;
   return fitsRam && fitsVram;
+}
+
+/**
+ * Discrete VRAM (nvidia-smi / `vramBytes` without uma) vs APU / name-only.
+ * A UMA carve-out is still unified: keep layers, do not clamp to that figure.
+ */
+export function gpuMemoryKind(machine: MachineInfo): "none" | "discrete" | "unified" {
+  const gpus = machine.gpus ?? [];
+  if (gpus.length === 0) return "none";
+  const hasDiscrete = gpus.some(
+    (g) => g.vramSource !== "uma" && g.vramBytes !== undefined && g.vramBytes > 0,
+  );
+  if (hasDiscrete) return "discrete";
+  return "unified";
 }
 
 function modelBlockCount(modelFile: string): number | undefined {
@@ -84,9 +110,11 @@ export function applyMachineOverlay(
     return { flags: { ...flags }, annotations, originalFits: true, clampedFits: true };
   }
 
+  const kind = gpuMemoryKind(machine);
+  const unified = kind === "unified";
   const availableRam = Math.floor(machine.totalRamBytes * RAM_HEADROOM);
   const gpuWithVram =
-    machine.gpus && machine.gpus.length > 0
+    kind === "discrete" && machine.gpus
       ? machine.gpus.find((g) => g.vramBytes !== undefined && g.vramBytes > 0)
       : undefined;
   const availableVram =
@@ -95,7 +123,8 @@ export function applyMachineOverlay(
       : undefined;
 
   // --- gpuLayers ---
-  if (flags.gpuLayers !== undefined && flags.gpuLayers > 0 && availableVram === undefined) {
+  // Named GPU without a VRAM figure is unified memory, not "no GPU".
+  if (flags.gpuLayers !== undefined && flags.gpuLayers > 0 && kind === "none") {
     clamped.gpuLayers = 0;
     annotations.push(`gpuLayers clamped to 0 (no GPU detected)`);
   }
@@ -117,7 +146,7 @@ export function applyMachineOverlay(
   // Shrinking ctx cannot fix weights that already overflow VRAM at -ngl 100.
   const originalRecipeShape = flagsToRecipeShape(modelFile, flags);
   const originalEstimate = estimateRecipeMemory(originalRecipeShape);
-  const originalFits = recipeFits(originalEstimate, availableRam, availableVram);
+  const originalFits = recipeFits(originalEstimate, availableRam, availableVram, unified);
 
   const afterCpu: ResolvedLlamaFlags = { ...flags, ...clamped };
   const afterCpuShape = flagsToRecipeShape(modelFile, afterCpu);
@@ -130,7 +159,7 @@ export function applyMachineOverlay(
       availableVram !== undefined &&
       afterCpu.gpuLayers !== undefined &&
       afterCpu.gpuLayers > 0 &&
-      !recipeFits(afterCpuEstimate, availableRam, availableVram)
+      !recipeFits(afterCpuEstimate, availableRam, availableVram, unified)
     ) {
       const blocks = modelBlockCount(modelFile);
       const ceiling = blocks !== undefined ? Math.min(afterCpu.gpuLayers, blocks) : afterCpu.gpuLayers;
@@ -148,8 +177,10 @@ export function applyMachineOverlay(
     const afterNgl: ResolvedLlamaFlags = { ...flags, ...clamped };
     const afterNglShape = flagsToRecipeShape(modelFile, afterNgl);
     const afterNglEstimate = estimateRecipeMemory(afterNglShape);
-    if (afterNglEstimate !== undefined && !recipeFits(afterNglEstimate, availableRam, availableVram)) {
-      const maxCtx = findMaxFittingCtxSize(afterNglShape, availableRam, availableVram, flags.ctxSize);
+    if (afterNglEstimate !== undefined && !recipeFits(afterNglEstimate, availableRam, availableVram, unified)) {
+      const maxCtx = findMaxFittingCtxSize(afterNglShape, availableRam, availableVram, flags.ctxSize, {
+        unified,
+      });
       if (maxCtx === undefined || maxCtx < 1) {
         annotations.push("model does not fit in available RAM/VRAM even with ctxSize=1");
       } else if (flags.ctxSize === undefined || maxCtx < flags.ctxSize) {
@@ -162,7 +193,7 @@ export function applyMachineOverlay(
 
   const clampedFlags: ResolvedLlamaFlags = { ...flags, ...clamped };
   const clampedEstimate = estimateRecipeMemory(flagsToRecipeShape(modelFile, clampedFlags));
-  const clampedFits = recipeFits(clampedEstimate, availableRam, availableVram);
+  const clampedFits = recipeFits(clampedEstimate, availableRam, availableVram, unified);
 
   return {
     flags: clampedFlags,
