@@ -1060,6 +1060,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     ) {
       return c.json({ error: "body.port must be an integer 1-65535" }, 400);
     }
+    const port = input.port;
     // llama.cpp needs modelFile; ollama needs modelRef.
     if (serverType === "ollama") {
       if (typeof input.modelRef !== "string" || input.modelRef.length === 0) {
@@ -1088,48 +1089,77 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       typeof input.binaryPath === "string" && input.binaryPath.length > 0
         ? input.binaryPath
         : selection.selected?.path;
-    const result = await bootServer({
-      serverType,
-      modelFile: input.modelFile as string | undefined,
-      modelRef: input.modelRef as string | undefined,
-      port: input.port,
-      fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
-      adapterDir: opts.adapterDir ?? "",
-      registryPath: paths.upstreamsPath,
-      binaryPath,
-      machineInfo: opts.machineInfo,
-      machineOverlay: machineOverlay(),
-      seams: opts.lifecycleSeams,
-    });
-    if (!result.ok) {
-      const status =
-        result.code === "port-busy" || result.code === "duplicate-model"
-          ? 409
-          : result.code === "unknown-model"
-            ? 404
-            : result.code === "registry-corrupt"
-              ? 503
-              : 500;
-      return c.json(
-        result.code === "registry-corrupt"
-          ? { code: result.code, error: result.error }
-          : { error: result.error },
-        status,
-      );
-    }
-    if (typeof binaryPath === "string" && binaryPath.length > 0) {
-      writeLlamaServerChoice(paths, {
-        path: binaryPath,
-        backend: inspectLlamaBackend(binaryPath),
+    const streamBoot = (c.req.header("accept") ?? "").includes("text/event-stream");
+    const runBoot = async (seams: LifecycleSeams | undefined) => {
+      const result = await bootServer({
+        serverType,
+        modelFile: input.modelFile as string | undefined,
+        modelRef: input.modelRef as string | undefined,
+        port,
+        fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
+        adapterDir: opts.adapterDir ?? "",
+        registryPath: paths.upstreamsPath,
+        binaryPath,
+        machineInfo: opts.machineInfo,
+        machineOverlay: machineOverlay(),
+        seams,
+      });
+      if (!result.ok) {
+        const status =
+          result.code === "port-busy" || result.code === "duplicate-model"
+            ? 409
+            : result.code === "unknown-model"
+              ? 404
+              : result.code === "registry-corrupt"
+                ? 503
+                : 500;
+        return {
+          status,
+          body:
+            result.code === "registry-corrupt"
+              ? { code: result.code, error: result.error }
+              : { error: result.error },
+        };
+      }
+      if (typeof binaryPath === "string" && binaryPath.length > 0) {
+        writeLlamaServerChoice(paths, {
+          path: binaryPath,
+          backend: inspectLlamaBackend(binaryPath),
+        });
+      }
+      const registryState = readRegistry(paths.upstreamsPath);
+      if (registryState.kind === "corrupt") {
+        return { status: 503, body: registryCorruptJson(registryState.error) };
+      }
+      writeRegistry(paths.upstreamsPath, upsertEntry(registryState.entries, result.entry));
+      return { status: 201, body: result.entry };
+    };
+    if (streamBoot) {
+      return streamSSE(c, async (stream) => {
+        const outcome = await runBoot({
+          ...opts.lifecycleSeams,
+          onBootPhase: (event) => {
+            void stream.writeSSE({
+              data: JSON.stringify({ type: "phase", ...event }),
+            });
+          },
+        });
+        if (outcome.status >= 400) {
+          const errBody = outcome.body as { error?: string; code?: string };
+          await stream.writeSSE({
+            data: JSON.stringify({
+              type: "error",
+              message: errBody.error ?? "boot failed",
+              code: errBody.code,
+            }),
+          });
+          return;
+        }
+        await stream.writeSSE({ data: JSON.stringify({ type: "done", result: outcome.body }) });
       });
     }
-    // Persist the entry (merge, never clobber).
-    const registryState = readRegistry(paths.upstreamsPath);
-    if (registryState.kind === "corrupt") {
-      return c.json(registryCorruptJson(registryState.error), 503);
-    }
-    writeRegistry(paths.upstreamsPath, upsertEntry(registryState.entries, result.entry));
-    return c.json(result.entry, 201);
+    const outcome = await runBoot(opts.lifecycleSeams);
+    return c.json(outcome.body, outcome.status as 201 | 404 | 409 | 500 | 503);
   });
 
   app.post("/servers/stop", async (c) => {
