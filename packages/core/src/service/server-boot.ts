@@ -224,7 +224,12 @@ export type BootServerResult =
   | { readonly ok: true; readonly entry: UpstreamEntry }
   | {
       readonly ok: false;
-      readonly code: "port-busy" | "duplicate-model" | "unknown-model" | "boot-failed";
+      readonly code:
+        | "port-busy"
+        | "duplicate-model"
+        | "unknown-model"
+        | "boot-failed"
+        | "registry-corrupt";
       readonly error: string;
     };
 
@@ -269,7 +274,15 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
     `[boot] request: ${serverType} model=${modelKey} port=${input.port} fork=${fork}`,
   );
 
-  const registry = readRegistry(input.registryPath);
+  const registryState = readRegistry(input.registryPath);
+  if (registryState.kind === "corrupt") {
+    return {
+      ok: false,
+      code: "registry-corrupt",
+      error: `upstream registry is corrupt — ${registryState.error}`,
+    };
+  }
+  const registry = registryState.entries;
 
   // G2: refuse a port already bound by a process-per-model server. Ollama
   // entries all share the daemon port, so the port check applies only to

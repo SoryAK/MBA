@@ -75,7 +75,7 @@ describe("G2 self-healing port rule", () => {
     if (!result.ok) {
       expect(result.code).toBe("unknown-model");
     }
-    const cleaned = readRegistry(registryPath);
+    const cleaned = readRegistry(registryPath).entries;
     expect(cleaned.find((e) => e.port === 8080)).toBeUndefined();
   });
 
@@ -121,7 +121,7 @@ describe("G2 self-healing port rule", () => {
       }),
     );
 
-    const after = readRegistry(registryPath);
+    const after = readRegistry(registryPath).entries;
     expect(after.find((e) => e.port === 8080)).toBeDefined();
   });
 

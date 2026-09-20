@@ -100,6 +100,7 @@ describe("mba service app", () => {
       version: number;
       uptimeMs: number;
       pairing: { active: boolean; count: number; integrity: string; blocked: boolean; sessions: unknown[] };
+      registry: { integrity: string; blocked: boolean; count: number };
       paths: { baseDir: string; tcbPath: string };
     };
     expect(body.version).toBe(0);
@@ -111,6 +112,7 @@ describe("mba service app", () => {
       integrity: "missing",
       sessions: [],
     });
+    expect(body.registry).toEqual({ blocked: false, count: 0, integrity: "missing" });
     expect(body.paths.baseDir).toBe(paths.baseDir);
     expect(body.paths.tcbPath).toBe(paths.tcbPath);
   });
@@ -130,6 +132,23 @@ describe("mba service app", () => {
         integrity: "corrupt",
         error: expect.stringMatching(/valid JSON/),
         sessions: [],
+      },
+    });
+  });
+
+  it("GET /status reports corrupt registry state as blocked", async () => {
+    mkdirSync(join(paths.upstreamsPath, ".."), { recursive: true });
+    writeFileSync(paths.upstreamsPath, "{ not json", "utf8");
+    const app = createMbaServiceApp({ paths });
+
+    const res = await app.request("/status");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      registry: {
+        blocked: true,
+        count: 0,
+        integrity: "corrupt",
+        error: expect.stringMatching(/valid JSON/),
       },
     });
   });

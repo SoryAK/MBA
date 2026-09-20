@@ -14,6 +14,12 @@ interface StatusBody {
     readonly error?: string;
     readonly sessions?: readonly PairingSession[];
   };
+  readonly registry?: {
+    readonly blocked?: boolean;
+    readonly count: number;
+    readonly integrity?: "missing" | "valid" | "corrupt";
+    readonly error?: string;
+  };
 }
 
 function printServerRow(s: ServerEntry): void {
@@ -37,6 +43,7 @@ export async function cmdStatus(json: boolean): Promise<void> {
   let servers: ServerEntry[] = [];
   let machine = "unknown";
   let pairing: StatusBody["pairing"];
+  let registry: StatusBody["registry"];
   let watches: ModelWatches | undefined;
   try {
     const [m, s, overlay, st] = await Promise.all([
@@ -49,6 +56,7 @@ export async function cmdStatus(json: boolean): Promise<void> {
     servers = [...s.servers];
     machine = overlay.mode;
     pairing = st.pairing;
+    registry = st.registry;
   } catch (err) {
     if (json) {
       process.stdout.write(
@@ -83,6 +91,9 @@ export async function cmdStatus(json: boolean): Promise<void> {
           pairing: pairing
             ? { ...pairing, sessions }
             : { active: false, blocked: false, count: 0, integrity: "missing", sessions: [] },
+          registry: registry
+            ? { ...registry }
+            : { blocked: false, count: 0, integrity: "missing" },
           loaded: loaded.map((m) => m.id),
           watches: watches
             ? {
@@ -124,6 +135,13 @@ export async function cmdStatus(json: boolean): Promise<void> {
   process.stdout.write(`${kv("pairing", pairingLabel)}\n`);
   if (pairing?.blocked && pairing.error) {
     process.stdout.write(`  ${dim(pairing.error)}\n`);
+  }
+  const registryLabel = registry?.blocked
+    ? `${paint("blocked", RED)}  ${dim("corrupt state")}`
+    : dim("ok");
+  process.stdout.write(`${kv("registry", registryLabel)}\n`);
+  if (registry?.blocked && registry.error) {
+    process.stdout.write(`  ${dim(registry.error)}\n`);
   }
   if (watches) {
     const bits = watches.watches

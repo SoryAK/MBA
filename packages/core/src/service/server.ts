@@ -14,8 +14,8 @@
  *   POST /set_rules                  → { version, tcb }
  *        Body: { tcb, ruleClasses? }. Validates, persists atomically, bumps
  *        the version. 400 on invalid shape.
- *   GET  /status                     → { version, uptimeMs, pairing, paths }
- *        Pairing includes missing/valid/corrupt integrity; corrupt is blocked.
+ *   GET  /status                     → { version, uptimeMs, pairing, registry, paths }
+ *        Pairing and registry include missing/valid/corrupt integrity; corrupt is blocked.
  *
  * Model plane (ADR-0093 Phase 1):
  *   GET  /models                     → { models: [{ id, name, family, modelFile, loaded, notes? }] }
@@ -220,6 +220,13 @@ export interface MbaServiceAppOptions {
   readonly machineOverlay?: () => MachineOverlayMode;
 }
 
+function registryCorruptJson(error: string): { code: "registry-corrupt"; error: string } {
+  return {
+    code: "registry-corrupt",
+    error: `upstream registry is corrupt — ${error}`,
+  };
+}
+
 export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   const paths = opts.paths ?? defaultStorePaths();
   const startedAt = Date.now();
@@ -330,6 +337,8 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     const cfg = readGlobalConfig(paths);
     const sessionState = readSessions(paths.sessionsPath);
     const sessions = sessionState.sessions;
+    const registryState = readRegistry(paths.upstreamsPath);
+    const registry = registryState.entries;
     const extras = operatorEnvelopeBindings(paths.clientsPath);
     const ownerBySlot = new Map<string, string | undefined>();
     const sessionsOut = publicSessions(sessions).map((s) => {
@@ -353,6 +362,12 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         integrity: sessionState.kind,
         sessions: sessionsOut,
         ...(sessionState.kind === "corrupt" ? { error: sessionState.error } : {}),
+      },
+      registry: {
+        blocked: registryState.kind === "corrupt",
+        count: registry.length,
+        integrity: registryState.kind,
+        ...(registryState.kind === "corrupt" ? { error: registryState.error } : {}),
       },
       paths: {
         baseDir: paths.baseDir,
@@ -916,7 +931,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   // --- Server plane (ADR-0097 Phase 2) ------------------------------------
 
   app.get("/servers", async (c) => {
-    const registry = readRegistry(paths.upstreamsPath);
+    const registryState = readRegistry(paths.upstreamsPath);
+    if (registryState.kind === "corrupt") {
+      return c.json({ servers: [], integrity: "corrupt", error: registryState.error });
+    }
+    const registry = registryState.entries;
     const fetchImpl = opts.fetch ?? fetch;
     // Per-type health (Phase 3): each entry is probed by its own type's
     // capability block (llama.cpp → /health on its port, ollama → /api/tags
@@ -1005,7 +1024,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (!id) {
       return c.json({ error: "query param 'id' is required" }, 400);
     }
-    const registry = readRegistry(paths.upstreamsPath);
+    const registryState = readRegistry(paths.upstreamsPath);
+    if (registryState.kind === "corrupt") {
+      return c.json(registryCorruptJson(registryState.error), 503);
+    }
+    const registry = registryState.entries;
     const entry = registry.find((e) => e.id === id);
     if (!entry) {
       return c.json({ error: `no registered server with id ${id}` }, 404);
@@ -1159,8 +1182,15 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
           ? 409
           : result.code === "unknown-model"
             ? 404
-            : 500;
-      return c.json({ error: result.error }, status);
+            : result.code === "registry-corrupt"
+              ? 503
+              : 500;
+      return c.json(
+        result.code === "registry-corrupt"
+          ? { code: result.code, error: result.error }
+          : { error: result.error },
+        status,
+      );
     }
     if (typeof binaryPath === "string" && binaryPath.length > 0) {
       writeLlamaServerChoice(paths, {
@@ -1169,8 +1199,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       });
     }
     // Persist the entry (merge, never clobber).
-    const registry = readRegistry(paths.upstreamsPath);
-    writeRegistry(paths.upstreamsPath, upsertEntry(registry, result.entry));
+    const registryState = readRegistry(paths.upstreamsPath);
+    if (registryState.kind === "corrupt") {
+      return c.json(registryCorruptJson(registryState.error), 503);
+    }
+    writeRegistry(paths.upstreamsPath, upsertEntry(registryState.entries, result.entry));
     return c.json(result.entry, 201);
   });
 
@@ -1193,7 +1226,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
-    const registry = readRegistry(paths.upstreamsPath);
+    const registryState = readRegistry(paths.upstreamsPath);
+    if (registryState.kind === "corrupt") {
+      return c.json(registryCorruptJson(registryState.error), 503);
+    }
+    const registry = registryState.entries;
     // Resolve the target entry: by id (type-agnostic) or by pid (legacy
     // llama.cpp path — Ollama entries have no pid).
     const entry = hasId
@@ -1222,7 +1259,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (!id) {
       return c.json({ error: "query param 'id' is required" }, 400);
     }
-    const registry = readRegistry(paths.upstreamsPath);
+    const registryState = readRegistry(paths.upstreamsPath);
+    if (registryState.kind === "corrupt") {
+      return c.json(registryCorruptJson(registryState.error), 503);
+    }
+    const registry = registryState.entries;
     const entry = registry.find((e) => e.id === id);
     if (!entry) {
       return c.json({ error: `no registered server with id ${id}` }, 404);
@@ -1275,7 +1316,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     ) {
       return c.json({ error: "body.filename must be a non-empty string" }, 400);
     }
-    const registry = readRegistry(paths.upstreamsPath);
+    const registryState = readRegistry(paths.upstreamsPath);
+    if (registryState.kind === "corrupt") {
+      return c.json(registryCorruptJson(registryState.error), 503);
+    }
+    const registry = registryState.entries;
     const entry = registry.find((e) => e.id === input.id);
     if (!entry) {
       return c.json({ error: `no registered server with id ${input.id}` }, 404);
@@ -1359,10 +1404,13 @@ async function defaultSwitchExecutor(
   if (!result.ok) {
     throw new Error(result.error);
   }
-  const registry = readRegistry((opts.paths ?? defaultStorePaths()).upstreamsPath);
+  const registryState = readRegistry((opts.paths ?? defaultStorePaths()).upstreamsPath);
+  if (registryState.kind === "corrupt") {
+    throw new Error(`upstream registry is corrupt — ${registryState.error}`);
+  }
   writeRegistry(
     (opts.paths ?? defaultStorePaths()).upstreamsPath,
-    upsertEntry(registry, result.entry),
+    upsertEntry(registryState.entries, result.entry),
   );
 }
 
@@ -1382,7 +1430,10 @@ async function probeModelLoaded(
   envUrl: string | undefined,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string | null> {
-  const registry = readRegistry(paths.upstreamsPath);
+  const registryState = readRegistry(paths.upstreamsPath);
+  // Chat routing already fails closed on corrupt. Loaded-probes skip the
+  // registry rung rather than inventing an empty guest book.
+  const registry = registryState.kind === "corrupt" ? [] : registryState.entries;
   // Registry rung: walk candidates in resolve order; a candidate that is
   // alive but running a DIFFERENT model is stale (rebooted since sign-in)
   // and is dropped too.

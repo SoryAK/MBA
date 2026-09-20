@@ -54,7 +54,9 @@ folder, perf #2 waits for warmup"*):
 server: `{ id, serverType, modelFile, port, pid }`. `GET /servers` reads the
 registry, probes each entry's `/health`, and reports per-entry `healthy` plus
 a `resolved` marker (which entry `resolveUpstream` would pick for a given
-model). This gives the daemon a live, queryable view of what is running.
+model). Missing and valid-empty are "no servers"; corrupt JSON or an invalid
+entry fail closed (chat does not fall back to `MBA_UPSTREAM_URL`, boot does
+not overwrite the file). `GET /status` reports registry integrity.
 
 **Phase 2 — boot/stop with ownership.** `server-boot.ts` + the repaired
 `mba/server-lifecycle.ts` provide:

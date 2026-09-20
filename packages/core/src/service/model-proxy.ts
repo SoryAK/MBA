@@ -24,8 +24,9 @@
  *       → forward to the first healthy one
  *
  *   The static `MBA_UPSTREAM_URL` is a FALLBACK ONLY: it is used when the
- *   registry is empty (dumb-proxy mode). A non-empty registry with no match
- *   is a real error (503), not a silent fall-through.
+ *   registry is missing or valid-empty (dumb-proxy mode). A corrupt registry
+ *   fails closed (503) and does not fall through. A valid non-empty registry
+ *   with no match is a real error (503), not a silent fall-through.
  *
  * Health is TRUST-BUT-VERIFIED: the proxy does not assume a registry entry
  * is alive. It probes each candidate, caching the result for `healthTtlMs`
@@ -275,7 +276,19 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     }
 
     // --- Registry routing (Step 1b) --------------------------------------
-    const registry = opts.registryPath ? readRegistry(opts.registryPath) : [];
+    const registryState = opts.registryPath
+      ? readRegistry(opts.registryPath)
+      : { kind: "missing" as const, entries: [] };
+    if (registryState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "registry-corrupt",
+          error: `upstream registry is corrupt — ${registryState.error}`,
+        },
+        503,
+      );
+    }
+    const registry = registryState.entries;
 
     if (registry.length === 0) {
       // Dumb-proxy mode: no booted servers tracked. Fall back to the static

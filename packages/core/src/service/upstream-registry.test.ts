@@ -36,30 +36,47 @@ describe("upstream registry (ADR-0097 Phase 1)", () => {
   });
 
   describe("readRegistry", () => {
-    it("returns [] when the file does not exist", () => {
-      expect(readRegistry(path)).toEqual([]);
+    it("reports missing when the file does not exist", () => {
+      expect(readRegistry(path)).toEqual({ kind: "missing", entries: [] });
     });
 
-    it("returns [] (never throws) on corrupt JSON", () => {
+    it("reports corrupt JSON instead of treating it as empty", () => {
       writeFileSync(path, "{ not json", "utf8");
-      expect(readRegistry(path)).toEqual([]);
+      expect(readRegistry(path)).toMatchObject({
+        kind: "corrupt",
+        entries: [],
+        error: expect.stringMatching(/valid JSON/),
+      });
     });
 
-    it("returns [] on a valid-JSON wrong-shape file", () => {
+    it("reports a valid-JSON wrong-shape file as corrupt", () => {
       writeFileSync(path, JSON.stringify({ upstreams: "nope" }), "utf8");
-      expect(readRegistry(path)).toEqual([]);
+      expect(readRegistry(path)).toMatchObject({ kind: "corrupt", entries: [] });
+    });
+
+    it("reports an invalid entry as corrupt instead of dropping it", () => {
+      writeFileSync(
+        path,
+        JSON.stringify({ version: 1, upstreams: [{ id: "incomplete" }] }),
+        "utf8",
+      );
+      expect(readRegistry(path)).toMatchObject({
+        kind: "corrupt",
+        entries: [],
+        error: expect.stringMatching(/invalid upstream/),
+      });
     });
 
     it("round-trips entries through writeRegistry", () => {
       const e = entry({ id: "llama-cpp-8080", modelFile: QWEN, port: 8080, pid: 111, startedAt: T1, fork: "upstream" });
       writeRegistry(path, [e]);
-      expect(readRegistry(path)).toEqual([e]);
+      expect(readRegistry(path)).toEqual({ kind: "valid", entries: [e] });
     });
 
     it("writeRegistry is atomic (no torn file left behind)", () => {
       writeRegistry(path, [entry({ id: "a", modelFile: QWEN, port: 8080, pid: 1 })]);
       writeRegistry(path, []);
-      expect(readRegistry(path)).toEqual([]);
+      expect(readRegistry(path)).toEqual({ kind: "valid", entries: [] });
       // The on-disk file must be valid JSON after the overwrite.
       expect(() => JSON.parse(readFileSync(path, "utf8"))).not.toThrow();
     });
