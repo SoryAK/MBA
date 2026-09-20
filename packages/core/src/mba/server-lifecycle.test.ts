@@ -16,9 +16,7 @@ import {
   bootLlamaServer,
   stopLlamaServer,
   killProcessGroup,
-  killAllOwnedGroups,
-  trackOwnedGroup,
-  ownedGroupCount,
+  ProcessSupervisor,
   resolveSeams,
   type LifecycleSeams,
 } from "./server-lifecycle.js";
@@ -425,7 +423,7 @@ describe("stopLlamaServer (group kill, G1)", () => {
   });
 });
 
-describe("killProcessGroup / killAllOwnedGroups (G1 daemon-exit handler)", () => {
+describe("killProcessGroup / ProcessSupervisor (G1 daemon-exit handler)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -459,29 +457,78 @@ describe("killProcessGroup / killAllOwnedGroups (G1 daemon-exit handler)", () =>
     expect(killImpl(deadPgid, 0)).toBe(false);
   });
 
-  it(
-    "killAllOwnedGroups kills every tracked group and clears the set",
-    async () => {
-      // Both groups are alive (probe → true) so each gets a SIGTERM; they
-      // linger, so each also gets a SIGKILL after the grace window.
-      const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) =>
-        signal === 0 ? true : true,
-      );
-      const seams: LifecycleSeams = { killImpl: killImpl as never };
+  it("a successful boot is owned by the shared supervisor and killed on shutdown", async () => {
+    const { spawnImpl } = spawnSeam(424242);
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+    let groupAlive = true;
+    const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) => {
+      if (pid > 0 && signal === 0) return true;
+      if (pid < 0 && signal === 0) return groupAlive;
+      if (pid < 0 && signal === "SIGTERM") groupAlive = false;
+      return true;
+    });
+    const supervisor = new ProcessSupervisor({ killImpl: killImpl as never });
+    const seams: LifecycleSeams = {
+      spawnImpl: spawnImpl as never,
+      fetchImpl,
+      killImpl: killImpl as never,
+      mkdirImpl: vi.fn(),
+      processSupervisor: supervisor,
+    };
 
-      // Track two groups, then shut them all down.
-      trackOwnedGroup(111, seams);
-      trackOwnedGroup(222, seams);
+    await bootLlamaServer(
+      {
+        binaryPath: "/bin/llama-server",
+        modelPath: "/models/qwen.gguf",
+        port: 8080,
+        flags: [],
+        fork: "upstream",
+      },
+      seams,
+    );
 
-      await killAllOwnedGroups(seams);
+    expect(supervisor.ownedGroupCount).toBe(1);
+    await supervisor.shutdown();
+    expect(killImpl).toHaveBeenCalledWith(-424242, "SIGTERM");
+    expect(supervisor.ownedGroupCount).toBe(0);
+  });
 
-      expect(killImpl).toHaveBeenCalledWith(-111, "SIGTERM");
-      expect(killImpl).toHaveBeenCalledWith(-222, "SIGTERM");
-      // Set is cleared after the sweep.
-      expect(ownedGroupCount(seams)).toBe(0);
-    },
-    5000, // two sequential 2s grace windows run in real time
-  );
+  it("a normal stop removes the group from the shared supervisor", async () => {
+    let groupAlive = true;
+    const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) return groupAlive;
+      if (pid < 0 && signal === "SIGTERM") groupAlive = false;
+      return true;
+    });
+    const supervisor = new ProcessSupervisor({ killImpl: killImpl as never });
+    const seams: LifecycleSeams = {
+      killImpl: killImpl as never,
+      processSupervisor: supervisor,
+    };
+    supervisor.track(424242);
+
+    await stopLlamaServer(424242, seams);
+
+    expect(supervisor.ownedGroupCount).toBe(0);
+  });
+
+  it("shutdown stops every tracked group", async () => {
+    const alive = new Set([-111, -222]);
+    const killImpl = vi.fn((pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) return alive.has(pid);
+      if (signal === "SIGTERM") alive.delete(pid);
+      return true;
+    });
+    const supervisor = new ProcessSupervisor({ killImpl: killImpl as never });
+    supervisor.track(111);
+    supervisor.track(222);
+
+    await supervisor.shutdown();
+
+    expect(killImpl).toHaveBeenCalledWith(-111, "SIGTERM");
+    expect(killImpl).toHaveBeenCalledWith(-222, "SIGTERM");
+    expect(supervisor.ownedGroupCount).toBe(0);
+  });
 });
 
 

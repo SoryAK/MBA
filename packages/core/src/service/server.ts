@@ -191,9 +191,8 @@ export interface MbaServiceAppOptions {
   /** Injectable fetch for the upstream probe (tests). */
   readonly fetch?: typeof fetch;
   /**
-   * Shared lifecycle seams (spawn/fetch/kill). The G1 owned-group registry
-   * lives on this instance, so the daemon must pass ONE instance for its
-   * lifetime and call `killAllOwnedGroups` on exit.
+   * Shared lifecycle seams (spawn/fetch/kill) and the daemon's one G1
+   * ProcessSupervisor. Boot, stop, and shutdown must use the same supervisor.
    */
   readonly lifecycleSeams?: LifecycleSeams;
   /**
