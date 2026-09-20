@@ -75,11 +75,19 @@
  *        through the proxy requires `Authorization: Bearer <token>`.
  *   POST /connect/revoke             → { pairing: { active, count } }
  *        Body: { id?, harness?, projectRoot? }. Empty body clears all.
+ *   GET  /clients                    → { clients: [{ name, envelope, source, ide? }] }
+ *        Built-in harnesses plus operator rows from clients.json.
+ *   POST /clients                    → { name, envelope, ide?, updated }
+ *        Body: { name, envelope, ide? }. Add or update an operator client.
+ *        400 reserved name / unsafe envelope / envelope clash.
+ *   POST /clients/remove             → { name, removed }
+ *        Body: { name }. 400 if the name is a built-in.
  *
  * The app is exported separately from the listener so tests can drive it
  * with `app.request()` without binding a port. This file is the composition
  * root. Handlers live in `routes-house.ts`, `routes-models.ts`,
- * `routes-connect.ts`, `routes-servers.ts`, and `model-proxy.ts`.
+ * `routes-connect.ts`, `routes-clients.ts`, `routes-servers.ts`, and
+ * `model-proxy.ts`.
  */
 
 import { Hono } from "hono";
@@ -93,6 +101,7 @@ import {
   type MbaServiceAppOptions,
   type ServiceRouteContext,
 } from "./route-context.js";
+import { registerClientRoutes } from "./routes-clients.js";
 import { registerConnectRoutes } from "./routes-connect.js";
 import { registerHouseRoutes } from "./routes-house.js";
 import { registerModelRoutes } from "./routes-models.js";
@@ -138,6 +147,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   registerHouseRoutes(app, ctx);
   registerModelRoutes(app, ctx);
   registerConnectRoutes(app, ctx);
+  registerClientRoutes(app, ctx);
   registerServerRoutes(app, ctx);
   return app;
 }

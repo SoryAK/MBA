@@ -1,39 +1,31 @@
 /**
  * Harness names the operator can connect: shipped envelopes plus
- * operator-defined clients in mba/clients.json.
+ * operator-defined clients. The catalog comes from GET /clients.
  */
 
-import { builtInEnvelopeBindings } from "../mba/envelope.js";
-import { defaultStorePaths } from "../service/config-store.js";
-import { readOperatorClients } from "../service/operator-clients.js";
+import { serviceGet } from "./client.js";
 
 export interface HarnessChoice {
   readonly name: string;
   readonly envelope: string;
   readonly source: "built-in" | "added";
+  readonly ide?: string;
 }
 
-export function listHarnessChoices(): HarnessChoice[] {
-  const extras = readOperatorClients(defaultStorePaths().clientsPath);
-  const builtIn = builtInEnvelopeBindings().map((b) => ({
-    name: b.name,
-    envelope: b.envelope,
-    source: "built-in" as const,
-  }));
-  const added = extras.map((c) => ({
-    name: c.name,
-    envelope: c.envelope,
-    source: "added" as const,
-  }));
-  return [...builtIn, ...added];
+export async function listHarnessChoices(baseUrl: string): Promise<HarnessChoice[]> {
+  const body = await serviceGet<{ clients: HarnessChoice[] }>(baseUrl, "/clients");
+  return [...body.clients];
 }
 
-export function harnessPickerRows(): Array<{
-  label: string;
-  value: string;
-  preview: ReadonlyArray<readonly [string, string]>;
-}> {
-  return listHarnessChoices().map((h) => ({
+export async function harnessPickerRows(baseUrl: string): Promise<
+  Array<{
+    label: string;
+    value: string;
+    preview: ReadonlyArray<readonly [string, string]>;
+  }>
+> {
+  const choices = await listHarnessChoices(baseUrl);
+  return choices.map((h) => ({
     label: h.source === "added" ? `${h.name} (added)` : h.name,
     value: h.name,
     preview: [
