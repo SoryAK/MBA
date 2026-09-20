@@ -12,6 +12,8 @@
  *     `service.json`, same discovery-file idiom). Atomic write-temp → rename.
  *   - MERGE, NEVER CLOBBER. `upsertEntry` replaces by `id` and keeps the
  *     other entries — booting a second server appends, it does not evict.
+ *   - SERIALIZED MUTATIONS. `updateRegistry` queues overlapping RMW so a
+ *     boot or stop cannot erase a sibling that signed in while it waited.
  *   - TYPED READS. Missing, valid-empty, and corrupt are different facts.
  *     Corrupt must not look like an empty registry (that used to enable the
  *     static `MBA_UPSTREAM_URL` fallback).
@@ -30,6 +32,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
+import { withHouseLock } from "./house-lock.js";
 
 /** One running (or recently running) model server. */
 export interface UpstreamEntry {
@@ -144,6 +147,26 @@ export function readRegistry(path: string): RegistryReadResult {
  * The caller is responsible for the merge semantics (`upsertEntry` /
  * `removeByPid`) — this function persists exactly what it is given.
  */
+/**
+ * Read-modify-write under the house lock. Boot and stop await between
+ * the guest-book read and the write; this queue keeps both entries.
+ * Corrupt state is returned and not overwritten.
+ */
+export async function updateRegistry(
+  path: string,
+  fn: (
+    entries: readonly UpstreamEntry[],
+  ) => readonly UpstreamEntry[] | Promise<readonly UpstreamEntry[]>,
+): Promise<RegistryReadResult> {
+  return withHouseLock(path, async () => {
+    const state = readRegistry(path);
+    if (state.kind === "corrupt") return state;
+    const next = await fn(state.entries);
+    writeRegistry(path, next);
+    return { kind: "valid", entries: next };
+  });
+}
+
 export function writeRegistry(path: string, entries: readonly UpstreamEntry[]): void {
   mkdirSync(dirname(path), { recursive: true });
   const doc: UpstreamRegistryFile = { version: REGISTRY_VERSION, upstreams: [...entries] };

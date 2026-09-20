@@ -14,6 +14,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve, basename } from "node:path";
+import { withHouseLock } from "./house-lock.js";
 import { readModelCatalog } from "./model-catalog.js";
 
 export interface ClientSession {
@@ -151,6 +152,26 @@ export function readSessions(path: string): SessionsReadResult {
     }
   }
   return { kind: "valid", sessions: rows };
+}
+
+/**
+ * Read-modify-write under the house lock. Overlapping connect/revoke
+ * handlers share one queue so a stale snapshot cannot erase a sibling.
+ * Corrupt state is returned and not overwritten.
+ */
+export async function updateSessions(
+  path: string,
+  fn: (
+    sessions: readonly ClientSession[],
+  ) => readonly ClientSession[] | Promise<readonly ClientSession[]>,
+): Promise<SessionsReadResult> {
+  return withHouseLock(path, async () => {
+    const state = readSessions(path);
+    if (state.kind === "corrupt") return state;
+    const next = await fn(state.sessions);
+    writeSessions(path, next);
+    return { kind: "valid", sessions: next };
+  });
 }
 
 export function writeSessions(path: string, sessions: readonly ClientSession[]): void {
