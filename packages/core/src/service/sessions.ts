@@ -1,8 +1,9 @@
 /**
  * Paired-client sessions (connect plane).
  *
- * Empty file = door open (today's behavior). One or more sessions = the
- * proxy requires a Bearer token. MBA is the bouncer; it is not the client.
+ * Missing or valid-empty file = door open. One or more sessions = the proxy
+ * requires a Bearer token. Corrupt state fails closed. MBA is the bouncer;
+ * it is not the client.
  *
  * Pairing is many keys: two models may share a harness + project (chat +
  * embed). The staged envelope is one playbook for that slot. Last connect
@@ -11,7 +12,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve, basename } from "node:path";
 import { readModelCatalog } from "./model-catalog.js";
 
@@ -29,6 +30,15 @@ interface SessionsFile {
   readonly version: number;
   readonly sessions: unknown[];
 }
+
+export type SessionsReadResult =
+  | { readonly kind: "missing"; readonly sessions: readonly ClientSession[] }
+  | { readonly kind: "valid"; readonly sessions: readonly ClientSession[] }
+  | {
+      readonly kind: "corrupt";
+      readonly sessions: readonly ClientSession[];
+      readonly error: string;
+    };
 
 const TOKEN_HASH_RE = /^[0-9a-f]{64}$/;
 const SESSIONS_VERSION = 2;
@@ -90,26 +100,57 @@ function parseSession(value: unknown): { session: ClientSession; scrubPlaintext:
   };
 }
 
-export function readSessions(path: string): ClientSession[] {
-  if (!existsSync(path)) return [];
+function corruptSessions(error: string): SessionsReadResult {
+  return { kind: "corrupt", sessions: [], error };
+}
+
+export function readSessions(path: string): SessionsReadResult {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return { kind: "missing", sessions: [] };
+    }
+    return corruptSessions("sessions file could not be read");
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    raw = JSON.parse(text) as unknown;
   } catch {
-    return [];
+    return corruptSessions("sessions file is not valid JSON");
   }
   const doc = raw as Partial<SessionsFile> | null;
-  if (!doc || !Array.isArray(doc.sessions)) return [];
+  if (
+    !doc ||
+    typeof doc !== "object" ||
+    (doc.version !== 1 && doc.version !== SESSIONS_VERSION) ||
+    !Array.isArray(doc.sessions)
+  ) {
+    return corruptSessions("sessions file has an unsupported shape or version");
+  }
   const rows: ClientSession[] = [];
   let scrub = false;
-  for (const item of doc.sessions) {
+  for (const [index, item] of doc.sessions.entries()) {
     const parsed = parseSession(item);
-    if (!parsed) continue;
+    if (!parsed) {
+      return corruptSessions(`sessions file contains an invalid session at index ${index}`);
+    }
     rows.push(parsed.session);
     if (parsed.scrubPlaintext) scrub = true;
   }
-  if (scrub) writeSessions(path, rows);
-  return rows;
+  if (scrub) {
+    try {
+      writeSessions(path, rows);
+    } catch {
+      return corruptSessions("sessions file could not be safely migrated");
+    }
+  }
+  return { kind: "valid", sessions: rows };
 }
 
 export function writeSessions(path: string, sessions: readonly ClientSession[]): void {

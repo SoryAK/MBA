@@ -75,8 +75,8 @@ export interface ModelProxyOptions {
   /** Injectable fetch for the upstream call + health probes (tests). */
   readonly fetch?: typeof fetch;
   /**
-   * Paired-client sessions file. Empty / missing → door open. Present rows
-   * require a Bearer token on `/v1/chat/completions`.
+   * Paired-client sessions file. Valid-empty / missing → door open. Present
+   * rows require a Bearer token; corrupt state fails closed.
    */
   readonly sessionsPath?: string;
   /**
@@ -208,8 +208,24 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
       model = undefined;
     }
 
-    const sessions = opts.sessionsPath ? readSessions(opts.sessionsPath) : [];
-    const door = authorizeChat(sessions, c.req.header("authorization"), model, opts.adapterDir);
+    const sessionState = opts.sessionsPath
+      ? readSessions(opts.sessionsPath)
+      : { kind: "missing" as const, sessions: [] };
+    if (sessionState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "sessions-corrupt",
+          error: `sessions state is corrupt — ${sessionState.error}`,
+        },
+        503,
+      );
+    }
+    const door = authorizeChat(
+      sessionState.sessions,
+      c.req.header("authorization"),
+      model,
+      opts.adapterDir,
+    );
     if (!door.ok) {
       return c.json({ error: door.error }, 401);
     }

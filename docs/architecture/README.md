@@ -19,7 +19,7 @@ Then open the URL it prints (usually `http://localhost:5173`). Views: `/view/ind
 | `index` | Landscape |
 | `house` / `pull` | Store: pull, scaffold, the two cards |
 | `boot` | Family + model dials only → spawn llama-server. Connect attaches a client. |
-| `pairing` | `sessions.json` (token hash) and `clients.json` (added envelopes) |
+| `pairing` | `sessions.json` (token hash; missing/valid/corrupt integrity, corrupt blocks chat) and `clients.json` (added envelopes) |
 | `clients-landscape` / `connect` | Stage card, mint token, proxy requires Bearer. Add a client is name + envelope. |
 
 One `instructions.md` in the store. Environment folders overlay **dials**, not the card. Staging copies the winning card into a harness file (built-in table or `clients.json`). `notes.md` never leaves the house.

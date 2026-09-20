@@ -8,7 +8,10 @@ import type { PairingSession, ServerEntry, ModelWatches } from "./types.js";
 interface StatusBody {
   readonly pairing?: {
     readonly active: boolean;
+    readonly blocked?: boolean;
     readonly count: number;
+    readonly integrity?: "missing" | "valid" | "corrupt";
+    readonly error?: string;
     readonly sessions?: readonly PairingSession[];
   };
 }
@@ -78,8 +81,8 @@ export async function cmdStatus(json: boolean): Promise<void> {
           url,
           machine,
           pairing: pairing
-            ? { active: pairing.active, count: pairing.count, sessions }
-            : { active: false, count: 0, sessions: [] },
+            ? { ...pairing, sessions }
+            : { active: false, blocked: false, count: 0, integrity: "missing", sessions: [] },
           loaded: loaded.map((m) => m.id),
           watches: watches
             ? {
@@ -113,10 +116,15 @@ export async function cmdStatus(json: boolean): Promise<void> {
     `${kv("loaded", loaded.length > 0 ? loaded.map((m) => m.id).join(", ") : dim("none"))}\n`,
   );
   process.stdout.write(`${kv("models", String(models.length))}\n`);
-  const pairingLabel = pairing?.active
-    ? `${paint("locked", GRN)}  ${pairing.count}`
-    : dim("off");
+  const pairingLabel = pairing?.blocked
+    ? `${paint("blocked", RED)}  ${dim("corrupt state")}`
+    : pairing?.active
+      ? `${paint("locked", GRN)}  ${pairing.count}`
+      : dim("off");
   process.stdout.write(`${kv("pairing", pairingLabel)}\n`);
+  if (pairing?.blocked && pairing.error) {
+    process.stdout.write(`  ${dim(pairing.error)}\n`);
+  }
   if (watches) {
     const bits = watches.watches
       .map((w) => `${w.id} ${w.effective ? paint("on", GRN) : paint("off", RED)}`)

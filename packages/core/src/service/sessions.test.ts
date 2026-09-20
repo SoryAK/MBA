@@ -35,8 +35,34 @@ function session(
 describe("sessions", () => {
   it("treats a missing file as no pairing", () => {
     const path = join(mkdtempSync(join(tmpdir(), "mba-sess-")), "sessions.json");
-    expect(readSessions(path)).toEqual([]);
+    expect(readSessions(path)).toEqual({ kind: "missing", sessions: [] });
     expect(pairingActive([])).toBe(false);
+  });
+
+  it("reports malformed JSON as corrupt instead of opening pairing", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "mba-sess-")), "sessions.json");
+    writeFileSync(path, "{ not json", "utf8");
+
+    expect(readSessions(path)).toMatchObject({
+      kind: "corrupt",
+      sessions: [],
+      error: expect.stringMatching(/valid JSON/),
+    });
+  });
+
+  it("reports an invalid session row as corrupt instead of skipping it", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "mba-sess-")), "sessions.json");
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 2, sessions: [{ id: "missing-required-fields" }] }),
+      "utf8",
+    );
+
+    expect(readSessions(path)).toMatchObject({
+      kind: "corrupt",
+      sessions: [],
+      error: expect.stringMatching(/invalid session/),
+    });
   });
 
   it("publicSessions omits the hash", () => {
@@ -64,8 +90,10 @@ describe("sessions", () => {
       token: plaintext,
       createdAt: "2026-09-09T01:00:00.000Z",
     });
-    writeSessions(path, upsertSession(readSessions(path), rotated));
-    const rows = readSessions(path);
+    writeSessions(path, upsertSession(readSessions(path).sessions, rotated));
+    const state = readSessions(path);
+    expect(state.kind).toBe("valid");
+    const rows = state.sessions;
     expect(rows).toHaveLength(1);
     expect(rows[0]?.tokenHash).toBe(hashToken(plaintext));
     const disk = readFileSync(path, "utf8");
@@ -94,7 +122,9 @@ describe("sessions", () => {
       }) + "\n",
       "utf8",
     );
-    const rows = readSessions(path);
+    const state = readSessions(path);
+    expect(state.kind).toBe("valid");
+    const rows = state.sessions;
     expect(rows).toHaveLength(1);
     expect(rows[0]?.tokenHash).toBe(hashToken(plaintext));
     const disk = readFileSync(path, "utf8");

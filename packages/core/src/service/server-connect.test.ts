@@ -110,7 +110,7 @@ describe("POST /connect", () => {
     expect(body.token.startsWith("mba.")).toBe(true);
     expect(body.stage.action).toBe("wrote");
     expect(body.stage.envelope).toBe(".cursor/rules/mba.mdc");
-    const stored = readSessions(paths.sessionsPath);
+    const stored = readSessions(paths.sessionsPath).sessions;
     expect(stored).toHaveLength(1);
     expect(stored[0]?.tokenHash).toBe(hashToken(body.token));
     const disk = readFileSync(paths.sessionsPath, "utf8");
@@ -204,7 +204,7 @@ describe("POST /connect", () => {
     const body = (await second.json()) as { stage: { action: string } };
     expect(body.stage.action).toBe("skipped");
     expect(readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8")).toContain("# card");
-    expect(readSessions(paths.sessionsPath)).toHaveLength(2);
+    expect(readSessions(paths.sessionsPath).sessions).toHaveLength(2);
 
     const rev = await app.request("/connect/revoke", {
       method: "POST",
@@ -213,7 +213,36 @@ describe("POST /connect", () => {
     });
     expect(rev.status).toBe(200);
     expect(readFileSync(join(project, ".cursor/rules/mba.mdc"), "utf8")).toContain("# card");
-    expect(readSessions(paths.sessionsPath)).toHaveLength(1);
+    expect(readSessions(paths.sessionsPath).sessions).toHaveLength(1);
+  });
+
+  it("refuses to connect or revoke over a corrupt sessions file", async () => {
+    mkdirSync(join(paths.sessionsPath, ".."), { recursive: true });
+    const corrupt = "{ not json";
+    writeFileSync(paths.sessionsPath, corrupt, "utf8");
+
+    const res = await app.request("/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "qwen3-coder-30b",
+        projectRoot: project,
+        harness: "cursor",
+      }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "sessions-corrupt" });
+    expect(readFileSync(paths.sessionsPath, "utf8")).toBe(corrupt);
+
+    const revoke = await app.request("/connect/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(revoke.status).toBe(503);
+    expect(await revoke.json()).toMatchObject({ code: "sessions-corrupt" });
+    expect(readFileSync(paths.sessionsPath, "utf8")).toBe(corrupt);
   });
 
   it("lets the last model with a card own the harness envelope", async () => {
