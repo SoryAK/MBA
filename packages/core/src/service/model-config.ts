@@ -319,18 +319,21 @@ export function notesPreview(card: ModelShelfCard | undefined): ModelNotesPrevie
   return excerpt ? { empty: false, excerpt } : { empty: true };
 }
 
-/** Read the current values of every known dial for a model. */
-export function readModelDials(
-  adapterDir: string,
-  modelId: string,
-  machineInfo?: MachineInfo,
-): {
+/** GET /models/config body. */
+export interface ModelConfig {
   readonly modelId: string;
   readonly files: ModelConfigFiles;
   readonly fields: ModelDial[];
   readonly notes?: ModelShelfCard;
   readonly instructions?: ModelShelfCard;
-} | null {
+}
+
+/** Read the current values of every known dial for a model. */
+export function readModelDials(
+  adapterDir: string,
+  modelId: string,
+  machineInfo?: MachineInfo,
+): ModelConfig | null {
   const files = findModelFiles(adapterDir, modelId);
   if (!files) return null;
   const shelf = readModelShelf(adapterDir, modelId);

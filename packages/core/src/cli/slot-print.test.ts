@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { extraIde, formatClientLabel, harnessKind } from "../service/env-context.js";
+import type { PairingSession } from "./types.js";
 import { formatPairedSlotLines, groupPairedSlots } from "./slot-print.js";
 
 const PROJECT = "/home/dev/MBA";
+
+function session(
+  row: Omit<PairingSession, "id" | "createdAt"> & { readonly id?: string; readonly createdAt?: string },
+): PairingSession {
+  return {
+    id: row.id ?? `s-${row.modelId}`,
+    createdAt: row.createdAt ?? "2026-01-01T00:00:00Z",
+    ...row,
+  };
+}
 
 describe("harnessKind", () => {
   it("marks Claude Code as cli and the rest as ide", () => {
@@ -25,22 +36,22 @@ describe("extraIde", () => {
 describe("groupPairedSlots", () => {
   it("stacks models that share harness + project + envelope", () => {
     const groups = groupPairedSlots([
-      {
+      session({
         harness: "cursor",
         ide: "cursor",
         projectRoot: PROJECT,
         modelId: "nomic-embed-text-v1.5",
         card: false,
         envelope: ".cursor/rules/mba.mdc",
-      },
-      {
+      }),
+      session({
         harness: "cursor",
         ide: "cursor",
         projectRoot: PROJECT,
         modelId: "deepseek_test",
         card: true,
         envelope: ".cursor/rules/mba.mdc",
-      },
+      }),
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.models.map((m) => m.modelId)).toEqual([
@@ -53,22 +64,22 @@ describe("groupPairedSlots", () => {
 describe("formatPairedSlotLines", () => {
   it("names the app, the kind, and the envelope file", () => {
     const lines = formatPairedSlotLines([
-      {
+      session({
         harness: "cursor",
         ide: "cursor",
         projectRoot: PROJECT,
         modelId: "deepseek_test",
         card: true,
         envelope: ".cursor/rules/mba.mdc",
-      },
-      {
+      }),
+      session({
         harness: "cursor",
         ide: "cursor",
         projectRoot: PROJECT,
         modelId: "nomic-embed-text-v1.5",
         card: false,
         envelope: ".cursor/rules/mba.mdc",
-      },
+      }),
     ]);
     expect(lines[0]).toContain("cursor");
     expect(lines[0]).toContain("ide");
@@ -82,13 +93,13 @@ describe("formatPairedSlotLines", () => {
 
   it("marks Claude Code as cli", () => {
     const lines = formatPairedSlotLines([
-      {
+      session({
         harness: "claude-code",
         projectRoot: PROJECT,
         modelId: "deepseek_test",
         card: true,
         envelope: "CLAUDE.local.md",
-      },
+      }),
     ]);
     expect(lines[0]).toContain("claude-code");
     expect(lines[0]).toContain("cli");

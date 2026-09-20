@@ -32,6 +32,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./contracts": {
+      "types": "./dist/service/contracts.d.ts",
+      "import": "./dist/service/contracts.js"
+    },
     "./bcb/rules/repeat-run.js": {
       "types": "./dist/bcb/rules/repeat-run.d.ts",
       "import": "./dist/bcb/rules/repeat-run.js"
