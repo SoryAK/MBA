@@ -13,6 +13,7 @@ import {
   readSessions,
   revokeSessions,
   sessionsSharingSlot,
+  updateSessions,
   upsertSession,
   writeSessions,
   type ClientSession,
@@ -100,6 +101,34 @@ describe("sessions", () => {
     expect(disk).not.toContain(plaintext);
     expect(disk).not.toMatch(/"token"/);
     expect(JSON.parse(disk)).toMatchObject({ version: 2 });
+  });
+
+  it("keeps both sessions when overlapping updates await", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "mba-sess-")), "sessions.json");
+    const a = session({ id: "sa", modelId: "chat", projectRoot: "/tmp/a" });
+    const b = session({ id: "sb", modelId: "embed", projectRoot: "/tmp/b" });
+    await Promise.all([
+      updateSessions(path, async (rows) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return upsertSession(rows, a);
+      }),
+      updateSessions(path, async (rows) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return upsertSession(rows, b);
+      }),
+    ]);
+    const stored = readSessions(path).sessions.map((s) => s.modelId).sort();
+    expect(stored).toEqual(["chat", "embed"]);
+  });
+
+  it("refuses to overwrite a corrupt sessions file", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "mba-sess-")), "sessions.json");
+    writeFileSync(path, "{ not json", "utf8");
+    const result = await updateSessions(path, () => [
+      session({ modelId: "chat" }),
+    ]);
+    expect(result.kind).toBe("corrupt");
+    expect(readFileSync(path, "utf8")).toBe("{ not json");
   });
 
   it("hashes leftover plaintext on read and rewrites the file", () => {
