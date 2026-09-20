@@ -149,6 +149,34 @@ describe("POST /connect", () => {
     expect(authed.status).toBe(503);
   });
 
+  it("keeps both pairings when two connects overlap", async () => {
+    writeEmbedFixture(adapterDir);
+    const [chat, embed] = await Promise.all([
+      app.request("/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: "qwen3-coder-30b",
+          projectRoot: project,
+          harness: "cursor",
+        }),
+      }),
+      app.request("/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: "nomic-embed-text-v1.5",
+          projectRoot: project,
+          harness: "cursor",
+        }),
+      }),
+    ]);
+    expect(chat.status).toBe(200);
+    expect(embed.status).toBe(200);
+    const models = readSessions(paths.sessionsPath).sessions.map((s) => s.modelId).sort();
+    expect(models).toEqual(["nomic-embed-text-v1.5", "qwen3-coder-30b"]);
+  });
+
   it("revokes sessions and opens the door again", async () => {
     await app.request("/connect", {
       method: "POST",

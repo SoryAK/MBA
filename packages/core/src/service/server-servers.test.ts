@@ -668,6 +668,46 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(reg).toHaveLength(2);
   });
 
+  it("POST /servers/boot serializes overlapping boots on the same port", async () => {
+    const otherModel = join(modelDir, "other-7b.gguf");
+    writeAdapter(adapterDir, "other/other-7b/other-7b.yaml", "other-7b", otherModel);
+    let bound = false;
+    const { seams: base } = bootSeams(424242);
+    const seams: LifecycleSeams = {
+      ...base,
+      portCheckImpl: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return !bound;
+      },
+      spawnImpl: (binary, args, opts) => {
+        bound = true;
+        return base.spawnImpl!(binary, args, opts);
+      },
+    };
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const [first, second] = await Promise.all([
+      app.request("/servers/boot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ modelFile, port: 9123 }),
+      }),
+      app.request("/servers/boot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ modelFile: otherModel, port: 9123 }),
+      }),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([201, 409]);
+    const busy = first.status === 409 ? first : second;
+    expect(await busy.json()).toMatchObject({
+      error: expect.stringMatching(/already in use/),
+    });
+    const reg = readRegistry(paths.upstreamsPath).entries;
+    expect(reg).toHaveLength(1);
+    expect(reg[0]?.port).toBe(9123);
+  });
+
   it("POST /servers/boot rejects a missing modelFile with 400", async () => {
     const { seams } = bootSeams(424242);
     const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
