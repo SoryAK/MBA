@@ -12,6 +12,9 @@
  *     `service.json`, same discovery-file idiom). Atomic write-temp → rename.
  *   - MERGE, NEVER CLOBBER. `upsertEntry` replaces by `id` and keeps the
  *     other entries — booting a second server appends, it does not evict.
+ *   - TYPED READS. Missing, valid-empty, and corrupt are different facts.
+ *     Corrupt must not look like an empty registry (that used to enable the
+ *     static `MBA_UPSTREAM_URL` fallback).
  *   - LAZY VALIDATION (G2). `resolveUpstream` accepts an optional
  *     `healthyIds` set: entries whose health probe failed are excluded at
  *     read time. No background sweeper, no timers — a stale entry costs one
@@ -25,7 +28,7 @@
  * functions are pure.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 
 /** One running (or recently running) model server. */
@@ -60,8 +63,19 @@ export interface UpstreamEntry {
 /** On-disk registry document. */
 interface UpstreamRegistryFile {
   readonly version: number;
-  readonly upstreams: UpstreamEntry[];
+  readonly upstreams: unknown[];
 }
+
+const REGISTRY_VERSION = 1;
+
+export type RegistryReadResult =
+  | { readonly kind: "missing"; readonly entries: readonly UpstreamEntry[] }
+  | { readonly kind: "valid"; readonly entries: readonly UpstreamEntry[] }
+  | {
+      readonly kind: "corrupt";
+      readonly entries: readonly UpstreamEntry[];
+      readonly error: string;
+    };
 
 function isUpstreamEntry(value: unknown): value is UpstreamEntry {
   if (typeof value !== "object" || value === null) return false;
@@ -77,22 +91,52 @@ function isUpstreamEntry(value: unknown): value is UpstreamEntry {
   );
 }
 
+function corruptRegistry(error: string): RegistryReadResult {
+  return { kind: "corrupt", entries: [], error };
+}
+
 /**
- * Read the registry. Missing file, corrupt JSON, or a wrong-shape document
- * all yield `[]` — a broken registry must never crash the service, it just
- * degrades to the next fallback rung (YAML → env).
+ * Read the registry. Missing and valid-empty are open (no booted servers).
+ * Corrupt JSON, wrong shape, or an invalid entry fail closed — callers must
+ * not treat that as `[]` and fall through to a static upstream.
  */
-export function readRegistry(path: string): UpstreamEntry[] {
-  if (!existsSync(path)) return [];
+export function readRegistry(path: string): RegistryReadResult {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return { kind: "missing", entries: [] };
+    }
+    return corruptRegistry("upstream registry could not be read");
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    raw = JSON.parse(text) as unknown;
   } catch {
-    return [];
+    return corruptRegistry("upstream registry is not valid JSON");
   }
   const doc = raw as Partial<UpstreamRegistryFile> | null;
-  if (!doc || !Array.isArray(doc.upstreams)) return [];
-  return doc.upstreams.filter(isUpstreamEntry);
+  if (
+    !doc ||
+    typeof doc !== "object" ||
+    doc.version !== REGISTRY_VERSION ||
+    !Array.isArray(doc.upstreams)
+  ) {
+    return corruptRegistry("upstream registry has an unsupported shape or version");
+  }
+  const entries: UpstreamEntry[] = [];
+  for (const [index, item] of doc.upstreams.entries()) {
+    if (!isUpstreamEntry(item)) {
+      return corruptRegistry(`upstream registry contains an invalid upstream at index ${index}`);
+    }
+    entries.push(item);
+  }
+  return { kind: "valid", entries };
 }
 
 /**
@@ -102,7 +146,7 @@ export function readRegistry(path: string): UpstreamEntry[] {
  */
 export function writeRegistry(path: string, entries: readonly UpstreamEntry[]): void {
   mkdirSync(dirname(path), { recursive: true });
-  const doc: UpstreamRegistryFile = { version: 1, upstreams: [...entries] };
+  const doc: UpstreamRegistryFile = { version: REGISTRY_VERSION, upstreams: [...entries] };
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
   writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n", "utf8");
   renameSync(tmp, path);

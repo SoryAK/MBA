@@ -435,6 +435,27 @@ describe("model proxy — registry routing (ADR-0101 Step 1b)", () => {
     expect(res.status).toBe(200);
     expect(chatCalls).toEqual([8081]);
   });
+
+  it("does not use the static fallback when the registry is corrupt", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    mkdirSync(join(paths.upstreamsPath, ".."), { recursive: true });
+    writeFileSync(paths.upstreamsPath, "{ not json", "utf8");
+    const { fetch: fetchImpl, chatCalls } = registryFetch({ health: { 8081: true } });
+    const app = createMbaServiceApp({ paths, upstreamUrl: UPSTREAM, fetch: fetchImpl });
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(CHAT_BODY),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      code: "registry-corrupt",
+      error: expect.stringMatching(/upstream registry is corrupt/),
+    });
+    expect(chatCalls).toEqual([]);
+  });
 });
 
 describe("model proxy — TCB intervention (ADR-0101 Step 2)", () => {

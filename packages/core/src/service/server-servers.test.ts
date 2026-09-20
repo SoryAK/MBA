@@ -9,7 +9,7 @@
  * it, and the G2 port rule is enforced against it.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -378,7 +378,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
       fork: "upstream",
     });
     // The registry now holds the booted server.
-    const reg = readRegistry(paths.upstreamsPath);
+    const reg = readRegistry(paths.upstreamsPath).entries;
     expect(reg).toHaveLength(1);
     expect(reg[0]).toMatchObject({ id: "llama-cpp-9123", port: 9123, pid: 424242, fork: "upstream" });
     // Deployment facts were prepended; the tuning recipe follows.
@@ -390,6 +390,25 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(call.args).toContain("--slot-save-path");
     expect(call.args).toContain("--slots");
     expect(call.opts).toMatchObject({ detached: true });
+  });
+
+  it("POST /servers/boot refuses to overwrite a corrupt registry", async () => {
+    mkdirSync(join(paths.upstreamsPath, ".."), { recursive: true });
+    const corrupt = "{ not json";
+    writeFileSync(paths.upstreamsPath, corrupt, "utf8");
+    const { seams, spawnCalls } = bootSeams(424242);
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+
+    const res = await app.request("/servers/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modelFile, port: 9123 }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "registry-corrupt" });
+    expect(spawnCalls).toHaveLength(0);
+    expect(readFileSync(paths.upstreamsPath, "utf8")).toBe(corrupt);
   });
 
   it("POST /servers/boot remembers binaryPath as the last llama-server", async () => {
@@ -620,7 +639,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     // No spawn happened — the duplicate was refused before any process started.
     expect(spawnCalls).toHaveLength(0);
     // The registry is untouched (still just the original entry).
-    expect(readRegistry(paths.upstreamsPath)).toHaveLength(1);
+    expect(readRegistry(paths.upstreamsPath).entries).toHaveLength(1);
   });
 
   it("POST /servers/boot still allows a new port for a DIFFERENT model (G2)", async () => {
@@ -645,7 +664,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(res.status).toBe(201);
     expect(spawnCalls).toHaveLength(1);
     // Both entries now coexist (merge, never clobber).
-    const reg = readRegistry(paths.upstreamsPath);
+    const reg = readRegistry(paths.upstreamsPath).entries;
     expect(reg).toHaveLength(2);
   });
 
@@ -694,7 +713,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/health|timed out/i);
     // A failed boot must not leave a registry entry behind.
-    expect(readRegistry(paths.upstreamsPath)).toHaveLength(0);
+    expect(readRegistry(paths.upstreamsPath).entries).toHaveLength(0);
   });
 
   // --- POST /servers/stop ---------------------------------------------------
@@ -727,7 +746,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     // The group was signalled (negative pid = process group).
     expect(killCalls.some(([p]) => p === -424242)).toBe(true);
     // The registry entry is gone.
-    expect(readRegistry(paths.upstreamsPath)).toHaveLength(0);
+    expect(readRegistry(paths.upstreamsPath).entries).toHaveLength(0);
   });
 
   it("POST /servers/stop rejects a missing pid with 400", async () => {
@@ -792,7 +811,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     // No process was spawned — Ollama loads in its own daemon.
     expect(spawnCalls).toHaveLength(0);
     expect(calls.some((c) => c.method === "POST" && c.url.includes("/api/generate"))).toBe(true);
-    const reg = readRegistry(paths.upstreamsPath);
+    const reg = readRegistry(paths.upstreamsPath).entries;
     expect(reg).toHaveLength(1);
     expect(reg[0]).toMatchObject({ id: "ollama-11434", serverType: "ollama" });
   });
@@ -842,7 +861,7 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     // Unloaded via the API — no process signal was sent.
     expect(killCalls).toHaveLength(0);
     expect(calls.some((c) => c.method === "POST" && c.url.includes("/api/generate"))).toBe(true);
-    expect(readRegistry(paths.upstreamsPath)).toHaveLength(0);
+    expect(readRegistry(paths.upstreamsPath).entries).toHaveLength(0);
   });
 
   it("GET /servers probes an ollama entry via /api/tags, not /health", async () => {
