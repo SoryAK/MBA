@@ -99,10 +99,17 @@ export interface LifecycleSeams {
    * microseconds.
    */
   readonly sleepImpl?: (ms: number) => Promise<void>;
+  /**
+   * Shared owner for llama.cpp process groups. The daemon creates exactly
+   * one supervisor and passes it through every boot/stop operation.
+   */
+  readonly processSupervisor?: ProcessSupervisor;
 }
 
 /** Resolve a seam to its real default. */
-export function resolveSeams(seams?: LifecycleSeams): Required<LifecycleSeams> {
+export function resolveSeams(
+  seams?: LifecycleSeams,
+): Required<Omit<LifecycleSeams, "processSupervisor">> {
   return {
     spawnImpl: seams?.spawnImpl ?? spawn,
     fetchImpl: seams?.fetchImpl ?? fetch,
@@ -385,8 +392,9 @@ export async function bootLlamaServer(
   const loadMs = now() - bootedAt;
   daemonLog(`[boot:${opts.port}] healthy — model loaded in ${loadMs}ms`);
 
-  // Track the group so the daemon-exit handler can sweep it (G1).
-  trackOwnedGroup(pid, { killImpl });
+  // Track on the daemon's shared supervisor so shutdown can sweep this exact
+  // group. A reconstructed seams object would create detached ownership.
+  seams?.processSupervisor?.track(pid);
 
   return {
     pid,
@@ -404,6 +412,10 @@ export async function bootLlamaServer(
  * sends SIGKILL to the group. Resolves immediately if the group is already gone.
  */
 export async function stopLlamaServer(pid: number, seams?: LifecycleSeams): Promise<void> {
+  if (seams?.processSupervisor) {
+    await seams.processSupervisor.stop(pid);
+    return;
+  }
   await killProcessGroup(pid, seams);
 }
 
@@ -440,43 +452,51 @@ export async function killProcessGroup(pid: number, seams?: LifecycleSeams): Pro
 }
 
 /**
- * Per-seams registry of owned process-group pids. The daemon-exit handler
- * (G1) sweeps every tracked group on shutdown. Kept on the seams object so
- * tests can isolate their own registry; the daemon passes a single shared
- * seams instance for its lifetime.
+ * Owns every llama.cpp process group started by one daemon instance.
+ *
+ * The supervisor is explicit rather than hidden on an arbitrary seams
+ * object: boot, stop, and shutdown must all receive the same instance.
  */
-const OWNED_GROUPS_KEY = Symbol.for("mba.ownedGroups");
+export class ProcessSupervisor {
+  readonly #ownedGroups = new Set<number>();
+  readonly #seams: Pick<LifecycleSeams, "killImpl">;
 
-type SeamsWithRegistry = LifecycleSeams & { [OWNED_GROUPS_KEY]?: Set<number> };
-
-function ownedGroupSet(seams?: LifecycleSeams): Set<number> {
-  const target = (seams ?? {}) as SeamsWithRegistry;
-  if (!target[OWNED_GROUPS_KEY]) {
-    target[OWNED_GROUPS_KEY] = new Set<number>();
+  constructor(seams: Pick<LifecycleSeams, "killImpl"> = {}) {
+    this.#seams = seams;
   }
-  return target[OWNED_GROUPS_KEY]!;
-}
 
-/** Record a process group as owned by this daemon (called after a successful boot). */
-export function trackOwnedGroup(pid: number, seams?: LifecycleSeams): void {
-  ownedGroupSet(seams).add(pid);
-}
+  get ownedGroupCount(): number {
+    return this.#ownedGroups.size;
+  }
 
-/** Number of process groups currently tracked as owned. */
-export function ownedGroupCount(seams?: LifecycleSeams): number {
-  return ownedGroupSet(seams).size;
-}
+  track(pid: number): void {
+    this.#ownedGroups.add(pid);
+  }
 
-/**
- * Kill every tracked process group and clear the registry (G1 daemon-exit
- * handler). Called on daemon SIGTERM/exit so no owned server outlives the
- * daemon.
- */
-export async function killAllOwnedGroups(seams?: LifecycleSeams): Promise<void> {
-  const set = ownedGroupSet(seams);
-  const pids = [...set];
-  set.clear();
-  for (const pid of pids) {
-    await killProcessGroup(pid, seams);
+  untrack(pid: number): void {
+    this.#ownedGroups.delete(pid);
+  }
+
+  async stop(pid: number): Promise<void> {
+    await killProcessGroup(pid, this.#seams);
+    this.untrack(pid);
+  }
+
+  /**
+   * Stop every owned group. Continue after an individual failure so one bad
+   * process cannot prevent cleanup of the remaining groups.
+   */
+  async shutdown(): Promise<void> {
+    const failures: unknown[] = [];
+    for (const pid of [...this.#ownedGroups]) {
+      try {
+        await this.stop(pid);
+      } catch (err) {
+        failures.push(err);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "failed to stop all owned process groups");
+    }
   }
 }

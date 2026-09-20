@@ -64,11 +64,14 @@ model). This gives the daemon a live, queryable view of what is running.
   `warmupTokens`), waits for /health, and records the owned process group.
 - `stopLlamaServer` / `killProcessGroup` — SIGTERM the group, probe up to
   10×200ms, then SIGKILL (G1).
+- `ProcessSupervisor` — the daemon's single owner of successfully booted
+  llama.cpp groups. The same instance tracks boot, untracks normal stop, and
+  sweeps shutdown.
 - `bootServer` — the service-level orchestrator: G2 port-busy check → resolve
   the boot recipe (catalog / adapter YAML → flags → CLI args) → `bootLlamaServer`
   → register the entry.
-- `killAllOwnedGroups` — on daemon shutdown, `main.ts` kills every owned group
-  before closing the HTTP server (G1).
+- On daemon shutdown, `main.ts` asks the shared supervisor to kill every
+  remaining owned group before closing the service (G1).
 - `slotSavePath(modelPath, fork)` — G3 KV path.
 
 **Phase 4 — slot / KV control.** The llama.cpp row now *drives* the G3

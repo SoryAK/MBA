@@ -34,7 +34,7 @@ import { startMbaService } from "./server.js";
 import { refreshLlamaServerCatalog, startLlamaServerCatalogRefresh } from "./llama-binaries.js";
 import { startUdsListener, type UdsHandle } from "./uds-listener.js";
 import { resolveVsCodeLmConfigPath } from "./vscode-lm-config.js";
-import { killAllOwnedGroups, ownedGroupCount, type LifecycleSeams } from "../mba/index.js";
+import { ProcessSupervisor, type LifecycleSeams } from "../mba/index.js";
 
 const baseDir = process.env.MBA_BASE_DIR;
 const paths = defaultStorePaths(baseDir);
@@ -88,10 +88,10 @@ function formatBytes(n: number): string {
   return `${n} B`;
 }
 
-// G1: one shared lifecycle seams instance for the daemon's lifetime. The
-// owned-group registry lives on it, so the exit handler can kill every
-// server process group the daemon booted.
-const lifecycleSeams: LifecycleSeams = {};
+// G1: one supervisor owns every llama.cpp process group this daemon boots.
+// The same instance flows through boot, stop, and shutdown.
+const processSupervisor = new ProcessSupervisor();
+const lifecycleSeams: LifecycleSeams = { processSupervisor };
 
 try {
   const llamaCatalog = refreshLlamaServerCatalog(paths);
@@ -200,11 +200,11 @@ async function shutdown(signal: string): Promise<void> {
   stopEndpointWatch?.();
   try {
     // G1: kill every server group this daemon booted before exiting.
-    const owned = ownedGroupCount(lifecycleSeams);
+    const owned = processSupervisor.ownedGroupCount;
     if (owned > 0) {
       console.log(`[mba] killing ${owned} owned server group(s)…`);
     }
-    await killAllOwnedGroups(lifecycleSeams);
+    await processSupervisor.shutdown();
     if (uds) {
       await uds.close();
     }
