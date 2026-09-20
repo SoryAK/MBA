@@ -19,6 +19,7 @@
 
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { isLiveAmpiRecipe } from "../ampi/parse-recipe.js";
 import { deriveLadderFromKill, evaluateEscalation } from "./escalation.js";
 import {
   incrementBcbKillState,
@@ -35,6 +36,8 @@ export interface TcbEscalationResult {
   /** Present when the rung summons AMPI. */
   readonly action?: "ampi";
   readonly recipe?: string;
+  /** Set when the ladder named AMPI but the recipe is not live. */
+  readonly invalidRecipe?: true;
   /** Present only when tier === "kill" and the action is a hard kill. */
   readonly kill?: ToolCircuitBreakerKill;
 }
@@ -84,6 +87,16 @@ export function evaluateBcbEscalation(
 
   // AMPI is a rung action, not a kill-only path. Any tier may summon it.
   if (decision.action === "ampi") {
+    const recipe = decision.recipe ?? "";
+    if (!isLiveAmpiRecipe(recipe)) {
+      return {
+        tier: decision.tier,
+        ignoredTrips,
+        action: "ampi",
+        recipe,
+        invalidRecipe: true,
+      };
+    }
     if (decision.tier === "kill") {
       resetBcbKillState(db, sessionId, trip.tool, trip.rule);
     }
@@ -91,7 +104,7 @@ export function evaluateBcbEscalation(
       tier: decision.tier,
       ignoredTrips,
       action: "ampi",
-      recipe: decision.recipe,
+      recipe,
     };
   }
 

@@ -140,30 +140,34 @@ export function intervene(
         outBody = JSON.stringify(parsed);
       }
 
-      if (escalation.action === "ampi" && escalation.recipe) {
+      if (escalation.action === "ampi" && escalation.recipe && !escalation.invalidRecipe) {
         // Recipe is an AMPI runner name (e.g. sweep-duplicates or
         // sanitize/reasoning). CM does the splice.
         const parsedRecipe = parseAmpiRecipe(escalation.recipe);
-        const reasoning =
-          typeof opts.reasoning === "function" ? opts.reasoning() : opts.reasoning;
-        const before = (parsed.messages as ChatMessage[]) ?? chatMessages;
-        const rewritten = runAmpi(parsedRecipe.name, {
-          messages: before,
-          trip: lastTrip,
-          sanitize: parsedRecipe.sanitize,
-          reasoning,
-        });
-        parsed.messages = rewritten.messages;
-        outBody = JSON.stringify(parsed);
-        if (transcriptMopped(before, rewritten.messages)) {
-          return {
-            action: "forward",
-            body: outBody,
-            eraseSlot: true,
-            harness,
-            trips: broken.trips,
-            lastTier,
-          };
+        if (parsedRecipe.ok) {
+          const reasoning =
+            typeof opts.reasoning === "function" ? opts.reasoning() : opts.reasoning;
+          const before = (parsed.messages as ChatMessage[]) ?? chatMessages;
+          const rewritten = runAmpi(parsedRecipe.name, {
+            messages: before,
+            trip: lastTrip,
+            sanitize: parsedRecipe.sanitize,
+            reasoning,
+          });
+          if (rewritten.ok) {
+            parsed.messages = rewritten.messages;
+            outBody = JSON.stringify(parsed);
+            if (rewritten.cacheAction === "erase") {
+              return {
+                action: "forward",
+                body: outBody,
+                eraseSlot: true,
+                harness,
+                trips: broken.trips,
+                lastTier,
+              };
+            }
+          }
         }
       }
     }

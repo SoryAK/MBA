@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { evaluateBcbEscalation } from "./escalate.js";
-import { openBcbDb } from "./kill-state.js";
+import { bcbSessionKey, evaluateBcbEscalation } from "./escalate.js";
+import { openBcbDb, readBcbKillState } from "./kill-state.js";
 import type { ToolCircuitBreakerConfig, ToolCircuitBreakerTrip } from "./types.js";
 import type { Harness } from "./fingerprint.js";
 
@@ -161,6 +161,45 @@ describe("evaluateBcbEscalation", () => {
       recipe: "sweep-duplicates",
     });
     expect(third?.kill).toBeUndefined();
+  });
+
+  it("does not reset kill-state when the AMPI recipe is not live", () => {
+    const bad: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          eofOverflow: {
+            enabled: true,
+            escalation: {
+              tiers: [
+                { tier: "nudge", afterIgnoredTrips: 0 },
+                { tier: "kill", afterIgnoredTrips: 1, action: "ampi", recipe: "context-gc" },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const t = trip("invalid-recipe.txt:1-10");
+    const prompt = "invalid-recipe-prompt";
+    expect(evaluateBcbEscalation(t, bad, prompt, "cline", db)).toMatchObject({
+      tier: "nudge",
+    });
+    const kill = evaluateBcbEscalation(t, bad, prompt, "cline", db);
+    expect(kill).toMatchObject({
+      tier: "kill",
+      action: "ampi",
+      recipe: "context-gc",
+      invalidRecipe: true,
+    });
+    expect(
+      readBcbKillState(db, {
+        sessionId: bcbSessionKey("cline", prompt),
+        tool: t.tool,
+        rule: t.rule,
+        targetKey: t.targetKey,
+      }),
+    ).toBeGreaterThan(0);
   });
 
   it("isolates counters per system prompt (same harness, different prompt)", () => {

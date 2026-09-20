@@ -290,6 +290,55 @@ describe("intervene (ADR-0101 Step 2)", () => {
     }
   });
 
+  it("does not mop or erase when the AMPI recipe is unknown", () => {
+    const bad: ToolCircuitBreakerConfig = {
+      tools: {
+        read_file: {
+          directDuplication: {
+            enabled: true,
+            threshold: 2,
+            escalation: {
+              tiers: [
+                { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "context-gc" },
+              ],
+              counterMode: "monotonic",
+            },
+          },
+        },
+      },
+    };
+    const args = JSON.stringify({ path: "notes.md" });
+    const pair = (id: string) => [
+      {
+        role: "assistant",
+        tool_calls: [
+          { id, type: "function", function: { name: "read_file", arguments: args } },
+        ],
+      },
+      { role: "tool", tool_call_id: id, content: `body-${id}` },
+    ];
+    const body = JSON.stringify({
+      model: "m",
+      messages: [
+        { role: "system", content: "you are cline-ampi-unknown" },
+        { role: "user", content: "read notes" },
+        ...pair("c1"),
+        ...pair("c2"),
+        ...pair("c3"),
+      ],
+    });
+    const res = intervene(body, "copilot", bad, db);
+    expect(res.action).toBe("forward");
+    if (res.action === "forward") {
+      const parsed = JSON.parse(res.body) as {
+        messages: Array<{ role?: string; tool_call_id?: string }>;
+      };
+      const toolIds = parsed.messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id);
+      expect(toolIds).toEqual(["c1", "c2", "c3"]);
+      expect(res.eraseSlot).toBeUndefined();
+    }
+  });
+
   it("degrades to forward when harness is unknown and there is no system prompt", () => {
     const body = JSON.stringify({
       model: "m",

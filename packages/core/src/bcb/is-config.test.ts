@@ -59,4 +59,56 @@ describe("isToolCircuitBreakerConfig (AMPI ladder)", () => {
       }),
     ).toBe(false);
   });
+
+  it("rejects action ampi with an unknown recipe", () => {
+    expect(
+      isToolCircuitBreakerConfig({
+        tools: {
+          read_file: {
+            directDuplication: {
+              enabled: true,
+              threshold: 3,
+              escalation: {
+                tiers: [{ tier: "kill", afterIgnoredTrips: 0, action: "ampi", recipe: "context-gc" }],
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects unwired reset-per-tier and revivalCalls", () => {
+    expect(
+      isToolCircuitBreakerConfig({
+        tools: {
+          read_file: {
+            directDuplication: {
+              enabled: true,
+              threshold: 3,
+              escalation: {
+                tiers: [{ tier: "nudge", afterIgnoredTrips: 0 }],
+                counterMode: "reset-per-tier",
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isToolCircuitBreakerConfig({
+        tools: {
+          read_file: {
+            directDuplication: {
+              enabled: true,
+              threshold: 3,
+              escalation: {
+                tiers: [{ tier: "mask", afterIgnoredTrips: 2, revivalCalls: 3 }],
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+  });
 });

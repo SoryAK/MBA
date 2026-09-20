@@ -3,7 +3,8 @@
  *
  * Looks up a named recipe, runs it, asks the CM engine to apply each cut,
  * and enforces structural termination: a hard `maxTurns` cap and a strictly
- * decreasing progress measure. Unknown recipes are a no-op.
+ * decreasing progress measure. Unknown recipes are an explicit miss, not a
+ * successful mop.
  *
  * Recipes name a CM intent. They do not splice `messages[]`.
  *
@@ -20,12 +21,17 @@ export interface RunAmpiOptions {
   readonly recipes?: ReadonlyMap<string, AmpiRecipe>;
 }
 
-function noop(ctx: AmpiRecipeContext): AmpiEngineResult {
+function miss(ctx: AmpiRecipeContext, reason: "unknown-recipe"): AmpiEngineResult {
   return {
+    ok: false,
+    reason,
     messages: ctx.messages,
     act: "rewrite-context",
     turnsUsed: 0,
     progress: 0,
+    effect: "none",
+    applied: [],
+    cacheAction: "keep",
   };
 }
 
@@ -36,14 +42,16 @@ export function runAmpi(
 ): AmpiEngineResult {
   const recipe = lookupRecipe(name, opts.recipes);
   if (!recipe) {
-    console.log(`[ampi] unknown recipe: ${name}`);
-    return noop(ctx);
+    return miss(ctx, "unknown-recipe");
   }
 
   let messages = ctx.messages;
   let progress = Number.POSITIVE_INFINITY;
   let turnsUsed = 0;
   let act: AmpiEngineResult["act"] = "rewrite-context";
+  let effect: AmpiEngineResult["effect"] = "none";
+  let applied: AmpiEngineResult["applied"] = [];
+  let cacheAction: AmpiEngineResult["cacheAction"] = "keep";
 
   while (turnsUsed < recipe.maxTurns) {
     const step = recipe.run({ ...ctx, messages });
@@ -56,14 +64,21 @@ export function runAmpi(
     }
     progress = step.progress;
     messages = edited.messages;
+    effect = edited.effect;
+    applied = edited.applied;
+    cacheAction = edited.cacheAction;
     if (progress <= 0) break;
   }
 
   return {
+    ok: true,
     messages,
     act,
     turnsUsed,
     progress: Number.isFinite(progress) ? progress : 0,
+    effect,
+    applied,
+    cacheAction,
   };
 }
 
