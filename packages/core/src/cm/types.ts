@@ -23,6 +23,31 @@ export type CmSweepWhat = (typeof CM_SWEEP_WHATS)[number];
 export const CM_CUTS = ["replace", "insert", "set-mark", "sweep", "compact"] as const;
 export type CmCut = (typeof CM_CUTS)[number];
 
+/** What the cut changed for the model / KV cache. Marks are not a splice. */
+export const CM_EFFECTS = ["none", "metadata", "transcript"] as const;
+export type CmEffect = (typeof CM_EFFECTS)[number];
+export type CmCacheAction = "erase" | "keep";
+
+const EFFECT_RANK: Record<CmEffect, number> = { none: 0, metadata: 1, transcript: 2 };
+
+export function mergeCmEffects(left: CmEffect, right: CmEffect): CmEffect {
+  return EFFECT_RANK[right] > EFFECT_RANK[left] ? right : left;
+}
+
+export function cmCacheAction(effect: CmEffect): CmCacheAction {
+  return effect === "transcript" ? "erase" : "keep";
+}
+
+export function classifyCmEffect(
+  cut: CmCut,
+  before: readonly ChatMessage[],
+  after: readonly ChatMessage[],
+): CmEffect {
+  if (before === after) return "none";
+  if (cut === "set-mark") return "metadata";
+  return "transcript";
+}
+
 /** @deprecated Use CM_CUTS. */
 export const CM_CGC_CUTS = ["sweep"] as const;
 export type CmCgcCut = "sweep";
@@ -39,6 +64,8 @@ export interface CmEditResult {
   readonly messages: readonly ChatMessage[];
   readonly cut: CmCut;
   readonly progress: number;
+  /** Set by applyCm. Marks-only is metadata; a splice is transcript. */
+  readonly effect?: CmEffect;
 }
 
 export type CmIntent =
@@ -74,6 +101,10 @@ export interface CmEngineResult {
   readonly messages: readonly ChatMessage[];
   readonly applied: readonly CmCut[];
   readonly cutsUsed: number;
+  readonly effect: CmEffect;
+  /** Cuts whose effect was not `none`. */
+  readonly changed: number;
+  readonly cacheAction: CmCacheAction;
 }
 
 /** Extra field on a ChatMessage that travels with the transcript. */

@@ -121,7 +121,10 @@ export interface EscalationTier {
   readonly action?: EscalationAction;
   /** Required when `action` is `ampi`. */
   readonly recipe?: string;
-  /** mask tier only: tool calls (of any kind) before the masked tool is revived. */
+  /**
+   * mask tier only: tool calls before the masked tool is revived.
+   * Not accepted in saved TCB until intervention applies it.
+   */
   readonly revivalCalls?: number;
 }
 
@@ -131,8 +134,8 @@ export interface EscalationLadder {
    * How the ignored-trip counter is interpreted:
    * - `monotonic` (default): one running total; the highest tier whose
    *   threshold is met wins.
-   * - `reset-per-tier`: the counter resets each time a tier fires, so every
-   *   tier requires its own N ignored trips before the next.
+   * - `reset-per-tier`: specified on the engine, but not accepted in saved
+   *   TCB until intervention stores `reachedTier`.
    */
   readonly counterMode?: "monotonic" | "reset-per-tier";
 }

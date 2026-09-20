@@ -10,7 +10,7 @@
 
 import type { ChatMessage } from "../chat-message.js";
 import type { ToolCircuitBreakerTrip } from "../bcb/types.js";
-import type { CmIntent } from "../cm/types.js";
+import type { CmCacheAction, CmCut, CmEffect, CmIntent } from "../cm/types.js";
 import type { ReasoningGate } from "../cm/reasoning.js";
 
 export const SANITIZE_WHATS = ["duplicates", "scratch", "reasoning", "phase", "pin"] as const;
@@ -49,10 +49,15 @@ export interface AmpiRecipeStep {
 
 /** What the AMPI engine returns after applying CM and enforcing termination. */
 export interface AmpiEngineResult {
+  readonly ok: boolean;
+  readonly reason?: "unknown-recipe";
   readonly messages: readonly ChatMessage[];
   readonly act: AmpiAct;
   readonly turnsUsed: number;
   readonly progress: number;
+  readonly effect: CmEffect;
+  readonly applied: readonly CmCut[];
+  readonly cacheAction: CmCacheAction;
 }
 
 export interface AmpiRecipe {

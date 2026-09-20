@@ -159,6 +159,12 @@ The daemon parses the string, then `runAmpi`.
 Live strings: `sanitize`, `sanitize/duplicates`, `sanitize/scratch`,
 `sanitize/reasoning`, `sanitize/phase`, `sanitize/pin`, plus optional
 `+pin` (e.g. `sanitize/phase+pin`). Alias: `sweep-duplicates`.
+Unknown names (`context-gc`, Assist, …) are rejected when rules are
+saved and are an explicit miss at runtime — they do not reset the
+kill-state fuse and they do not look like a successful mop. Pin and
+scratch marks stay on this request only; they do not survive the next
+turn. `reset-per-tier` and `revivalCalls` are not accepted until they
+are wired end to end.
 
 Compact still needs a trip that names one of those recipes. The reasoning
 dial is read from the adapter at request time; off → no compact.

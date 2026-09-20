@@ -17,8 +17,10 @@ export type { Keeper } from "./keepers.js";
 export { reasoningIsOn, shouldCompactReasoning } from "./reasoning.js";
 export type { ReasoningGate } from "./reasoning.js";
 export type {
+  CmCacheAction,
   CmCut,
   CmCgcCut,
+  CmEffect,
   CmGuardCut,
   CmIntent,
   CmEditContext,
@@ -32,9 +34,13 @@ export type {
 export {
   CM_CUTS,
   CM_CGC_CUTS,
+  CM_EFFECTS,
   CM_GUARD_CUTS,
   CM_MARKS,
   MBA_META_KEY,
+  classifyCmEffect,
+  cmCacheAction,
+  mergeCmEffects,
   readMark,
   withMark,
 } from "./types.js";

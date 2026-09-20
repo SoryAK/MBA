@@ -18,11 +18,15 @@ const ctx: AmpiRecipeContext = {
 };
 
 describe("runAmpi", () => {
-  it("no-ops an unknown recipe", () => {
+  it("returns an explicit miss for an unknown recipe", () => {
     const out = runAmpi("does-not-exist", ctx);
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe("unknown-recipe");
     expect(out.messages).toBe(ctx.messages);
     expect(out.turnsUsed).toBe(0);
     expect(out.progress).toBe(0);
+    expect(out.effect).toBe("none");
+    expect(out.cacheAction).toBe("keep");
   });
 
   it("stops a runaway stub at maxTurns", () => {

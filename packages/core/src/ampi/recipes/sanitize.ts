@@ -3,6 +3,7 @@
  *
  * Modes: `duplicates` | `scratch` | `reasoning` | `phase` | `pin`.
  * `pin?: true` marks the tripped pair as a keeper before the mop.
+ * Marks stay on this request only — they do not survive the next turn.
  * Compact is omitted when `ctx.reasoning` says the model or the dial is off.
  */
 

@@ -122,6 +122,30 @@ describe("CM engine", () => {
     const messages: ChatMessage[] = [{ role: "user", content: "hi" }];
     const out = applyCm(messages, { cut: "not-a-cut" } as unknown as CmIntent);
     expect(out.messages).toBe(messages);
+    expect(out.effect).toBe("none");
+  });
+
+  it("reports metadata for marks and transcript for a splice", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "q" },
+      ...pair("keep", "hit.md", "good"),
+    ];
+    const marked = applyCm(messages, { cut: "set-mark", tag: "pin", toolCallId: "keep" });
+    expect(marked.effect).toBe("metadata");
+    const replaced = applyCm(messages, {
+      cut: "replace",
+      target: "tool-result",
+      toolCallId: "keep",
+      content: "stop",
+    });
+    expect(replaced.effect).toBe("transcript");
+    const seq = runCm(messages, [
+      { cut: "set-mark", tag: "pin", toolCallId: "keep" },
+      { cut: "replace", target: "tool-result", toolCallId: "keep", content: "stop" },
+    ]);
+    expect(seq.effect).toBe("transcript");
+    expect(seq.changed).toBe(2);
+    expect(seq.cacheAction).toBe("erase");
   });
 
   it("runs a sequence and honors maxCuts", () => {

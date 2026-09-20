@@ -2,6 +2,7 @@
  * Lightweight validator for user-supplied Tool Circuit Breaker config files.
  */
 
+import { isLiveAmpiRecipe } from "../ampi/parse-recipe.js";
 import type { KillRule, ToolCircuitBreakerConfig, ToolRuleSet } from "./types.js";
 
 const KILL_ACTIONS = new Set(["return-error", "close-stream", "drop-tools", "block-tool"]);
@@ -9,7 +10,7 @@ const TIER_NAMES = new Set(["nudge", "mask", "kill"]);
 
 function isEscalationAction(value: unknown, recipe: unknown): boolean {
   if (value === "ampi") {
-    return typeof recipe === "string" && recipe.length > 0;
+    return typeof recipe === "string" && isLiveAmpiRecipe(recipe);
   }
   return typeof value === "string" && KILL_ACTIONS.has(value);
 }
@@ -34,9 +35,9 @@ function isEscalationLadder(value: unknown): boolean {
     if (typeof t.afterIgnoredTrips !== "number" || !Number.isInteger(t.afterIgnoredTrips)) return false;
     if (t.action !== undefined && !isEscalationAction(t.action, t.recipe)) return false;
     if (t.action !== "ampi" && t.recipe !== undefined) return false;
-    if (t.revivalCalls !== undefined && (typeof t.revivalCalls !== "number" || !Number.isInteger(t.revivalCalls))) return false;
+    if (t.revivalCalls !== undefined) return false;
   }
-  if (v.counterMode !== undefined && v.counterMode !== "monotonic" && v.counterMode !== "reset-per-tier") return false;
+  if (v.counterMode !== undefined && v.counterMode !== "monotonic") return false;
   return true;
 }
 

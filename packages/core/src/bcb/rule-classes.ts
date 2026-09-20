@@ -31,7 +31,7 @@ export const DEFAULT_BINARY_EXTENSIONS: readonly string[] = [
 const LOOP_LADDER: EscalationLadder = {
   tiers: [
     { tier: "nudge", afterIgnoredTrips: 0, action: "ampi", recipe: "sanitize/duplicates" },
-    { tier: "mask", afterIgnoredTrips: 2, revivalCalls: 3 },
+    { tier: "mask", afterIgnoredTrips: 2 },
     { tier: "kill", afterIgnoredTrips: 4, action: "return-error" },
   ],
   counterMode: "monotonic",

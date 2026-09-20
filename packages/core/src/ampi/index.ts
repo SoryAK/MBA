@@ -6,7 +6,7 @@
 
 export { runAmpi, runRecipe } from "./engine.js";
 export type { RunAmpiOptions, RunRecipeOptions } from "./engine.js";
-export { parseAmpiRecipe } from "./parse-recipe.js";
+export { isLiveAmpiRecipe, parseAmpiRecipe } from "./parse-recipe.js";
 export type { ParsedAmpiRecipe } from "./parse-recipe.js";
 export { builtinRecipes, lookupRecipe } from "./registry.js";
 export {
