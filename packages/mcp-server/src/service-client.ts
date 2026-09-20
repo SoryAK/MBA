@@ -19,6 +19,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { defaultStateDir } from "./paths.js";
 
+/**
+ * HTTP JSON copies of `@mba-ai/core/contracts` (SERVICE_CONTRACT_VERSION = 1).
+ * This package must not import `@mba-ai/core` (ADR-0092). Keep these fields
+ * in lockstep with `packages/core/src/service/contracts.ts`.
+ */
 export interface MbaServiceInfo {
   readonly port: number;
   readonly pid: number;
@@ -50,7 +55,22 @@ export interface MbaStatusResult {
     readonly tcbPath: string;
     readonly ruleClassesPath: string;
     readonly versionPath: string;
+    readonly machineOverlayPath?: string;
+    readonly modelHistoryPath?: string;
   };
+  readonly pairing?: {
+    readonly active: boolean;
+    readonly blocked: boolean;
+    readonly count: number;
+    readonly integrity: "missing" | "valid" | "corrupt";
+  };
+  readonly registry?: {
+    readonly blocked: boolean;
+    readonly count: number;
+    readonly integrity: "missing" | "valid" | "corrupt";
+  };
+  readonly machineOverlay?: { readonly mode: string };
+  readonly models?: readonly MbaModelEntry[];
 }
 
 export interface MbaModelEntry {
@@ -59,6 +79,7 @@ export interface MbaModelEntry {
   readonly family?: string;
   readonly modelFile?: string;
   readonly loaded: boolean;
+  readonly notes?: { readonly empty: boolean; readonly excerpt?: string };
 }
 
 export interface MbaModelsResult {
@@ -76,7 +97,10 @@ export type MbaEnsureStage = {
 
 export type MbaEnsureModelResult =
   | { readonly status: "loaded"; readonly id: string; readonly stage?: readonly MbaEnsureStage[] }
-  | { readonly status: "switched"; readonly id: string; readonly stage?: readonly MbaEnsureStage[] };
+  | { readonly status: "switched"; readonly id: string; readonly stage?: readonly MbaEnsureStage[] }
+  | { readonly status: "disabled"; readonly id: string }
+  | { readonly status: "unknown"; readonly id: string }
+  | { readonly status: "failed"; readonly id: string; readonly error: string };
 
 export type MbaModelDialFile = "server_setup" | "client";
 
@@ -111,6 +135,7 @@ export interface MbaSetModelConfigResult {
   readonly before: unknown;
   readonly after: unknown;
   readonly restartRequired: boolean;
+  readonly modelFile?: string;
   readonly modelLoaded: boolean;
 }
 

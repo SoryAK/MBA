@@ -20,5 +20,6 @@ export * from "./mba/index.js";
 export * from "./bcb/tool-circuit-breaker.js";
 export type { ChatMessage } from "./chat-message.js";
 export * from "./service/config-store.js";
+export * from "./service/contracts.js";
 export * from "./service/server.js";
 export * from "./service/paths.js";

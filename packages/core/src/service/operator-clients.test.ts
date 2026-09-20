@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   addOperatorClient,
   isSafeEnvelopePath,
+  listRegisteredClients,
   normalizeClientName,
   readOperatorClients,
   removeOperatorClient,
@@ -54,6 +55,16 @@ describe("operator-clients", () => {
     const gone = removeOperatorClient(path, "windsurf");
     expect(gone).toEqual({ ok: true, removed: true });
     expect(readOperatorClients(path)).toEqual([]);
+  });
+
+  it("lists built-ins and added rows for GET /clients", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "mba-clients-")), "clients.json");
+    expect(listRegisteredClients(path).every((c) => c.source === "built-in")).toBe(true);
+    addOperatorClient(path, { name: "windsurf", envelope: ".windsurf/mba.md" });
+    const names = listRegisteredClients(path).map((c) => c.name);
+    expect(names).toContain("cursor");
+    expect(names).toContain("windsurf");
+    expect(listRegisteredClients(path).find((c) => c.name === "windsurf")?.source).toBe("added");
   });
 
   it("refuses to remove a built-in name", () => {
