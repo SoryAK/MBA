@@ -157,6 +157,19 @@ describe("applyToolCircuitBreakers", () => {
     expect(out.trips[0]?.rule).toBe("eofOverflow");
   });
 
+  it("does not trip eofOverflow when the watch is off", () => {
+    const off = JSON.parse(JSON.stringify(cfg)) as ToolCircuitBreakerConfig;
+    (off.tools.read_file as { readClamp?: { enabled: boolean }; eofOverflow?: { enabled: boolean } }).readClamp = {
+      enabled: false,
+    };
+    (off.tools.read_file as { eofOverflow: { enabled: boolean } }).eofOverflow.enabled = false;
+    const msgs = [read("a", "f.ts", 5, 5), result("a", "")];
+    const ctx = { lineCounts: { "f.ts": 4 } };
+    const out = applyToolCircuitBreakers(msgs, off, ctx);
+    expect(out.tripped).toBe(false);
+    expect(out.trips).toEqual([]);
+  });
+
   it("returns default config with readClamp when no config is supplied", () => {
     const msgs = [read("a", "f.ts", 5, 5), result("a", "")];
     const ctx = { lineCounts: { "f.ts": 4 } };

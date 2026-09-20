@@ -80,7 +80,9 @@ export function applyToolCircuitBreakers(
     messages,
     toolCalls,
     ctx,
-    effective.tools.read_file?.eofOverflow?.hint,
+    effective.tools.read_file?.eofOverflow?.enabled === false
+      ? undefined
+      : effective.tools.read_file?.eofOverflow?.hint,
   );
 
   let current: readonly ChatMessage[] = hintResult.messages;

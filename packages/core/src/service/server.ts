@@ -137,7 +137,6 @@ import {
   writeSessions,
 } from "./sessions.js";
 import { createModelProxyRoutes } from "./model-proxy.js";
-import { reasoningGateForModel } from "./reasoning-gate.js";
 import {
   adoptLocalGguf,
   pullModel,
@@ -234,9 +233,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
   // matching server. `MBA_UPSTREAM_URL` is a fallback for the empty-registry
   // (dumb-proxy) case only.
   // TCB intervention (ADR-0101 Step 2): the daemon owns the escalation
-  // kill-state. Both seams are injectable for tests; the daemon defaults are
-  // a per-request global-config read (so a /set_rules mutation is picked up
-  // without a restart) and a kill-state DB under the baseDir.
+  // kill-state. The proxy overlays the model's house (watches / tcb.jsonl)
+  // and the paired harness on that global seed. Both seams are injectable
+  // for tests; the daemon default is a per-request global-config read (so a
+  // /set_rules mutation is picked up without a restart) plus a kill-state
+  // DB under the baseDir.
   const tcbConfig = opts.tcbConfig ?? (() => readGlobalConfig(paths).tcb);
   const machineOverlay =
     opts.machineOverlay ?? (() => readGlobalConfig(paths).machineOverlay);
@@ -254,7 +255,6 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       tcbConfig,
       bcbDb,
       historyDb,
-      reasoningGate: (model) => reasoningGateForModel(model, opts.adapterDir),
       sessionsPath: paths.sessionsPath,
     }),
   );

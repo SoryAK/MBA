@@ -592,6 +592,127 @@ describe("model proxy — TCB intervention (ADR-0101 Step 2)", () => {
     historyDb.close();
     db.close();
   });
+
+  it("does not trip eofOverflow when the model watch is off", async () => {
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const historyDir = mkdtempSync(join(tmpdir(), "mba-hist-"));
+    const historyDb = openModelHistoryDb(join(historyDir, "mba-model-history.db"));
+    const smallFile = join(mkdtempSync(join(tmpdir(), "mba-file-")), "small.txt");
+    writeFileSync(smallFile, "a\nb\nc");
+    const adapterDir = mkdtempSync(join(tmpdir(), "mba-watch-adapters-"));
+    const modelDir = join(adapterDir, "qwen", "qwen");
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(
+      join(modelDir, "qwen.yaml"),
+      [
+        "apiVersion: mba.ai/v1alpha1",
+        "kind: ModelBehavioralAdapter",
+        "metadata:",
+        "  id: qwen",
+        "identity:",
+        "  model:",
+        `    file: "${MODEL_A}"`,
+        "bindings:",
+        '  tcb: "./tcb.jsonl"',
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(modelDir, "tcb.jsonl"),
+      `${JSON.stringify({ tool: "read_file", rule: "eofOverflow", enabled: false })}\n`,
+    );
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    writeRegistry(paths.upstreamsPath, [
+      entry("llama-cpp-8080", MODEL_A, 8080, "2026-01-01T00:00:00.000Z"),
+    ]);
+    const { fetch: fetchImpl, chatCalls } = registryFetch({ health: { 8080: true } });
+    const app = createMbaServiceApp({
+      paths,
+      adapterDir,
+      fetch: fetchImpl,
+      tcbConfig: () => killConfig,
+      bcbDb: db,
+      historyDb,
+    });
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "copilot" },
+      body: JSON.stringify({ ...eofBody(smallFile), model: "qwen" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(chatCalls).toEqual([8080]);
+    const rows = listModelEvents(historyDb, "qwen");
+    expect(rows.some((r) => r.kind === "trip" && r.rule === "eofOverflow")).toBe(false);
+    historyDb.close();
+    db.close();
+  });
+
+  it("records the paired harness instead of the User-Agent fingerprint", async () => {
+    const db = openBcbDb(join(mkdtempSync(join(tmpdir(), "mba-bcb-")), "kill.db"));
+    const historyDir = mkdtempSync(join(tmpdir(), "mba-hist-"));
+    const historyDb = openModelHistoryDb(join(historyDir, "mba-model-history.db"));
+    const smallFile = join(mkdtempSync(join(tmpdir(), "mba-file-")), "small.txt");
+    writeFileSync(smallFile, "a\nb\nc");
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    writeRegistry(paths.upstreamsPath, [
+      entry("llama-cpp-8080", MODEL_A, 8080, "2026-01-01T00:00:00.000Z"),
+    ]);
+    const token = mintToken();
+    writeSessions(paths.sessionsPath, [
+      {
+        id: "sess.1",
+        modelId: "qwen",
+        harness: "cursor",
+        ide: "cursor",
+        projectRoot: "/tmp/p",
+        tokenHash: hashToken(token),
+        createdAt: "2026-09-09T00:00:00.000Z",
+      },
+    ]);
+    const adapterDir = mkdtempSync(join(tmpdir(), "mba-pair-adapters-"));
+    const modelDir = join(adapterDir, "qwen", "qwen");
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(
+      join(modelDir, "qwen.yaml"),
+      [
+        "apiVersion: mba.ai/v1alpha1",
+        "kind: ModelBehavioralAdapter",
+        "metadata:",
+        "  id: qwen",
+        "identity:",
+        "  model:",
+        `    file: "${MODEL_A}"`,
+        "bindings: {}",
+      ].join("\n"),
+    );
+    const { fetch: fetchImpl } = registryFetch({ health: { 8080: true } });
+    const app = createMbaServiceApp({
+      paths,
+      adapterDir,
+      fetch: fetchImpl,
+      tcbConfig: () => killConfig,
+      bcbDb: db,
+      historyDb,
+    });
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "cline",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ ...eofBody(smallFile), model: "qwen" }),
+    });
+
+    expect(res.status).toBe(200);
+    const rows = listModelEvents(historyDb, "qwen");
+    expect(rows.some((r) => r.harness === "cursor")).toBe(true);
+    expect(rows.some((r) => r.harness === "cline")).toBe(false);
+    historyDb.close();
+    db.close();
+  });
 });
 
 describe("model proxy — erase slot after AMPI mop", () => {

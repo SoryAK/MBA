@@ -20,7 +20,6 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { deriveLadderFromKill, evaluateEscalation } from "./escalation.js";
-import type { Harness } from "./fingerprint.js";
 import {
   incrementBcbKillState,
   readBcbKillState,
@@ -41,7 +40,7 @@ export interface TcbEscalationResult {
 }
 
 /** Stable session identity: `sha256(harness + systemPrompt)`. */
-export function bcbSessionKey(harness: Harness, systemPrompt: string): string {
+export function bcbSessionKey(harness: string, systemPrompt: string): string {
   return createHash("sha256").update(harness + systemPrompt).digest("hex");
 }
 
@@ -55,7 +54,7 @@ export function evaluateBcbEscalation(
   trip: ToolCircuitBreakerTrip,
   config: ToolCircuitBreakerConfig,
   systemPrompt: string,
-  harness: Harness,
+  harness: string,
   db: DatabaseSync | undefined,
 ): TcbEscalationResult | undefined {
   if (!db) return undefined;

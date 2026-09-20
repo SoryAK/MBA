@@ -60,13 +60,18 @@ export type InterventionResult =
  *
  * @param body   Raw request body (JSON string) as read from the client.
  * @param ua     The client's User-Agent header (used for harness fingerprint).
- * @param config The active TCB config (from `readGlobalConfig(paths).tcb`).
+ * @param config The effective TCB config for this request (global + house overlay).
  * @param db     The BCB kill-state database, or undefined to disable
  *               escalation (trips still rewrite tool results, but no kill).
  */
 export interface InterveneOptions {
   /** Model + server dial. Compact is skipped when this is an explicit off. */
   readonly reasoning?: ReasoningGate | (() => ReasoningGate | undefined);
+  /**
+   * Authorized / resolved harness. When set, kill-state and history use this
+   * instead of the User-Agent fingerprint (paired client, then fingerprint).
+   */
+  readonly harness?: string;
 }
 
 export function intervene(
@@ -94,7 +99,8 @@ export function intervene(
   const systemPrompt = extractSystemPrompt(chatMessages);
   const hasTools = Array.isArray(parsed.tools) && (parsed.tools as unknown[]).length > 0;
 
-  const { harness } = fingerprint(systemPrompt, ua, hasTools);
+  const { harness: fingerprinted } = fingerprint(systemPrompt, ua, hasTools);
+  const harness = opts.harness ?? fingerprinted;
   const { ctx } = buildBcbContext(chatMessages, config);
   const broken = applyToolCircuitBreakers(chatMessages, config, ctx);
   let lastTier = "";
