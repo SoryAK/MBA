@@ -13,6 +13,7 @@ export function statusView(url: string, snapshot: StatusSnapshot) {
     machine: snapshot.machineOverlay.mode,
     pairing: snapshot.pairing,
     registry: snapshot.registry,
+    clients: snapshot.clients,
     loaded: loaded.map((m) => m.id),
     watches: {
       modelId: watches.modelId,
@@ -74,6 +75,7 @@ export async function cmdStatus(json: boolean): Promise<void> {
   const sessions = snapshot.pairing.sessions;
   const pairing = snapshot.pairing;
   const registry = snapshot.registry;
+  const clients = snapshot.clients;
   const machine = snapshot.machineOverlay.mode;
   const watches = snapshot.watches;
 
@@ -99,6 +101,13 @@ export async function cmdStatus(json: boolean): Promise<void> {
   process.stdout.write(`${kv("registry", registryLabel)}\n`);
   if (registry.blocked && registry.error) {
     process.stdout.write(`  ${dim(registry.error)}\n`);
+  }
+  const clientsLabel = clients.blocked
+    ? `${paint("blocked", RED)}  ${dim("corrupt state")}`
+    : dim("ok");
+  process.stdout.write(`${kv("clients.json", clientsLabel)}\n`);
+  if (clients.blocked && clients.error) {
+    process.stdout.write(`  ${dim(clients.error)}\n`);
   }
   const bits = watches.watches
     .map((w) => `${w.id} ${w.effective ? paint("on", GRN) : paint("off", RED)}`)

@@ -5,7 +5,9 @@
 import type { Hono } from "hono";
 import {
   addOperatorClient,
+  clientsCorruptJson,
   listRegisteredClients,
+  readOperatorClients,
   removeOperatorClient,
 } from "./operator-clients.js";
 import type { ServiceRouteContext } from "./route-context.js";
@@ -14,7 +16,12 @@ export function registerClientRoutes(app: Hono, ctx: ServiceRouteContext): void 
   const { paths } = ctx;
 
   app.get("/clients", (c) => {
-    return c.json({ clients: listRegisteredClients(paths.clientsPath) });
+    const state = readOperatorClients(paths.clientsPath);
+    return c.json({
+      clients: listRegisteredClients(paths.clientsPath),
+      integrity: state.kind,
+      ...(state.kind === "corrupt" ? { error: state.error } : {}),
+    });
   });
 
   app.post("/clients", async (c) => {
@@ -42,6 +49,9 @@ export function registerClientRoutes(app: Hono, ctx: ServiceRouteContext): void 
       ide: typeof input.ide === "string" ? input.ide : undefined,
     });
     if (!result.ok) {
+      if (result.code === "clients-corrupt") {
+        return c.json(clientsCorruptJson(result.error), 503);
+      }
       return c.json({ error: result.error }, 400);
     }
     return c.json({
@@ -65,6 +75,9 @@ export function registerClientRoutes(app: Hono, ctx: ServiceRouteContext): void 
     }
     const result = removeOperatorClient(paths.clientsPath, input.name);
     if (!result.ok) {
+      if (result.code === "clients-corrupt") {
+        return c.json(clientsCorruptJson(result.error), 503);
+      }
       return c.json({ error: result.error }, 400);
     }
     return c.json({ name: input.name.trim().toLowerCase(), removed: result.removed });

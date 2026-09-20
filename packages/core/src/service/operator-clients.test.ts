@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -35,7 +35,7 @@ describe("operator-clients", () => {
       envelope: ".windsurf/mba.md",
       ide: "vscode",
     });
-    expect(readOperatorClients(path)).toHaveLength(1);
+    expect(readOperatorClients(path).clients).toHaveLength(1);
 
     const again = addOperatorClient(path, {
       name: "windsurf",
@@ -54,7 +54,7 @@ describe("operator-clients", () => {
 
     const gone = removeOperatorClient(path, "windsurf");
     expect(gone).toEqual({ ok: true, removed: true });
-    expect(readOperatorClients(path)).toEqual([]);
+    expect(readOperatorClients(path).clients).toEqual([]);
   });
 
   it("lists built-ins and added rows for GET /clients", () => {
@@ -70,5 +70,17 @@ describe("operator-clients", () => {
   it("refuses to remove a built-in name", () => {
     const path = join(mkdtempSync(join(tmpdir(), "mba-clients-")), "clients.json");
     expect(removeOperatorClient(path, "cursor")).toMatchObject({ ok: false });
+  });
+
+  it("fails closed on corrupt JSON and does not overwrite it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mba-clients-"));
+    const path = join(dir, "clients.json");
+    writeFileSync(path, "{ not json", "utf8");
+    const state = readOperatorClients(path);
+    expect(state.kind).toBe("corrupt");
+    expect(state.clients).toEqual([]);
+    const added = addOperatorClient(path, { name: "windsurf", envelope: ".windsurf/mba.md" });
+    expect(added).toMatchObject({ ok: false, code: "clients-corrupt" });
+    expect(readFileSync(path, "utf8")).toBe("{ not json");
   });
 });

@@ -15,6 +15,7 @@ function emptySnapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot 
       sessions: [],
     },
     registry: { blocked: false, count: 0, integrity: "missing" },
+    clients: { blocked: false, count: 0, integrity: "missing" },
     paths: {
       baseDir: "/tmp/mba",
       tcbPath: "/tmp/mba/tcb.json",
@@ -79,6 +80,7 @@ describe("statusView", () => {
         sessions: [],
       },
       registry: { blocked: false, count: 0, integrity: "missing" },
+      clients: { blocked: false, count: 0, integrity: "missing" },
       loaded: ["qwen3.8-27b"],
       watches: {
         modelId: "qwen3.8-27b",

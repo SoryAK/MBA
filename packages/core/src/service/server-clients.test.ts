@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
@@ -36,7 +36,7 @@ describe("GET/POST /clients", () => {
       ide: "vscode",
       updated: false,
     });
-    expect(readOperatorClients(paths.clientsPath)).toEqual([
+    expect(readOperatorClients(paths.clientsPath).clients).toEqual([
       { name: "windsurf", envelope: ".windsurf/mba.md", ide: "vscode" },
     ]);
 
@@ -75,7 +75,7 @@ describe("GET/POST /clients", () => {
     });
     expect(gone.status).toBe(200);
     expect(await gone.json()).toEqual({ name: "windsurf", removed: true });
-    expect(readOperatorClients(paths.clientsPath)).toEqual([]);
+    expect(readOperatorClients(paths.clientsPath).clients).toEqual([]);
 
     const builtin = await app.request("/clients/remove", {
       method: "POST",
@@ -83,5 +83,34 @@ describe("GET/POST /clients", () => {
       body: JSON.stringify({ name: "cursor" }),
     });
     expect(builtin.status).toBe(400);
+  });
+
+  it("GET /clients reports corrupt integrity without inventing operator rows", async () => {
+    mkdirSync(join(paths.clientsPath, ".."), { recursive: true });
+    writeFileSync(paths.clientsPath, "{ not json", "utf8");
+    const app = createMbaServiceApp({ paths });
+    const res = await app.request("/clients");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      clients: Array<{ source: string }>;
+      integrity: string;
+      error: string;
+    };
+    expect(body.integrity).toBe("corrupt");
+    expect(body.error).toMatch(/not valid JSON/);
+    expect(body.clients.every((c) => c.source === "built-in")).toBe(true);
+  });
+
+  it("POST /clients refuses to overwrite a corrupt file", async () => {
+    mkdirSync(join(paths.clientsPath, ".."), { recursive: true });
+    writeFileSync(paths.clientsPath, "{ not json", "utf8");
+    const app = createMbaServiceApp({ paths });
+    const res = await app.request("/clients", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "windsurf", envelope: ".windsurf/mba.md" }),
+    });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "clients-corrupt" });
   });
 });

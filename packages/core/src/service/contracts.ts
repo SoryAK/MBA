@@ -5,7 +5,7 @@
  * Bump `SERVICE_CONTRACT_VERSION` when a field is added, renamed, or dropped.
  */
 
-export const SERVICE_CONTRACT_VERSION = 1 as const;
+export const SERVICE_CONTRACT_VERSION = 2 as const;
 
 export type {
   StatusCatalogModel,

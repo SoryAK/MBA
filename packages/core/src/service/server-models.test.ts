@@ -1,11 +1,14 @@
+import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMbaServiceApp } from "./server.js";
 import { defaultStorePaths } from "./config-store.js";
-import { writeRegistry } from "./upstream-registry.js";
+import { readRegistry, writeRegistry } from "./upstream-registry.js";
 import { hashToken, writeSessions } from "./sessions.js";
+import type { LifecycleSeams } from "../mba/server-lifecycle.js";
 
 function writeAdapter(
   dir: string,
@@ -320,5 +323,83 @@ bindings:
       };
       expect(body.models.find((m) => m.id === "qwen3-coder-30b")?.loaded).toBe(true);
     });
+  });
+
+  it("POST /models/ensure stops the occupant on the switch port then boots", async () => {
+    const qwenFile = join(adapterDir, "qwen", "qwen3-coder", "qwen3-coder-30b", "m.gguf");
+    const llamaFile = join(adapterDir, "llama", "llama3", "llama3-8b", "l.gguf");
+    writeFileSync(qwenFile, "gguf");
+    writeFileSync(llamaFile, "gguf");
+    writeRegistry(paths.upstreamsPath, [
+      {
+        id: "llama-cpp-8080",
+        serverType: "llama.cpp",
+        modelFile: llamaFile,
+        port: 8080,
+        pid: 4242,
+        startedAt: "2026-08-24T00:00:00.000Z",
+      },
+    ]);
+    const killCalls: Array<[number, NodeJS.Signals | number | undefined]> = [];
+    const termSeen = new Set<number>();
+    const spawnCalls: unknown[] = [];
+    const seams: LifecycleSeams = {
+      spawnImpl: () => {
+        spawnCalls.push(1);
+        const child = {
+          pid: 7777,
+          kill: vi.fn(),
+          on: vi.fn(),
+          once: vi.fn(),
+          unref: vi.fn(),
+          stdio: [null, null, null],
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+        };
+        return child as unknown as ChildProcess;
+      },
+      fetchImpl: (async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("/v1/models")) {
+          return new Response(JSON.stringify({ data: [{ id: llamaFile }] }), { status: 200 });
+        }
+        if (url.includes("/health") || url.includes("/completion")) {
+          return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }) as unknown as typeof fetch,
+      killImpl: (pid, signal) => {
+        killCalls.push([pid, signal]);
+        if (signal === "SIGTERM") termSeen.add(pid);
+        if (signal === 0 && termSeen.has(pid)) return false;
+        return true;
+      },
+      portCheckImpl: async () => true,
+      now: () => 1_000_000,
+      healthDeadlineMs: 1000,
+      mkdirImpl: vi.fn(),
+    };
+    const app = createMbaServiceApp({
+      paths,
+      adapterDir,
+      upstreamUrl: "http://127.0.0.1:8080",
+      switchEnabled: true,
+      lifecycleSeams: seams,
+      fetch: seams.fetchImpl,
+    });
+    const res = await app.request("/models/ensure", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "qwen3-coder-30b" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "switched", id: "qwen3-coder-30b" });
+    expect(killCalls.some(([pid]) => pid === 4242 || pid === -4242)).toBe(true);
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    const registry = readRegistry(paths.upstreamsPath);
+    expect(registry.kind).not.toBe("corrupt");
+    expect(registry.entries.map((e) => e.id)).toEqual(["llama-cpp-8080"]);
+    expect(registry.entries[0]?.modelFile).toBe(qwenFile);
+    expect(registry.entries[0]?.pid).toBe(7777);
   });
 });

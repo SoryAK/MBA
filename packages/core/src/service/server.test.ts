@@ -101,6 +101,7 @@ describe("mba service app", () => {
       uptimeMs: number;
       pairing: { active: boolean; count: number; integrity: string; blocked: boolean; sessions: unknown[] };
       registry: { integrity: string; blocked: boolean; count: number };
+      clients: { integrity: string; blocked: boolean; count: number };
       paths: { baseDir: string; tcbPath: string };
       machineOverlay: { mode: string };
       models: unknown[];
@@ -117,6 +118,7 @@ describe("mba service app", () => {
       sessions: [],
     });
     expect(body.registry).toEqual({ blocked: false, count: 0, integrity: "missing" });
+    expect(body.clients).toEqual({ blocked: false, count: 0, integrity: "missing" });
     expect(body.paths.baseDir).toBe(paths.baseDir);
     expect(body.paths.tcbPath).toBe(paths.tcbPath);
     expect(body).toMatchObject({

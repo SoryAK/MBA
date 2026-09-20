@@ -7,7 +7,7 @@
  * the family → model ladder, never in `environments/`.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, posix } from "node:path";
 import {
   builtInEnvelopeBindings,
@@ -63,26 +63,67 @@ function parseClient(value: unknown): OperatorClient | undefined {
   return ide ? { name, envelope, ide } : { name, envelope };
 }
 
-export function readOperatorClients(path: string): OperatorClient[] {
-  if (!existsSync(path)) return [];
+export type ClientsReadResult =
+  | { readonly kind: "missing"; readonly clients: readonly OperatorClient[] }
+  | { readonly kind: "valid"; readonly clients: readonly OperatorClient[] }
+  | {
+      readonly kind: "corrupt";
+      readonly clients: readonly OperatorClient[];
+      readonly error: string;
+    };
+
+function corruptClients(error: string): ClientsReadResult {
+  return { kind: "corrupt", clients: [], error };
+}
+
+/**
+ * Read operator clients. Missing and valid-empty are open (built-ins only).
+ * Corrupt JSON, wrong shape, or an invalid row fail closed — callers must
+ * not treat that as `[]` and pretend extras were never added.
+ */
+export function readOperatorClients(path: string): ClientsReadResult {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return { kind: "missing", clients: [] };
+    }
+    return corruptClients("operator clients file could not be read");
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    raw = JSON.parse(text) as unknown;
   } catch {
-    return [];
+    return corruptClients("operator clients file is not valid JSON");
   }
   const doc = raw as Partial<ClientsFile> | null;
-  if (!doc || !Array.isArray(doc.clients)) return [];
+  if (
+    !doc ||
+    typeof doc !== "object" ||
+    doc.version !== CLIENTS_VERSION ||
+    !Array.isArray(doc.clients)
+  ) {
+    return corruptClients("operator clients file has an unsupported shape or version");
+  }
   const rows: OperatorClient[] = [];
   const seen = new Set<string>();
-  for (const item of doc.clients) {
+  for (const [index, item] of doc.clients.entries()) {
     const parsed = parseClient(item);
-    if (!parsed) continue;
-    if (seen.has(parsed.name)) continue;
+    if (!parsed) {
+      return corruptClients(`operator clients file contains an invalid client at index ${index}`);
+    }
+    if (seen.has(parsed.name)) {
+      return corruptClients(`operator clients file contains a duplicate name at index ${index}`);
+    }
     seen.add(parsed.name);
     rows.push(parsed);
   }
-  return rows;
+  return { kind: "valid", clients: rows };
 }
 
 export function writeOperatorClients(path: string, clients: readonly OperatorClient[]): void {
@@ -95,7 +136,7 @@ export function writeOperatorClients(path: string, clients: readonly OperatorCli
 
 export type AddClientResult =
   | { readonly ok: true; readonly client: OperatorClient; readonly updated: boolean }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly code?: "clients-corrupt" };
 
 export function addOperatorClient(
   path: string,
@@ -127,7 +168,11 @@ export function addOperatorClient(
   const taken = new Set(
     builtInEnvelopeBindings().map((b) => posix.normalize(b.envelope)),
   );
-  const rows = readOperatorClients(path);
+  const state = readOperatorClients(path);
+  if (state.kind === "corrupt") {
+    return { ok: false, code: "clients-corrupt", error: state.error };
+  }
+  const rows = [...state.clients];
   for (const row of rows) {
     if (row.name === name) continue;
     taken.add(row.envelope);
@@ -150,20 +195,26 @@ export function addOperatorClient(
 export function removeOperatorClient(
   path: string,
   nameRaw: string,
-): { readonly ok: true; readonly removed: boolean } | { readonly ok: false; readonly error: string } {
+):
+  | { readonly ok: true; readonly removed: boolean }
+  | { readonly ok: false; readonly error: string; readonly code?: "clients-corrupt" } {
   const name = nameRaw.trim().toLowerCase();
   if (isReservedHarnessName(name)) {
     return { ok: false, error: `'${name}' is a built-in client` };
   }
-  const rows = readOperatorClients(path);
+  const state = readOperatorClients(path);
+  if (state.kind === "corrupt") {
+    return { ok: false, code: "clients-corrupt", error: state.error };
+  }
+  const rows = state.clients;
   const next = rows.filter((r) => r.name !== name);
   if (next.length === rows.length) return { ok: true, removed: false };
   writeOperatorClients(path, next);
   return { ok: true, removed: true };
 }
 
-export function operatorEnvelopeBindings(path: string): EnvelopeBinding[] {
-  return readOperatorClients(path).map(({ name, envelope }) => ({ name, envelope }));
+export function operatorEnvelopeBindings(clients: readonly OperatorClient[]): EnvelopeBinding[] {
+  return clients.map(({ name, envelope }) => ({ name, envelope }));
 }
 
 export interface RegisteredClient {
@@ -174,13 +225,20 @@ export interface RegisteredClient {
 }
 
 /** Built-in harnesses plus operator rows. The GET /clients catalog. */
+export function clientsCorruptJson(error: string): { code: "clients-corrupt"; error: string } {
+  return {
+    code: "clients-corrupt",
+    error: `operator clients are corrupt — ${error}`,
+  };
+}
+
 export function listRegisteredClients(path: string): RegisteredClient[] {
   const builtIn = builtInEnvelopeBindings().map((b) => ({
     name: b.name,
     envelope: b.envelope,
     source: "built-in" as const,
   }));
-  const added = readOperatorClients(path).map((c) => ({
+  const added = readOperatorClients(path).clients.map((c) => ({
     name: c.name,
     envelope: c.envelope,
     source: "added" as const,
