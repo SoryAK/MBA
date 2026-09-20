@@ -326,4 +326,20 @@ describe("POST /connect", () => {
       ]),
     );
   });
+
+  it("refuses to connect when clients.json is corrupt", async () => {
+    mkdirSync(join(paths.clientsPath, ".."), { recursive: true });
+    writeFileSync(paths.clientsPath, "{ not json", "utf8");
+    const res = await app.request("/connect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "qwen3-coder-30b",
+        projectRoot: project,
+        harness: "cursor",
+      }),
+    });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "clients-corrupt" });
+  });
 });

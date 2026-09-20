@@ -77,14 +77,24 @@ export function registerConnectRoutes(app: Hono, ctx: ServiceRouteContext): void
           body: { error: `unknown model: ${modelId}`, code: "unknown-model" },
         };
       }
+      const clientState = readOperatorClients(paths.clientsPath);
+      if (clientState.kind === "corrupt") {
+        return {
+          status: 503 as const,
+          body: {
+            code: "clients-corrupt",
+            error: `operator clients are corrupt — ${clientState.error}`,
+          },
+        };
+      }
       const harness = harnessName;
       const ide =
         (typeof ideOpt === "string" && ideOpt.length > 0 ? ideOpt : undefined) ??
-        readOperatorClients(paths.clientsPath).find(
+        clientState.clients.find(
           (c) => compactHarnessKey(c.name) === compactHarnessKey(harness),
         )?.ide ??
         defaultIdeForHarness(harness);
-      const envelopes = operatorEnvelopeBindings(paths.clientsPath);
+      const envelopes = operatorEnvelopeBindings(clientState.clients);
       const previousOwner = readEnvelopeOwner(projectRoot, harness, envelopes, ide);
       const slotPeers = sessionsSharingSlot(
         sessionState.sessions,
@@ -195,9 +205,10 @@ export function registerConnectRoutes(app: Hono, ctx: ServiceRouteContext): void
     if (outcome.status === 503) {
       return c.json(outcome.body, 503);
     }
+    const clientState = readOperatorClients(paths.clientsPath);
     restageSlotsAfterRevoke({
       adapterDir: opts.adapterDir ?? "",
-      envelopes: operatorEnvelopeBindings(paths.clientsPath),
+      envelopes: operatorEnvelopeBindings(clientState.clients),
       remaining: outcome.next,
       revoked: outcome.revoked,
     });

@@ -15,7 +15,7 @@ import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
 import { notesPreview, readModelShelf, type ModelNotesPreview } from "./model-config.js";
 import { isLoadedPath, probeLoadedModel } from "./model-switch.js";
 import { defaultWatches, readModelWatches, type ModelWatches } from "./model-watches.js";
-import { operatorEnvelopeBindings } from "./operator-clients.js";
+import { operatorEnvelopeBindings, readOperatorClients } from "./operator-clients.js";
 import {
   pairingActive,
   publicSessions,
@@ -74,11 +74,14 @@ export interface StatusRegistry {
   readonly error?: string;
 }
 
+export type StatusClients = StatusRegistry;
+
 export interface StatusSnapshot {
   readonly version: number;
   readonly uptimeMs: number;
   readonly pairing: StatusPairing;
   readonly registry: StatusRegistry;
+  readonly clients: StatusClients;
   readonly paths: {
     readonly baseDir: string;
     readonly tcbPath: string;
@@ -239,7 +242,8 @@ export async function buildStatusSnapshot(opts: StatusSnapshotOpts): Promise<Sta
     fetch: fetchImpl,
   });
   const servers = await listRegistryServers(registryState, fetchImpl);
-  const extras = operatorEnvelopeBindings(opts.paths.clientsPath);
+  const clientState = readOperatorClients(opts.paths.clientsPath);
+  const extras = operatorEnvelopeBindings(clientState.clients);
   const ownerBySlot = new Map<string, string | undefined>();
   const sessionsOut = publicSessions(sessions).map((s) => {
     const key = `${s.harness}\0${resolve(s.projectRoot)}`;
@@ -268,6 +272,12 @@ export async function buildStatusSnapshot(opts: StatusSnapshotOpts): Promise<Sta
       count: registry.length,
       integrity: registryState.kind,
       ...(registryState.kind === "corrupt" ? { error: registryState.error } : {}),
+    },
+    clients: {
+      blocked: clientState.kind === "corrupt",
+      count: clientState.clients.length,
+      integrity: clientState.kind,
+      ...(clientState.kind === "corrupt" ? { error: clientState.error } : {}),
     },
     paths: {
       baseDir: opts.paths.baseDir,

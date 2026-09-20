@@ -16,7 +16,7 @@ import {
   readModelWatches,
   setModelWatch,
 } from "./model-watches.js";
-import { operatorEnvelopeBindings } from "./operator-clients.js";
+import { operatorEnvelopeBindings, readOperatorClients } from "./operator-clients.js";
 import { readSessions, sessionsSharingSlot } from "./sessions.js";
 import { restagePairedSlotsForModel, stageModelCard } from "./stage-model-card.js";
 import { listCatalogModels, probeModelLoaded } from "./status-snapshot.js";
@@ -29,7 +29,8 @@ import {
 import { withHouseLock } from "./house-lock.js";
 import { bootServer } from "./server-boot.js";
 import { readGlobalConfig, defaultStorePaths } from "./config-store.js";
-import { readRegistry, upsertEntry, writeRegistry } from "./upstream-registry.js";
+import { getServerTypeOps } from "./server-types.js";
+import { readRegistry, removeById, upsertEntry, writeRegistry } from "./upstream-registry.js";
 import type { MbaServiceAppOptions, ServiceRouteContext } from "./route-context.js";
 
 export function registerModelRoutes(app: Hono, ctx: ServiceRouteContext): void {
@@ -67,6 +68,16 @@ export function registerModelRoutes(app: Hono, ctx: ServiceRouteContext): void {
         503,
       );
     }
+    const clientState = readOperatorClients(paths.clientsPath);
+    if (clientState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "clients-corrupt",
+          error: `operator clients are corrupt — ${clientState.error}`,
+        },
+        503,
+      );
+    }
     const result = await ensureModel({
       catalog: readModelCatalog(opts.adapterDir ?? ""),
       requestedId: input.id,
@@ -91,7 +102,7 @@ export function registerModelRoutes(app: Hono, ctx: ServiceRouteContext): void {
       adapterDir: opts.adapterDir ?? "",
       modelId: result.id,
       sessions: sessionState.sessions,
-      envelopes: operatorEnvelopeBindings(paths.clientsPath),
+      envelopes: operatorEnvelopeBindings(clientState.clients),
     });
     return c.json(stage.length > 0 ? { ...result, stage } : result);
   });
@@ -380,7 +391,17 @@ export function registerModelRoutes(app: Hono, ctx: ServiceRouteContext): void {
         503,
       );
     }
-    const envelopes = operatorEnvelopeBindings(paths.clientsPath);
+    const clientState = readOperatorClients(paths.clientsPath);
+    if (clientState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "clients-corrupt",
+          error: `operator clients are corrupt — ${clientState.error}`,
+        },
+        503,
+      );
+    }
+    const envelopes = operatorEnvelopeBindings(clientState.clients);
     const slotPeers = sessionsSharingSlot(
       sessionState.sessions,
       input.harness,
@@ -421,10 +442,10 @@ export function registerModelRoutes(app: Hono, ctx: ServiceRouteContext): void {
  * Default switch executor: boots the model IN-DAEMON via the server plane
  * (ADR-0097 Phase 2), replacing the retired `llama-server-up.sh` shell-out.
  *
- * Port policy (G2): the boot script defaulted to 8080, so we do the same —
- * `MBA_SWITCH_PORT` overrides it. A busy port is refused (the boot reports
- * `port-busy`, which `ensureModel` surfaces as `failed`); pick a free port
- * with `mba servers boot <model> <port>` for an explicit choice.
+ * Port policy: `MBA_SWITCH_PORT` (default 8080). A switch is one
+ * transaction: stop the guest-book entry on that port (and any entry
+ * already serving this file), then boot. A leftover occupant used to
+ * return `port-busy` and leave the loaded model unchanged.
  *
  * The shared `lifecycleSeams` (G1) is passed through so the booted group is
  * tracked and killed on daemon exit. Kept at module level so tests can always
@@ -441,6 +462,23 @@ async function defaultSwitchExecutor(
   const port = Number(process.env.MBA_SWITCH_PORT ?? 8080);
   const registryPath = (opts.paths ?? defaultStorePaths()).upstreamsPath;
   await withHouseLock(registryPath, async () => {
+    const registryState = readRegistry(registryPath);
+    if (registryState.kind === "corrupt") {
+      throw new Error(`upstream registry is corrupt — ${registryState.error}`);
+    }
+    let entries = [...registryState.entries];
+    const outgoing = entries.filter((e) => e.port === port || e.modelFile === modelFile);
+    for (const entry of outgoing) {
+      const ops = getServerTypeOps(entry.serverType);
+      if (!ops) {
+        throw new Error(`unknown server type ${entry.serverType}`);
+      }
+      await ops.stop(entry, opts.lifecycleSeams);
+      entries = [...removeById(entries, entry.id)];
+    }
+    if (outgoing.length > 0) {
+      writeRegistry(registryPath, entries);
+    }
     const result = await bootServer({
       modelFile,
       port,
@@ -453,10 +491,6 @@ async function defaultSwitchExecutor(
     if (!result.ok) {
       throw new Error(result.error);
     }
-    const registryState = readRegistry(registryPath);
-    if (registryState.kind === "corrupt") {
-      throw new Error(`upstream registry is corrupt — ${registryState.error}`);
-    }
-    writeRegistry(registryPath, upsertEntry(registryState.entries, result.entry));
+    writeRegistry(registryPath, upsertEntry(entries, result.entry));
   });
 }

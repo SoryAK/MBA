@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { defaultStateDir } from "./paths.js";
 
 /**
- * HTTP JSON copies of `@mba-ai/core/contracts` (SERVICE_CONTRACT_VERSION = 1).
+ * HTTP JSON copies of `@mba-ai/core/contracts` (SERVICE_CONTRACT_VERSION = 2).
  * This package must not import `@mba-ai/core` (ADR-0092). Keep these fields
  * in lockstep with `packages/core/src/service/contracts.ts`.
  */
@@ -71,6 +71,11 @@ export interface MbaStatusResult {
   };
   readonly machineOverlay?: { readonly mode: string };
   readonly models?: readonly MbaModelEntry[];
+  readonly clients?: {
+    readonly blocked: boolean;
+    readonly count: number;
+    readonly integrity: "missing" | "valid" | "corrupt";
+  };
 }
 
 export interface MbaModelEntry {
