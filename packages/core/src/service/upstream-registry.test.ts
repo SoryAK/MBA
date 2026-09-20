@@ -6,6 +6,7 @@ import {
   readRegistry,
   removeByPid,
   resolveUpstream,
+  updateRegistry,
   upsertEntry,
   writeRegistry,
   type UpstreamEntry,
@@ -79,6 +80,31 @@ describe("upstream registry (ADR-0097 Phase 1)", () => {
       expect(readRegistry(path)).toEqual({ kind: "valid", entries: [] });
       // The on-disk file must be valid JSON after the overwrite.
       expect(() => JSON.parse(readFileSync(path, "utf8"))).not.toThrow();
+    });
+
+    it("keeps both entries when overlapping updates await", async () => {
+      const a = entry({ id: "a", modelFile: QWEN, port: 8080, pid: 1 });
+      const b = entry({ id: "b", modelFile: LLAMA, port: 8081, pid: 2 });
+      await Promise.all([
+        updateRegistry(path, async (rows) => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return upsertEntry(rows, a);
+        }),
+        updateRegistry(path, async (rows) => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return upsertEntry(rows, b);
+        }),
+      ]);
+      expect(readRegistry(path).entries.map((e) => e.id).sort()).toEqual(["a", "b"]);
+    });
+
+    it("refuses to overwrite a corrupt registry", async () => {
+      writeFileSync(path, "{ not json", "utf8");
+      const result = await updateRegistry(path, (rows) =>
+        upsertEntry(rows, entry({ id: "a", modelFile: QWEN, port: 8080, pid: 1 })),
+      );
+      expect(result.kind).toBe("corrupt");
+      expect(readFileSync(path, "utf8")).toBe("{ not json");
     });
   });
 

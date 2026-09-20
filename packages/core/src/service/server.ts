@@ -137,6 +137,7 @@ import {
   writeSessions,
 } from "./sessions.js";
 import { createModelProxyRoutes } from "./model-proxy.js";
+import { withHouseLock } from "./house-lock.js";
 import {
   buildStatusSnapshot,
   listCatalogModels,
@@ -297,10 +298,12 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       return c.json({ error: "body.ruleClasses must be a valid RuleClassRegistry" }, 400);
     }
     try {
-      const result = setRules(paths, {
-        tcb: input.tcb as ToolCircuitBreakerConfig,
-        ruleClasses: input.ruleClasses as RuleClassRegistry | undefined,
-      });
+      const result = await withHouseLock(paths.versionPath, () =>
+        setRules(paths, {
+          tcb: input.tcb as ToolCircuitBreakerConfig,
+          ruleClasses: input.ruleClasses as RuleClassRegistry | undefined,
+        }),
+      );
       return c.json(result);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "set_rules failed" }, 500);
@@ -326,8 +329,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
+    const mode = input.mode;
     try {
-      const result = setMachineOverlay(paths, input.mode);
+      const result = await withHouseLock(paths.versionPath, () =>
+        setMachineOverlay(paths, mode),
+      );
       return c.json({ mode: result.machineOverlay, version: result.version });
     } catch (err) {
       return c.json(
@@ -761,82 +767,98 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
-    const sessionState = readSessions(paths.sessionsPath);
-    if (sessionState.kind === "corrupt") {
-      return c.json(
-        {
-          code: "sessions-corrupt",
-          error: `sessions state is corrupt — ${sessionState.error}`,
+    const modelId = input.id;
+    const projectRoot = input.projectRoot;
+    const harnessName = input.harness;
+    const ideOpt = input.ide;
+    const outcome = await withHouseLock(paths.sessionsPath, async () => {
+      const sessionState = readSessions(paths.sessionsPath);
+      if (sessionState.kind === "corrupt") {
+        return {
+          status: 503 as const,
+          body: {
+            code: "sessions-corrupt",
+            error: `sessions state is corrupt — ${sessionState.error}`,
+          },
+        };
+      }
+      const catalog = readModelCatalog(opts.adapterDir ?? "");
+      if (!catalog.some((e) => e.id === modelId)) {
+        return {
+          status: 404 as const,
+          body: { error: `unknown model: ${modelId}`, code: "unknown-model" },
+        };
+      }
+      const harness = harnessName;
+      const ide =
+        (typeof ideOpt === "string" && ideOpt.length > 0 ? ideOpt : undefined) ??
+        readOperatorClients(paths.clientsPath).find(
+          (c) => compactHarnessKey(c.name) === compactHarnessKey(harness),
+        )?.ide ??
+        defaultIdeForHarness(harness);
+      const envelopes = operatorEnvelopeBindings(paths.clientsPath);
+      const previousOwner = readEnvelopeOwner(projectRoot, harness, envelopes, ide);
+      const slotPeers = sessionsSharingSlot(
+        sessionState.sessions,
+        harness,
+        projectRoot,
+      )
+        .map((s) => s.modelId)
+        .filter((id) => id !== modelId);
+      const staged = stageModelCard({
+        adapterDir: opts.adapterDir ?? "",
+        modelId,
+        projectRoot,
+        harness,
+        ide,
+        envelopes,
+        slotPeers,
+      });
+      if (!staged.ok && staged.code !== "conflict") {
+        return {
+          status: (staged.code === "unknown-model" ? 404 : 400) as 400 | 404,
+          body: { error: staged.error, code: staged.code },
+        };
+      }
+      const token = mintToken();
+      const session = {
+        id: mintSessionId(),
+        modelId,
+        harness: harnessName,
+        ide,
+        projectRoot,
+        tokenHash: hashToken(token),
+        createdAt: new Date().toISOString(),
+      };
+      writeSessions(paths.sessionsPath, upsertSession(sessionState.sessions, session));
+      return {
+        status: 200 as const,
+        body: {
+          token,
+          modelId,
+          harness: harnessName,
+          ide,
+          projectRoot,
+          stage: staged.ok
+            ? {
+                action: staged.action,
+                reason: staged.reason,
+                envelope: staged.envelope,
+                dest: staged.dest,
+                owner:
+                  readEnvelopeOwner(projectRoot, harness, envelopes, ide) ??
+                  (staged.action === "wrote" ? modelId : previousOwner),
+                ...(previousOwner &&
+                previousOwner !== modelId &&
+                staged.action === "wrote"
+                  ? { replaced: previousOwner }
+                  : {}),
+              }
+            : { action: "conflict", error: staged.error, code: staged.code },
         },
-        503,
-      );
-    }
-    const catalog = readModelCatalog(opts.adapterDir ?? "");
-    if (!catalog.some((e) => e.id === input.id)) {
-      return c.json({ error: `unknown model: ${input.id}`, code: "unknown-model" }, 404);
-    }
-    const harness = input.harness;
-    const ide =
-      (typeof input.ide === "string" && input.ide.length > 0 ? input.ide : undefined) ??
-      readOperatorClients(paths.clientsPath).find(
-        (c) => compactHarnessKey(c.name) === compactHarnessKey(harness),
-      )?.ide ??
-      defaultIdeForHarness(harness);
-    const envelopes = operatorEnvelopeBindings(paths.clientsPath);
-    const previousOwner = readEnvelopeOwner(input.projectRoot, harness, envelopes, ide);
-    const slotPeers = sessionsSharingSlot(
-      sessionState.sessions,
-      harness,
-      input.projectRoot,
-    )
-      .map((s) => s.modelId)
-      .filter((id) => id !== input.id);
-    const staged = stageModelCard({
-      adapterDir: opts.adapterDir ?? "",
-      modelId: input.id,
-      projectRoot: input.projectRoot,
-      harness,
-      ide,
-      envelopes,
-      slotPeers,
+      };
     });
-    if (!staged.ok && staged.code !== "conflict") {
-      const status = staged.code === "unknown-model" ? 404 : 400;
-      return c.json({ error: staged.error, code: staged.code }, status);
-    }
-    const token = mintToken();
-    const session = {
-      id: mintSessionId(),
-      modelId: input.id,
-      harness: input.harness,
-      ide,
-      projectRoot: input.projectRoot,
-      tokenHash: hashToken(token),
-      createdAt: new Date().toISOString(),
-    };
-    writeSessions(paths.sessionsPath, upsertSession(sessionState.sessions, session));
-    return c.json({
-      token,
-      modelId: input.id,
-      harness: input.harness,
-      ide,
-      projectRoot: input.projectRoot,
-      stage: staged.ok
-        ? {
-            action: staged.action,
-            reason: staged.reason,
-            envelope: staged.envelope,
-            dest: staged.dest,
-            owner: readEnvelopeOwner(input.projectRoot, harness, envelopes, ide) ??
-              (staged.action === "wrote" ? input.id : previousOwner),
-            ...(previousOwner &&
-            previousOwner !== input.id &&
-            staged.action === "wrote"
-              ? { replaced: previousOwner }
-              : {}),
-          }
-        : { action: "conflict", error: staged.error, code: staged.code },
-    });
+    return c.json(outcome.body, outcome.status);
   });
 
   app.post("/connect/revoke", async (c) => {
@@ -861,31 +883,37 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (input.projectRoot !== undefined && typeof input.projectRoot !== "string") {
       return c.json({ error: "body.projectRoot must be a string when set" }, 400);
     }
-    const sessionState = readSessions(paths.sessionsPath);
-    if (sessionState.kind === "corrupt") {
-      return c.json(
-        {
-          code: "sessions-corrupt",
-          error: `sessions state is corrupt — ${sessionState.error}`,
-        },
-        503,
-      );
-    }
-    const before = sessionState.sessions;
-    const next = revokeSessions(before, {
-      modelId: typeof input.id === "string" ? input.id : undefined,
-      harness: typeof input.harness === "string" ? input.harness : undefined,
-      projectRoot: typeof input.projectRoot === "string" ? input.projectRoot : undefined,
+    const outcome = await withHouseLock(paths.sessionsPath, async () => {
+      const sessionState = readSessions(paths.sessionsPath);
+      if (sessionState.kind === "corrupt") {
+        return {
+          status: 503 as const,
+          body: {
+            code: "sessions-corrupt",
+            error: `sessions state is corrupt — ${sessionState.error}`,
+          },
+        };
+      }
+      const before = sessionState.sessions;
+      const next = revokeSessions(before, {
+        modelId: typeof input.id === "string" ? input.id : undefined,
+        harness: typeof input.harness === "string" ? input.harness : undefined,
+        projectRoot: typeof input.projectRoot === "string" ? input.projectRoot : undefined,
+      });
+      const revoked = before.filter((s) => !next.some((n) => n.id === s.id));
+      writeSessions(paths.sessionsPath, next);
+      return { status: 200 as const, next, revoked };
     });
-    const revoked = before.filter((s) => !next.some((n) => n.id === s.id));
-    writeSessions(paths.sessionsPath, next);
+    if (outcome.status === 503) {
+      return c.json(outcome.body, 503);
+    }
     restageSlotsAfterRevoke({
       adapterDir: opts.adapterDir ?? "",
       envelopes: operatorEnvelopeBindings(paths.clientsPath),
-      remaining: next,
-      revoked,
+      remaining: outcome.next,
+      revoked: outcome.revoked,
     });
-    return c.json({ pairing: { active: pairingActive(next), count: next.length } });
+    return c.json({ pairing: { active: pairingActive(outcome.next), count: outcome.next.length } });
   });
 
   // --- Server plane (ADR-0097 Phase 2) ------------------------------------
@@ -1091,48 +1119,50 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         : selection.selected?.path;
     const streamBoot = (c.req.header("accept") ?? "").includes("text/event-stream");
     const runBoot = async (seams: LifecycleSeams | undefined) => {
-      const result = await bootServer({
-        serverType,
-        modelFile: input.modelFile as string | undefined,
-        modelRef: input.modelRef as string | undefined,
-        port,
-        fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
-        adapterDir: opts.adapterDir ?? "",
-        registryPath: paths.upstreamsPath,
-        binaryPath,
-        machineInfo: opts.machineInfo,
-        machineOverlay: machineOverlay(),
-        seams,
-      });
-      if (!result.ok) {
-        const status =
-          result.code === "port-busy" || result.code === "duplicate-model"
-            ? 409
-            : result.code === "unknown-model"
-              ? 404
-              : result.code === "registry-corrupt"
-                ? 503
-                : 500;
-        return {
-          status,
-          body:
-            result.code === "registry-corrupt"
-              ? { code: result.code, error: result.error }
-              : { error: result.error },
-        };
-      }
-      if (typeof binaryPath === "string" && binaryPath.length > 0) {
-        writeLlamaServerChoice(paths, {
-          path: binaryPath,
-          backend: inspectLlamaBackend(binaryPath),
+      return await withHouseLock(paths.upstreamsPath, async () => {
+        const result = await bootServer({
+          serverType,
+          modelFile: input.modelFile as string | undefined,
+          modelRef: input.modelRef as string | undefined,
+          port,
+          fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
+          adapterDir: opts.adapterDir ?? "",
+          registryPath: paths.upstreamsPath,
+          binaryPath,
+          machineInfo: opts.machineInfo,
+          machineOverlay: machineOverlay(),
+          seams,
         });
-      }
-      const registryState = readRegistry(paths.upstreamsPath);
-      if (registryState.kind === "corrupt") {
-        return { status: 503, body: registryCorruptJson(registryState.error) };
-      }
-      writeRegistry(paths.upstreamsPath, upsertEntry(registryState.entries, result.entry));
-      return { status: 201, body: result.entry };
+        if (!result.ok) {
+          const status =
+            result.code === "port-busy" || result.code === "duplicate-model"
+              ? (409 as const)
+              : result.code === "unknown-model"
+                ? (404 as const)
+                : result.code === "registry-corrupt"
+                  ? (503 as const)
+                  : (500 as const);
+          return {
+            status,
+            body:
+              result.code === "registry-corrupt"
+                ? { code: result.code, error: result.error }
+                : { error: result.error },
+          };
+        }
+        if (typeof binaryPath === "string" && binaryPath.length > 0) {
+          writeLlamaServerChoice(paths, {
+            path: binaryPath,
+            backend: inspectLlamaBackend(binaryPath),
+          });
+        }
+        const registryState = readRegistry(paths.upstreamsPath);
+        if (registryState.kind === "corrupt") {
+          return { status: 503 as const, body: registryCorruptJson(registryState.error) };
+        }
+        writeRegistry(paths.upstreamsPath, upsertEntry(registryState.entries, result.entry));
+        return { status: 201 as const, body: result.entry };
+      });
     };
     if (streamBoot) {
       return streamSSE(c, async (stream) => {
@@ -1159,7 +1189,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       });
     }
     const outcome = await runBoot(opts.lifecycleSeams);
-    return c.json(outcome.body, outcome.status as 201 | 404 | 409 | 500 | 503);
+    return c.json(outcome.body, outcome.status);
   });
 
   app.post("/servers/stop", async (c) => {
@@ -1181,30 +1211,39 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
-    const registryState = readRegistry(paths.upstreamsPath);
-    if (registryState.kind === "corrupt") {
-      return c.json(registryCorruptJson(registryState.error), 503);
-    }
-    const registry = registryState.entries;
-    // Resolve the target entry: by id (type-agnostic) or by pid (legacy
-    // llama.cpp path — Ollama entries have no pid).
-    const entry = hasId
-      ? registry.find((e) => e.id === input.id)
-      : registry.find((e) => e.pid === input.pid);
-    if (!entry) {
-      return c.json({ error: `no registered server ${hasId ? `with id ${input.id}` : `with pid ${input.pid}`}` }, 404);
-    }
-    const ops = getServerTypeOps(entry.serverType);
-    if (!ops) {
-      return c.json({ error: `unknown server type ${entry.serverType}` }, 500);
-    }
-    try {
-      await ops.stop(entry, opts.lifecycleSeams);
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "stop failed" }, 500);
-    }
-    writeRegistry(paths.upstreamsPath, removeById(registry, entry.id));
-    return c.json({ stopped: entry.id });
+    const outcome = await withHouseLock(paths.upstreamsPath, async () => {
+      const registryState = readRegistry(paths.upstreamsPath);
+      if (registryState.kind === "corrupt") {
+        return { status: 503 as const, body: registryCorruptJson(registryState.error) };
+      }
+      const registry = registryState.entries;
+      const entry = hasId
+        ? registry.find((e) => e.id === input.id)
+        : registry.find((e) => e.pid === input.pid);
+      if (!entry) {
+        return {
+          status: 404 as const,
+          body: {
+            error: `no registered server ${hasId ? `with id ${input.id}` : `with pid ${input.pid}`}`,
+          },
+        };
+      }
+      const ops = getServerTypeOps(entry.serverType);
+      if (!ops) {
+        return { status: 500 as const, body: { error: `unknown server type ${entry.serverType}` } };
+      }
+      try {
+        await ops.stop(entry, opts.lifecycleSeams);
+      } catch (err) {
+        return {
+          status: 500 as const,
+          body: { error: err instanceof Error ? err.message : "stop failed" },
+        };
+      }
+      writeRegistry(paths.upstreamsPath, removeById(registry, entry.id));
+      return { status: 200 as const, body: { stopped: entry.id } };
+    });
+    return c.json(outcome.body, outcome.status);
   });
 
   // Slot / KV control (ADR-0097 Phase 4). llama.cpp only. Filenames stay
@@ -1332,26 +1371,26 @@ async function defaultSwitchExecutor(
     throw new Error(`no model file resolved for ${ctx.id} — cannot boot in-daemon`);
   }
   const port = Number(process.env.MBA_SWITCH_PORT ?? 8080);
-  const result = await bootServer({
-    modelFile,
-    port,
-    adapterDir: opts.adapterDir ?? "",
-    registryPath: (opts.paths ?? defaultStorePaths()).upstreamsPath,
-    machineInfo: opts.machineInfo,
-    machineOverlay: readGlobalConfig(opts.paths ?? defaultStorePaths()).machineOverlay,
-    seams: opts.lifecycleSeams,
+  const registryPath = (opts.paths ?? defaultStorePaths()).upstreamsPath;
+  await withHouseLock(registryPath, async () => {
+    const result = await bootServer({
+      modelFile,
+      port,
+      adapterDir: opts.adapterDir ?? "",
+      registryPath,
+      machineInfo: opts.machineInfo,
+      machineOverlay: readGlobalConfig(opts.paths ?? defaultStorePaths()).machineOverlay,
+      seams: opts.lifecycleSeams,
+    });
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    const registryState = readRegistry(registryPath);
+    if (registryState.kind === "corrupt") {
+      throw new Error(`upstream registry is corrupt — ${registryState.error}`);
+    }
+    writeRegistry(registryPath, upsertEntry(registryState.entries, result.entry));
   });
-  if (!result.ok) {
-    throw new Error(result.error);
-  }
-  const registryState = readRegistry((opts.paths ?? defaultStorePaths()).upstreamsPath);
-  if (registryState.kind === "corrupt") {
-    throw new Error(`upstream registry is corrupt — ${registryState.error}`);
-  }
-  writeRegistry(
-    (opts.paths ?? defaultStorePaths()).upstreamsPath,
-    upsertEntry(registryState.entries, result.entry),
-  );
 }
 
 export interface MbaServiceHandle {
