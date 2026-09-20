@@ -165,3 +165,26 @@ export function removeOperatorClient(
 export function operatorEnvelopeBindings(path: string): EnvelopeBinding[] {
   return readOperatorClients(path).map(({ name, envelope }) => ({ name, envelope }));
 }
+
+export interface RegisteredClient {
+  readonly name: string;
+  readonly envelope: string;
+  readonly source: "built-in" | "added";
+  readonly ide?: string;
+}
+
+/** Built-in harnesses plus operator rows. The GET /clients catalog. */
+export function listRegisteredClients(path: string): RegisteredClient[] {
+  const builtIn = builtInEnvelopeBindings().map((b) => ({
+    name: b.name,
+    envelope: b.envelope,
+    source: "built-in" as const,
+  }));
+  const added = readOperatorClients(path).map((c) => ({
+    name: c.name,
+    envelope: c.envelope,
+    source: "added" as const,
+    ...(c.ide ? { ide: c.ide } : {}),
+  }));
+  return [...builtIn, ...added];
+}

@@ -9,11 +9,6 @@ import { formatRegisteredClientLine } from "./list-print.js";
 import { cmdModelsConnect } from "./models.js";
 import { formatPairedSlotLines } from "./slot-print.js";
 import { brand, dim, heading, shortenHome } from "./style.js";
-import { defaultStorePaths } from "../service/config-store.js";
-import {
-  addOperatorClient,
-  removeOperatorClient,
-} from "../service/operator-clients.js";
 import type { PairingSession } from "./types.js";
 
 async function listSessions(baseUrl: string): Promise<readonly PairingSession[]> {
@@ -24,7 +19,7 @@ async function listSessions(baseUrl: string): Promise<readonly PairingSession[]>
 }
 
 async function cmdClientsList(baseUrl: string, json: boolean): Promise<void> {
-  const catalog = listHarnessChoices();
+  const catalog = await listHarnessChoices(baseUrl);
   const sessions = await listSessions(baseUrl);
   if (json) {
     process.stdout.write(`${JSON.stringify({ clients: catalog, sessions }, null, 2)}\n`);
@@ -48,7 +43,11 @@ async function cmdClientsList(baseUrl: string, json: boolean): Promise<void> {
 const ADD_USAGE =
   "usage: mba clients add <name> --envelope <path> [--ide <name>]";
 
-async function cmdClientsAdd(args: readonly string[], json: boolean): Promise<void> {
+async function cmdClientsAdd(
+  baseUrl: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<void> {
   let name: string | undefined;
   let envelope: string | undefined;
   let ide: string | undefined;
@@ -82,27 +81,44 @@ async function cmdClientsAdd(args: readonly string[], json: boolean): Promise<vo
   }
   if (!name || !envelope) fail(ADD_USAGE);
 
-  const path = defaultStorePaths().clientsPath;
-  const result = addOperatorClient(path, { name, envelope, ide });
-  if (!result.ok) fail(result.error);
+  const result = await servicePost<{
+    name: string;
+    envelope: string;
+    ide?: string;
+    updated: boolean;
+  }>(baseUrl, "/clients", { name, envelope, ide });
   if (json) {
-    process.stdout.write(`${JSON.stringify(result.client, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          name: result.name,
+          envelope: result.envelope,
+          ...(result.ide ? { ide: result.ide } : {}),
+        },
+        null,
+        2,
+      )}\n`,
+    );
     return;
   }
   process.stdout.write(
     result.updated
-      ? `[mba] updated client ${result.client.name} → ${result.client.envelope}\n`
-      : `[mba] added client ${result.client.name} → ${result.client.envelope}\n`,
+      ? `[mba] updated client ${result.name} → ${result.envelope}\n`
+      : `[mba] added client ${result.name} → ${result.envelope}\n`,
   );
 }
 
 const REMOVE_USAGE = "usage: mba clients remove <name>";
 
-async function cmdClientsRemove(args: readonly string[], json: boolean): Promise<void> {
+async function cmdClientsRemove(
+  baseUrl: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<void> {
   let name = args[0];
   if (!name) {
     if (!process.stdin.isTTY) fail(REMOVE_USAGE);
-    const added = listHarnessChoices().filter((h) => h.source === "added");
+    const added = (await listHarnessChoices(baseUrl)).filter((h) => h.source === "added");
     if (added.length === 0) {
       process.stdout.write("[mba] no added clients to remove\n");
       return;
@@ -118,10 +134,13 @@ async function cmdClientsRemove(args: readonly string[], json: boolean): Promise
     if (picked === null) return;
     name = picked;
   }
-  const result = removeOperatorClient(defaultStorePaths().clientsPath, name);
-  if (!result.ok) fail(result.error);
+  const result = await servicePost<{ name: string; removed: boolean }>(
+    baseUrl,
+    "/clients/remove",
+    { name },
+  );
   if (json) {
-    process.stdout.write(`${JSON.stringify({ removed: result.removed, name }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ removed: result.removed, name: result.name }, null, 2)}\n`);
     return;
   }
   process.stdout.write(
@@ -231,10 +250,10 @@ export async function cmdClients(
       await cmdClientsList(baseUrl, json);
       return;
     case "add":
-      await cmdClientsAdd(args, json);
+      await cmdClientsAdd(baseUrl, args, json);
       return;
     case "remove":
-      await cmdClientsRemove(args, json);
+      await cmdClientsRemove(baseUrl, args, json);
       return;
     case "connect":
       await cmdModelsConnect(baseUrl, args, json);

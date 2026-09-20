@@ -75,6 +75,13 @@
  *        through the proxy requires `Authorization: Bearer <token>`.
  *   POST /connect/revoke             → { pairing: { active, count } }
  *        Body: { id?, harness?, projectRoot? }. Empty body clears all.
+ *   GET  /clients                    → { clients: [{ name, envelope, source, ide? }] }
+ *        Built-in harnesses plus operator rows from clients.json.
+ *   POST /clients                    → { name, envelope, ide?, updated }
+ *        Body: { name, envelope, ide? }. Add or update an operator client.
+ *        400 reserved name / unsafe envelope / envelope clash.
+ *   POST /clients/remove             → { name, removed }
+ *        Body: { name }. 400 if the name is a built-in.
  *
  * The app is exported separately from the listener so tests can drive it
  * with `app.request()` without binding a port.
@@ -124,7 +131,13 @@ import { compactHarnessKey } from "../mba/envelope.js";
 import { readEnvelopeOwner } from "../mba/stage-instructions.js";
 import { stageModelCard, restageSlotsAfterRevoke, restagePairedSlotsForModel } from "./stage-model-card.js";
 import { defaultIdeForHarness, bootEnvJson, isBareBootEnv } from "./env-context.js";
-import { operatorEnvelopeBindings, readOperatorClients } from "./operator-clients.js";
+import {
+  addOperatorClient,
+  listRegisteredClients,
+  operatorEnvelopeBindings,
+  readOperatorClients,
+  removeOperatorClient,
+} from "./operator-clients.js";
 import {
   hashToken,
   mintSessionId,
@@ -886,6 +899,63 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       revoked,
     });
     return c.json({ pairing: { active: pairingActive(next), count: next.length } });
+  });
+
+  app.get("/clients", (c) => {
+    return c.json({ clients: listRegisteredClients(paths.clientsPath) });
+  });
+
+  app.post("/clients", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { name?: unknown; envelope?: unknown; ide?: unknown };
+    if (
+      !input ||
+      typeof input !== "object" ||
+      typeof input.name !== "string" ||
+      input.name.length === 0 ||
+      typeof input.envelope !== "string" ||
+      input.envelope.length === 0 ||
+      (input.ide !== undefined && typeof input.ide !== "string")
+    ) {
+      return c.json({ error: "body must be { name, envelope, ide? }" }, 400);
+    }
+    const result = addOperatorClient(paths.clientsPath, {
+      name: input.name,
+      envelope: input.envelope,
+      ide: typeof input.ide === "string" ? input.ide : undefined,
+    });
+    if (!result.ok) {
+      return c.json({ error: result.error }, 400);
+    }
+    return c.json({
+      name: result.client.name,
+      envelope: result.client.envelope,
+      ...(result.client.ide ? { ide: result.client.ide } : {}),
+      updated: result.updated,
+    });
+  });
+
+  app.post("/clients/remove", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const input = body as { name?: unknown };
+    if (!input || typeof input !== "object" || typeof input.name !== "string" || input.name.length === 0) {
+      return c.json({ error: "body must be { name }" }, 400);
+    }
+    const result = removeOperatorClient(paths.clientsPath, input.name);
+    if (!result.ok) {
+      return c.json({ error: result.error }, 400);
+    }
+    return c.json({ name: input.name.trim().toLowerCase(), removed: result.removed });
   });
 
   // --- Server plane (ADR-0097 Phase 2) ------------------------------------

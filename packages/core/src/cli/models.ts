@@ -588,7 +588,7 @@ export async function cmdModelsStage(
     if (!process.stdin.isTTY) {
       fail(`${STAGE_USAGE}\n  harness: ${KNOWN_HARNESSES.join(", ")} (or an added client)`);
     }
-    const picked = await pickLabeledInteractive("harness", harnessPickerRows());
+    const picked = await pickLabeledInteractive("harness", await harnessPickerRows(baseUrl));
     if (picked === null) {
       process.stdout.write("[mba] cancelled\n");
       return;
@@ -702,7 +702,7 @@ export async function cmdModelsConnect(
     if (!process.stdin.isTTY) {
       fail(`${CONNECT_USAGE}\n  harness: ${KNOWN_HARNESSES.join(", ")} (or an added client)`);
     }
-    const picked = await pickLabeledInteractive("harness", harnessPickerRows());
+    const picked = await pickLabeledInteractive("harness", await harnessPickerRows(baseUrl));
     if (picked === null) {
       process.stdout.write("[mba] cancelled\n");
       return;
