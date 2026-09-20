@@ -273,6 +273,15 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   daemonLog(
     `[boot] request: ${serverType} model=${modelKey} port=${input.port} fork=${fork}`,
   );
+  const bootStarted = input.seams?.now?.() ?? Date.now();
+  const emitPhase = (phase: string, health?: string): void => {
+    input.seams?.onBootPhase?.({
+      phase,
+      elapsedMs: (input.seams?.now?.() ?? Date.now()) - bootStarted,
+      ...(health ? { health } : {}),
+    });
+  };
+  emitPhase("checking-port");
 
   const registryState = readRegistry(input.registryPath);
   if (registryState.kind === "corrupt") {
@@ -407,6 +416,7 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
   // Dispatch to the type's boot (health for llama.cpp; load for ollama).
   // A failure reports `boot-failed` and leaves no registry entry.
   try {
+    emitPhase("starting");
     const entry = await ops.boot(
       {
         modelFile: recipe?.modelFile ?? modelKey,
@@ -422,6 +432,7 @@ export async function bootServer(input: BootServerInput): Promise<BootServerResu
     daemonLog(
       `[boot] SUCCESS: ${entry.id} on port ${entry.port}${entry.pid !== undefined ? ` (pid ${entry.pid})` : ""}`,
     );
+    emitPhase("ready");
     return { ok: true, entry };
   } catch (err) {
     daemonLog(

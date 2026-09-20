@@ -104,6 +104,15 @@ export interface LifecycleSeams {
    * one supervisor and passes it through every boot/stop operation.
    */
   readonly processSupervisor?: ProcessSupervisor;
+  /**
+   * Boot progress for a streaming `/servers/boot`. Status changes only
+   * (not every 2s poll). Optional — JSON boot ignores it.
+   */
+  readonly onBootPhase?: (event: {
+    readonly phase: string;
+    readonly elapsedMs: number;
+    readonly health?: string;
+  }) => void;
 }
 
 /** Resolve a seam to its real default. */
@@ -136,6 +145,7 @@ export function resolveSeams(
     portCheckImpl: seams?.portCheckImpl ?? defaultPortCheck,
     mkdirImpl: seams?.mkdirImpl ?? ((p, o) => mkdirSync(p, o)),
     sleepImpl: seams?.sleepImpl ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+    onBootPhase: seams?.onBootPhase ?? (() => {}),
   };
 }
 
@@ -195,7 +205,7 @@ export async function waitForHealth(
   seams?: LifecycleSeams,
   childPid?: number,
 ): Promise<void> {
-  const { fetchImpl, now, sleepImpl, killImpl } = resolveSeams(seams);
+  const { fetchImpl, now, sleepImpl, killImpl, onBootPhase } = resolveSeams(seams);
   const url = `http://127.0.0.1:${port}/health`;
   const pollInterval = 2000; // 2s, matching bash script
   const startedAt = now();
@@ -209,6 +219,11 @@ export async function waitForHealth(
       daemonLog(
         `[health:${port}] ${status} (t+${Math.round((now() - startedAt) / 1000)}s)`,
       );
+      onBootPhase({
+        phase: "loading",
+        elapsedMs: now() - startedAt,
+        health: status,
+      });
     }
   };
 
@@ -381,7 +396,7 @@ export async function bootLlamaServer(
   try {
     // Pass the child pid so a dead child fails fast ("exited prematurely")
     // instead of masquerading as a stall for the full window.
-    await waitForHealth(opts.port, healthDeadlineMs, { fetchImpl, now, sleepImpl, killImpl }, pid);
+    await waitForHealth(opts.port, healthDeadlineMs, seams, pid);
   } catch (err) {
     daemonLog(
       `[boot:${opts.port}] health FAILED after ${now() - bootedAt}ms — killing group ${pid}: ${String(err)}`,

@@ -3,7 +3,7 @@
  * { restartRequired, modelLoaded } and never reboots itself (ADR-0096).
  */
 
-import { serviceGet, servicePost } from "./client.js";
+import { serviceGet, servicePost, servicePostSse } from "./client.js";
 import { askYesNoInteractive } from "./interactive.js";
 import { resolveModelFile } from "./resolve-model.js";
 import { selectRestartTargets } from "./restart-selection.js";
@@ -44,8 +44,13 @@ async function restartServer(
       await servicePost<{ stopped: string }>(baseUrl, "/servers/stop", { id: target.id });
     }
   }
-  process.stdout.write(`[mba] rebooting ${modelId} on port ${port} (waits for health)…\n`);
-  const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", { modelFile: file, port });
+  process.stdout.write(`[mba] rebooting ${modelId} on port ${port}\n`);
+  const entry = await servicePostSse<BootResult>(baseUrl, "/servers/boot", { modelFile: file, port }, {
+    onPhase: (event) => {
+      const sec = Math.round(event.elapsedMs / 1000);
+      process.stdout.write(`  ${event.health ?? event.phase}  ${sec}s\n`);
+    },
+  });
   process.stdout.write(`${bootedLine(entry.id, entry.pid)}\n`);
 }
 

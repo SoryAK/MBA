@@ -100,11 +100,22 @@ export async function servicePostSse<T>(
   baseUrl: string,
   path: string,
   body: unknown,
-  opts?: { readonly progressLabel?: string },
+  opts?: {
+    readonly progressLabel?: string;
+    readonly silent?: boolean;
+    readonly onPhase?: (event: {
+      readonly phase: string;
+      readonly elapsedMs: number;
+      readonly health?: string;
+    }) => void;
+  },
 ): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+    },
     body: JSON.stringify(body),
   });
   if (!res.ok || !res.body) {
@@ -165,7 +176,15 @@ export async function servicePostSse<T>(
         continue;
       }
       if (event.type === "progress") {
-        renderProgress(event.downloaded ?? 0, event.total ?? null, false);
+        if (!opts?.silent) renderProgress(event.downloaded ?? 0, event.total ?? null, false);
+      } else if (event.type === "phase") {
+        if (opts?.onPhase) {
+          opts.onPhase({
+            phase: (event as { phase?: string }).phase ?? "working",
+            elapsedMs: (event as { elapsedMs?: number }).elapsedMs ?? 0,
+            health: (event as { health?: string }).health,
+          });
+        }
       } else if (event.type === "done") {
         process.stdout.write("\r\x1b[K");
         return event.result as T;

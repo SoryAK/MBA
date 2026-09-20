@@ -3,7 +3,8 @@
  */
 
 import type { Hono } from "hono";
-import { getLogBuffer } from "../mba/index.js";
+import { streamSSE } from "hono/streaming";
+import { getLogBuffer, type LifecycleSeams } from "../mba/index.js";
 import {
   SlotFilenameError,
   SlotOpError,
@@ -240,50 +241,78 @@ export function registerServerRoutes(app: Hono, ctx: ServiceRouteContext): void 
       typeof input.binaryPath === "string" && input.binaryPath.length > 0
         ? input.binaryPath
         : selection.selected?.path;
-    const outcome = await withHouseLock(paths.upstreamsPath, async () => {
-      const result = await bootServer({
-        serverType,
-        modelFile: input.modelFile as string | undefined,
-        modelRef: input.modelRef as string | undefined,
-        port,
-        fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
-        adapterDir: opts.adapterDir ?? "",
-        registryPath: paths.upstreamsPath,
-        binaryPath,
-        machineInfo: opts.machineInfo,
-        machineOverlay: machineOverlay(),
-        seams: opts.lifecycleSeams,
-      });
-      if (!result.ok) {
-        const status =
-          result.code === "port-busy" || result.code === "duplicate-model"
-            ? (409 as const)
-            : result.code === "unknown-model"
-              ? (404 as const)
-              : result.code === "registry-corrupt"
-                ? (503 as const)
-                : (500 as const);
-        return {
-          status,
-          body:
-            result.code === "registry-corrupt"
-              ? { code: result.code, error: result.error }
-              : { error: result.error },
-        };
-      }
-      if (typeof binaryPath === "string" && binaryPath.length > 0) {
-        writeLlamaServerChoice(paths, {
-          path: binaryPath,
-          backend: inspectLlamaBackend(binaryPath),
+    const streamBoot = (c.req.header("accept") ?? "").includes("text/event-stream");
+    const runBoot = async (seams: LifecycleSeams | undefined) => {
+      return await withHouseLock(paths.upstreamsPath, async () => {
+        const result = await bootServer({
+          serverType,
+          modelFile: input.modelFile as string | undefined,
+          modelRef: input.modelRef as string | undefined,
+          port,
+          fork: input.fork === "llama.cpp" ? "llama.cpp" : "upstream",
+          adapterDir: opts.adapterDir ?? "",
+          registryPath: paths.upstreamsPath,
+          binaryPath,
+          machineInfo: opts.machineInfo,
+          machineOverlay: machineOverlay(),
+          seams,
         });
-      }
-      const registryState = readRegistry(paths.upstreamsPath);
-      if (registryState.kind === "corrupt") {
-        return { status: 503 as const, body: registryCorruptJson(registryState.error) };
-      }
-      writeRegistry(paths.upstreamsPath, upsertEntry(registryState.entries, result.entry));
-      return { status: 201 as const, body: result.entry };
-    });
+        if (!result.ok) {
+          const status =
+            result.code === "port-busy" || result.code === "duplicate-model"
+              ? (409 as const)
+              : result.code === "unknown-model"
+                ? (404 as const)
+                : result.code === "registry-corrupt"
+                  ? (503 as const)
+                  : (500 as const);
+          return {
+            status,
+            body:
+              result.code === "registry-corrupt"
+                ? { code: result.code, error: result.error }
+                : { error: result.error },
+          };
+        }
+        if (typeof binaryPath === "string" && binaryPath.length > 0) {
+          writeLlamaServerChoice(paths, {
+            path: binaryPath,
+            backend: inspectLlamaBackend(binaryPath),
+          });
+        }
+        const registryState = readRegistry(paths.upstreamsPath);
+        if (registryState.kind === "corrupt") {
+          return { status: 503 as const, body: registryCorruptJson(registryState.error) };
+        }
+        writeRegistry(paths.upstreamsPath, upsertEntry(registryState.entries, result.entry));
+        return { status: 201 as const, body: result.entry };
+      });
+    };
+    if (streamBoot) {
+      return streamSSE(c, async (stream) => {
+        const outcome = await runBoot({
+          ...opts.lifecycleSeams,
+          onBootPhase: (event) => {
+            void stream.writeSSE({
+              data: JSON.stringify({ type: "phase", ...event }),
+            });
+          },
+        });
+        if (outcome.status >= 400) {
+          const errBody = outcome.body as { error?: string; code?: string };
+          await stream.writeSSE({
+            data: JSON.stringify({
+              type: "error",
+              message: errBody.error ?? "boot failed",
+              code: errBody.code,
+            }),
+          });
+          return;
+        }
+        await stream.writeSSE({ data: JSON.stringify({ type: "done", result: outcome.body }) });
+      });
+    }
+    const outcome = await runBoot(opts.lifecycleSeams);
     return c.json(outcome.body, outcome.status);
   });
 

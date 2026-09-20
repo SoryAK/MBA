@@ -392,6 +392,26 @@ describe("mba service server plane (ADR-0097 Phase 2)", () => {
     expect(call.opts).toMatchObject({ detached: true });
   });
 
+  it("POST /servers/boot streams phases when Accept is event-stream", async () => {
+    const { seams } = bootSeams(424242);
+    const app = createMbaServiceApp({ paths, adapterDir, lifecycleSeams: seams });
+    const res = await app.request("/servers/boot", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "text/event-stream",
+      },
+      body: JSON.stringify({ modelFile, port: 9123 }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const text = await res.text();
+    expect(text).toMatch(/"type":"phase"/);
+    expect(text).toMatch(/"phase":"checking-port"/);
+    expect(text).toMatch(/"type":"done"/);
+    expect(text).toMatch(/llama-cpp-9123/);
+  });
+
   it("POST /servers/boot refuses to overwrite a corrupt registry", async () => {
     mkdirSync(join(paths.upstreamsPath, ".."), { recursive: true });
     const corrupt = "{ not json";

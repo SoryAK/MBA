@@ -2,7 +2,7 @@
  * Server plane (ADR-0097): list / boot / stop / logs / slots / builds.
  */
 
-import { defaultSwitchPort, fail, serviceGet, servicePost } from "./client.js";
+import { defaultSwitchPort, fail, serviceGet, servicePost, servicePostSse } from "./client.js";
 import { printBootPreview, type BootPreviewExtras } from "./boot-preview.js";
 import { brand, dim, shortenHome, bootedLine } from "./style.js";
 import { formatServerLine } from "./list-print.js";
@@ -236,11 +236,11 @@ async function interactiveBoot(
   if (serverType === "llama.cpp") {
     const confirm = await confirmLlamaBoot(baseUrl, picked.id, port, assumeNo);
     if (!confirm.proceed) return;
-    await cmdServersBoot(baseUrl, picked.id, port, serverType, confirm.binaryPath);
+    await cmdServersBoot(baseUrl, picked.id, port, serverType, confirm.binaryPath, false);
     return;
   }
 
-  await cmdServersBoot(baseUrl, picked.id, port, serverType);
+  await cmdServersBoot(baseUrl, picked.id, port, serverType, undefined, false);
 }
 
 async function cmdServersBoot(
@@ -249,23 +249,30 @@ async function cmdServersBoot(
   port: number,
   serverType: "llama.cpp" | "ollama",
   binaryPath?: string,
+  json = false,
 ): Promise<BootResult> {
-  if (serverType === "ollama") {
-    process.stdout.write(`[mba] loading ${modelRef} into ollama (waits for load)…\n`);
-    const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", {
-      serverType: "ollama",
-      modelRef,
-      port,
-    });
-    process.stdout.write(`${bootedLine(entry.id, undefined, `mba connect ${modelRef}`)}\n`);
+  const body: Record<string, unknown> =
+    serverType === "ollama"
+      ? { serverType: "ollama", modelRef, port }
+      : { modelFile: await resolveModelFile(baseUrl, modelRef), port };
+  if (binaryPath) body.binaryPath = binaryPath;
+  const entry = await servicePostSse<BootResult>(baseUrl, "/servers/boot", body, {
+    silent: json,
+    onPhase: json
+      ? undefined
+      : (event) => {
+          const sec = Math.round(event.elapsedMs / 1000);
+          const label = event.health ?? event.phase;
+          process.stdout.write(`  ${dim(label)}  ${dim(`${sec}s`)}\n`);
+        },
+  });
+  if (json) {
+    process.stdout.write(`${JSON.stringify(entry, null, 2)}\n`);
     return entry;
   }
-  const modelFile = await resolveModelFile(baseUrl, modelRef);
-  process.stdout.write(`  ${dim("waiting")}  health…\n`);
-  const body: Record<string, unknown> = { modelFile, port };
-  if (binaryPath) body.binaryPath = binaryPath;
-  const entry = await servicePost<BootResult>(baseUrl, "/servers/boot", body);
-  process.stdout.write(`${bootedLine(entry.id, entry.pid, `mba connect ${modelRef}`)}\n`);
+  process.stdout.write(
+    `${bootedLine(entry.id, entry.pid, `mba connect ${modelRef}`)}\n`,
+  );
   return entry;
 }
 
@@ -611,10 +618,10 @@ export async function cmdServers(
       if (serverType === "llama.cpp") {
         const confirm = await confirmLlamaBoot(baseUrl, modelRef, port, assumeNo);
         if (!confirm.proceed) return;
-        await cmdServersBoot(baseUrl, modelRef, port, serverType, confirm.binaryPath);
+        await cmdServersBoot(baseUrl, modelRef, port, serverType, confirm.binaryPath, json);
         return;
       }
-      await cmdServersBoot(baseUrl, modelRef, port, serverType);
+      await cmdServersBoot(baseUrl, modelRef, port, serverType, undefined, json);
       return;
     }
     case "stop": {
