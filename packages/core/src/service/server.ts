@@ -15,6 +15,7 @@
  *        Body: { tcb, ruleClasses? }. Validates, persists atomically, bumps
  *        the version. 400 on invalid shape.
  *   GET  /status                     → { version, uptimeMs, pairing, paths }
+ *        Pairing includes missing/valid/corrupt integrity; corrupt is blocked.
  *
  * Model plane (ADR-0093 Phase 1):
  *   GET  /models                     → { models: [{ id, name, family, modelFile, loaded, notes? }] }
@@ -328,7 +329,8 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 
   app.get("/status", (c) => {
     const cfg = readGlobalConfig(paths);
-    const sessions = readSessions(paths.sessionsPath);
+    const sessionState = readSessions(paths.sessionsPath);
+    const sessions = sessionState.sessions;
     const extras = operatorEnvelopeBindings(paths.clientsPath);
     const ownerBySlot = new Map<string, string | undefined>();
     const sessionsOut = publicSessions(sessions).map((s) => {
@@ -347,8 +349,11 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       uptimeMs: Date.now() - startedAt,
       pairing: {
         active: pairingActive(sessions),
+        blocked: sessionState.kind === "corrupt",
         count: sessions.length,
+        integrity: sessionState.kind,
         sessions: sessionsOut,
+        ...(sessionState.kind === "corrupt" ? { error: sessionState.error } : {}),
       },
       paths: {
         baseDir: paths.baseDir,
@@ -394,6 +399,16 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (!input || typeof input.id !== "string" || input.id.length === 0) {
       return c.json({ error: "body.id must be a non-empty string" }, 400);
     }
+    const sessionState = readSessions(paths.sessionsPath);
+    if (sessionState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "sessions-corrupt",
+          error: `sessions state is corrupt — ${sessionState.error}`,
+        },
+        503,
+      );
+    }
     const result = await ensureModel({
       catalog: readModelCatalog(opts.adapterDir ?? ""),
       requestedId: input.id,
@@ -417,7 +432,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     const stage = restagePairedSlotsForModel({
       adapterDir: opts.adapterDir ?? "",
       modelId: result.id,
-      sessions: readSessions(paths.sessionsPath),
+      sessions: sessionState.sessions,
       envelopes: operatorEnvelopeBindings(paths.clientsPath),
     });
     return c.json(stage.length > 0 ? { ...result, stage } : result);
@@ -697,9 +712,19 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
+    const sessionState = readSessions(paths.sessionsPath);
+    if (sessionState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "sessions-corrupt",
+          error: `sessions state is corrupt — ${sessionState.error}`,
+        },
+        503,
+      );
+    }
     const envelopes = operatorEnvelopeBindings(paths.clientsPath);
     const slotPeers = sessionsSharingSlot(
-      readSessions(paths.sessionsPath),
+      sessionState.sessions,
       input.harness,
       input.projectRoot,
     )
@@ -762,6 +787,16 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
         400,
       );
     }
+    const sessionState = readSessions(paths.sessionsPath);
+    if (sessionState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "sessions-corrupt",
+          error: `sessions state is corrupt — ${sessionState.error}`,
+        },
+        503,
+      );
+    }
     const catalog = readModelCatalog(opts.adapterDir ?? "");
     if (!catalog.some((e) => e.id === input.id)) {
       return c.json({ error: `unknown model: ${input.id}`, code: "unknown-model" }, 404);
@@ -776,7 +811,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     const envelopes = operatorEnvelopeBindings(paths.clientsPath);
     const previousOwner = readEnvelopeOwner(input.projectRoot, harness, envelopes, ide);
     const slotPeers = sessionsSharingSlot(
-      readSessions(paths.sessionsPath),
+      sessionState.sessions,
       harness,
       input.projectRoot,
     )
@@ -805,7 +840,7 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
       tokenHash: hashToken(token),
       createdAt: new Date().toISOString(),
     };
-    writeSessions(paths.sessionsPath, upsertSession(readSessions(paths.sessionsPath), session));
+    writeSessions(paths.sessionsPath, upsertSession(sessionState.sessions, session));
     return c.json({
       token,
       modelId: input.id,
@@ -852,7 +887,17 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     if (input.projectRoot !== undefined && typeof input.projectRoot !== "string") {
       return c.json({ error: "body.projectRoot must be a string when set" }, 400);
     }
-    const before = readSessions(paths.sessionsPath);
+    const sessionState = readSessions(paths.sessionsPath);
+    if (sessionState.kind === "corrupt") {
+      return c.json(
+        {
+          code: "sessions-corrupt",
+          error: `sessions state is corrupt — ${sessionState.error}`,
+        },
+        503,
+      );
+    }
+    const before = sessionState.sessions;
     const next = revokeSessions(before, {
       modelId: typeof input.id === "string" ? input.id : undefined,
       harness: typeof input.harness === "string" ? input.harness : undefined,

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
@@ -99,14 +99,39 @@ describe("mba service app", () => {
     const body = (await res.json()) as {
       version: number;
       uptimeMs: number;
-      pairing: { active: boolean; count: number; sessions: unknown[] };
+      pairing: { active: boolean; count: number; integrity: string; blocked: boolean; sessions: unknown[] };
       paths: { baseDir: string; tcbPath: string };
     };
     expect(body.version).toBe(0);
     expect(body.uptimeMs).toBeGreaterThanOrEqual(0);
-    expect(body.pairing).toEqual({ active: false, count: 0, sessions: [] });
+    expect(body.pairing).toEqual({
+      active: false,
+      blocked: false,
+      count: 0,
+      integrity: "missing",
+      sessions: [],
+    });
     expect(body.paths.baseDir).toBe(paths.baseDir);
     expect(body.paths.tcbPath).toBe(paths.tcbPath);
+  });
+
+  it("GET /status reports corrupt session state as blocked", async () => {
+    mkdirSync(join(paths.sessionsPath, ".."), { recursive: true });
+    writeFileSync(paths.sessionsPath, "{ not json", "utf8");
+    const app = createMbaServiceApp({ paths });
+
+    const res = await app.request("/status");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      pairing: {
+        active: false,
+        blocked: true,
+        count: 0,
+        integrity: "corrupt",
+        error: expect.stringMatching(/valid JSON/),
+        sessions: [],
+      },
+    });
   });
 
   it("GET /config/machine-overlay returns the default enforce mode", async () => {

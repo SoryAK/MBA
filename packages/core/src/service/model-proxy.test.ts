@@ -759,6 +759,29 @@ describe("model proxy pairing", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("fails closed without contacting upstream when the sessions file is corrupt", async () => {
+    const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
+    mkdirSync(join(paths.sessionsPath, ".."), { recursive: true });
+    writeFileSync(paths.sessionsPath, "{ not json", "utf8");
+    const { fetch: fetchImpl, calls } = upstreamFetch(
+      () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const app = createMbaServiceApp({ paths, upstreamUrl: UPSTREAM, fetch: fetchImpl });
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(CHAT_BODY),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      code: "sessions-corrupt",
+      error: expect.stringMatching(/sessions state is corrupt/),
+    });
+    expect(calls).toHaveLength(0);
+  });
+
   it("returns 401 without a token once a session exists", async () => {
     const paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-proxy-")));
     const token = mintToken();
