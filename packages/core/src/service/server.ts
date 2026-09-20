@@ -14,8 +14,10 @@
  *   POST /set_rules                  → { version, tcb }
  *        Body: { tcb, ruleClasses? }. Validates, persists atomically, bumps
  *        the version. 400 on invalid shape.
- *   GET  /status                     → { version, uptimeMs, pairing, registry, paths }
- *        Pairing and registry include missing/valid/corrupt integrity; corrupt is blocked.
+ *   GET  /status                     → one house snapshot
+ *        Pairing, registry, machine overlay, models, servers, and watches.
+ *        Corrupt pairing/registry stay blocked. GET /models and GET /servers
+ *        remain focused doors over the same list helpers.
  *
  * Model plane (ADR-0093 Phase 1):
  *   GET  /models                     → { models: [{ id, name, family, modelFile, loaded, notes? }] }
@@ -103,15 +105,14 @@ import {
 import { isToolCircuitBreakerConfig } from "../bcb/is-config.js";
 import { isRuleClassRegistry, type RuleClassRegistry } from "../bcb/rule-classes.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
-import { readModelCatalog, type CatalogEntry } from "./model-catalog.js";
+import { readModelCatalog } from "./model-catalog.js";
 import { readMachineInfo } from "./machine-store.js";
 import {
   ensureModel,
   isLoadedPath,
-  probeLoadedModel,
   type SwitchExecutor,
 } from "./model-switch.js";
-import { readModelDials, notesPreview, readModelShelf, setModelDial, type ModelDialFile } from "./model-config.js";
+import { readModelDials, setModelDial, type ModelDialFile } from "./model-config.js";
 import {
   defaultWatches,
   parseWatchId,
@@ -119,7 +120,7 @@ import {
   readModelWatches,
   setModelWatch,
 } from "./model-watches.js";
-import { compactHarnessKey, envelopeRelativePath } from "../mba/envelope.js";
+import { compactHarnessKey } from "../mba/envelope.js";
 import { readEnvelopeOwner } from "../mba/stage-instructions.js";
 import { stageModelCard, restageSlotsAfterRevoke, restagePairedSlotsForModel } from "./stage-model-card.js";
 import { defaultIdeForHarness, bootEnvJson, isBareBootEnv } from "./env-context.js";
@@ -129,7 +130,6 @@ import {
   mintSessionId,
   mintToken,
   pairingActive,
-  publicSessions,
   readSessions,
   revokeSessions,
   sessionsSharingSlot,
@@ -138,14 +138,18 @@ import {
 } from "./sessions.js";
 import { createModelProxyRoutes } from "./model-proxy.js";
 import {
+  buildStatusSnapshot,
+  listCatalogModels,
+  listRegistryServers,
+  probeModelLoaded,
+} from "./status-snapshot.js";
+import {
   adoptLocalGguf,
   pullModel,
 } from "../model/model-pull.js";
 import {
-  listUpstreams,
   readRegistry,
   removeById,
-  resolveUpstream,
   upsertEntry,
   writeRegistry,
 } from "./upstream-registry.js";
@@ -333,72 +337,28 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
     }
   });
 
-  app.get("/status", (c) => {
-    const cfg = readGlobalConfig(paths);
-    const sessionState = readSessions(paths.sessionsPath);
-    const sessions = sessionState.sessions;
-    const registryState = readRegistry(paths.upstreamsPath);
-    const registry = registryState.entries;
-    const extras = operatorEnvelopeBindings(paths.clientsPath);
-    const ownerBySlot = new Map<string, string | undefined>();
-    const sessionsOut = publicSessions(sessions).map((s) => {
-      const key = `${s.harness}\0${resolve(s.projectRoot)}`;
-      if (!ownerBySlot.has(key)) {
-        ownerBySlot.set(key, readEnvelopeOwner(s.projectRoot, s.harness, extras, s.ide));
-      }
-      return {
-        ...s,
-        card: ownerBySlot.get(key) === s.modelId,
-        envelope: envelopeRelativePath(s.harness, s.ide, extras),
-      };
-    });
-    return c.json({
-      version: cfg.version,
-      uptimeMs: Date.now() - startedAt,
-      pairing: {
-        active: pairingActive(sessions),
-        blocked: sessionState.kind === "corrupt",
-        count: sessions.length,
-        integrity: sessionState.kind,
-        sessions: sessionsOut,
-        ...(sessionState.kind === "corrupt" ? { error: sessionState.error } : {}),
-      },
-      registry: {
-        blocked: registryState.kind === "corrupt",
-        count: registry.length,
-        integrity: registryState.kind,
-        ...(registryState.kind === "corrupt" ? { error: registryState.error } : {}),
-      },
-      paths: {
-        baseDir: paths.baseDir,
-        tcbPath: paths.tcbPath,
-        ruleClassesPath: paths.ruleClassesPath,
-        versionPath: paths.versionPath,
-        machineOverlayPath: paths.machineOverlayPath,
-        modelHistoryPath: paths.modelHistoryPath,
-      },
-    });
+  app.get("/status", async (c) => {
+    return c.json(
+      await buildStatusSnapshot({
+        paths,
+        adapterDir: opts.adapterDir ?? "",
+        upstreamUrl: opts.upstreamUrl,
+        fetch: opts.fetch,
+        startedAt,
+      }),
+    );
   });
 
   // --- Model plane (ADR-0093 Phase 1) -------------------------------------
 
   app.get("/models", async (c) => {
-    const catalog = readModelCatalog(opts.adapterDir ?? "");
-    const adapterDir = opts.adapterDir ?? "";
     return c.json({
-      models: await Promise.all(
-        catalog.map(async (e) => ({
-          id: e.id,
-          name: e.name,
-          family: e.family,
-          modelFile: e.modelFile,
-          loaded: isLoadedPath(
-            await probeModelLoaded(e, paths, opts.upstreamUrl, opts.fetch),
-            e.modelFile,
-          ),
-          notes: notesPreview(readModelShelf(adapterDir, e.id)?.notes),
-        })),
-      ),
+      models: await listCatalogModels({
+        adapterDir: opts.adapterDir ?? "",
+        paths,
+        upstreamUrl: opts.upstreamUrl,
+        fetch: opts.fetch,
+      }),
     });
   });
 
@@ -932,45 +892,10 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 
   app.get("/servers", async (c) => {
     const registryState = readRegistry(paths.upstreamsPath);
+    const servers = await listRegistryServers(registryState, opts.fetch ?? fetch);
     if (registryState.kind === "corrupt") {
-      return c.json({ servers: [], integrity: "corrupt", error: registryState.error });
+      return c.json({ servers, integrity: "corrupt", error: registryState.error });
     }
-    const registry = registryState.entries;
-    const fetchImpl = opts.fetch ?? fetch;
-    // Per-type health (Phase 3): each entry is probed by its own type's
-    // capability block (llama.cpp → /health on its port, ollama → /api/tags
-    // on the daemon). Unknown types fall back to the port /health probe.
-    const health = new Map<string, boolean>();
-    await Promise.all(
-      registry.map(async (e) => {
-        const ops = getServerTypeOps(e.serverType);
-        health.set(
-          e.id,
-          ops ? await ops.health(e, fetchImpl) : await probeServerHealth(e.port, fetchImpl),
-        );
-      }),
-    );
-    const healthyIds = new Set(
-      registry.filter((e) => health.get(e.id)).map((e) => e.id),
-    );
-    const servers = registry.map((e) => {
-      const resolved = resolveUpstream(registry, e.modelFile, healthyIds)?.id === e.id;
-      // Q2 (Phase 3): a same-model entry that lost resolution is a labeled
-      // duplicate — the CLI can say "you have two <model> servers".
-      const duplicate = !resolved && listUpstreams(registry, e.modelFile).length > 1;
-      return {
-        id: e.id,
-        serverType: e.serverType,
-        modelFile: e.modelFile,
-        port: e.port,
-        fork: e.fork,
-        pid: e.pid,
-        startedAt: e.startedAt,
-        healthy: health.get(e.id) ?? false,
-        resolved,
-        duplicate,
-      };
-    });
     return c.json({ servers });
   });
 
@@ -1356,21 +1281,6 @@ export function createMbaServiceApp(opts: MbaServiceAppOptions = {}): Hono {
 }
 
 /**
- * Probe a server's /health endpoint. Unreachable or non-2xx → false (the
- * probe is advisory; a dead server is "not healthy", never an error).
- */
-async function probeServerHealth(port: number, fetchImpl: typeof fetch): Promise<boolean> {
-  try {
-    const res = await fetchImpl(`http://127.0.0.1:${port}/health`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Default switch executor: boots the model IN-DAEMON via the server plane
  * (ADR-0097 Phase 2), replacing the retired `llama-server-up.sh` shell-out.
  *
@@ -1412,46 +1322,6 @@ async function defaultSwitchExecutor(
     (opts.paths ?? defaultStorePaths()).upstreamsPath,
     upsertEntry(registryState.entries, result.entry),
   );
-}
-
-/**
- * Probe whether `entry`'s model is loaded, resolving the probe target per
- * model (ADR-0097 Phase 1): upstream registry → adapter `client.url` →
- * `MBA_UPSTREAM_URL` → "not loaded".
- *
- * Lazy validation (G2): the registry is read once per call; candidates are
- * probed in resolve order (most-recently-booted first) and a dead or stale
- * entry is dropped on read — the next candidate, then the next rung, is
- * tried. No sweeper, no timers.
- */
-async function probeModelLoaded(
-  entry: CatalogEntry,
-  paths: MbaStorePaths,
-  envUrl: string | undefined,
-  fetchImpl: typeof fetch = fetch,
-): Promise<string | null> {
-  const registryState = readRegistry(paths.upstreamsPath);
-  // Chat routing already fails closed on corrupt. Loaded-probes skip the
-  // registry rung rather than inventing an empty guest book.
-  const registry = registryState.kind === "corrupt" ? [] : registryState.entries;
-  // Registry rung: walk candidates in resolve order; a candidate that is
-  // alive but running a DIFFERENT model is stale (rebooted since sign-in)
-  // and is dropped too.
-  for (const candidate of entry.modelFile ? listUpstreams(registry, entry.modelFile) : []) {
-    const probed = await probeLoadedModel(`http://127.0.0.1:${candidate.port}`, fetchImpl);
-    if (probed !== null && isLoadedPath(probed, entry.modelFile)) return probed;
-  }
-  // YAML rung: the adapter's own client.url (trailing /v1 stripped).
-  if (entry.clientUrl) {
-    const probed = await probeLoadedModel(entry.clientUrl.replace(/\/v1\/?$/, ""), fetchImpl);
-    if (probed !== null && isLoadedPath(probed, entry.modelFile)) return probed;
-  }
-  // Env rung: the legacy single-upstream knob.
-  if (envUrl) {
-    const probed = await probeLoadedModel(envUrl, fetchImpl);
-    if (probed !== null && isLoadedPath(probed, entry.modelFile)) return probed;
-  }
-  return null;
 }
 
 export interface MbaServiceHandle {

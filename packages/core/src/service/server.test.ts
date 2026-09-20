@@ -102,6 +102,10 @@ describe("mba service app", () => {
       pairing: { active: boolean; count: number; integrity: string; blocked: boolean; sessions: unknown[] };
       registry: { integrity: string; blocked: boolean; count: number };
       paths: { baseDir: string; tcbPath: string };
+      machineOverlay: { mode: string };
+      models: unknown[];
+      servers: unknown[];
+      watches: { modelId: string | null; watches: unknown[] };
     };
     expect(body.version).toBe(0);
     expect(body.uptimeMs).toBeGreaterThanOrEqual(0);
@@ -115,6 +119,13 @@ describe("mba service app", () => {
     expect(body.registry).toEqual({ blocked: false, count: 0, integrity: "missing" });
     expect(body.paths.baseDir).toBe(paths.baseDir);
     expect(body.paths.tcbPath).toBe(paths.tcbPath);
+    expect(body).toMatchObject({
+      machineOverlay: { mode: "enforce" },
+      models: [],
+      servers: [],
+      watches: { modelId: null, watches: expect.any(Array) },
+    });
+    expect(body.watches.watches).toHaveLength(3);
   });
 
   it("GET /status reports corrupt session state as blocked", async () => {
