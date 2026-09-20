@@ -7,22 +7,19 @@
 
 import type { ReasoningGate } from "../cm/reasoning.js";
 import { readModelCatalog } from "./model-catalog.js";
-import { resolveRecipe } from "./recipe-resolution.js";
+import { resolveRecipe, type RecipeResolutionContext } from "./recipe-resolution.js";
 
 export function reasoningGateForModel(
   model: string | undefined,
   adapterDir: string | undefined,
+  env: RecipeResolutionContext,
 ): ReasoningGate | undefined {
   if (!model || !adapterDir) return undefined;
   try {
     const catalog = readModelCatalog(adapterDir);
     const hit = catalog.find((entry) => entry.id === model);
     const modelFile = hit?.modelFile ?? model;
-    const recipe = resolveRecipe(modelFile, adapterDir, {
-      harness: "copilot",
-      ide: "vscode",
-      serverRuntime: "llamacpp",
-    });
+    const recipe = resolveRecipe(modelFile, adapterDir, env);
     return {
       reasoningBudget: recipe.flags.reasoningBudget,
       reasoningPreserve: recipe.flags.reasoningPreserve,

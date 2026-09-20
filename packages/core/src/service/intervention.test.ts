@@ -153,6 +153,36 @@ describe("intervene (ADR-0101 Step 2)", () => {
     expect(cont.action).toBe("forward");
   });
 
+  it("uses an explicit harness over the User-Agent fingerprint", () => {
+    const body = JSON.stringify({
+      ...eofBody(),
+      messages: [
+        { role: "system", content: "you are a helpful assistant" },
+        { role: "user", content: "read" },
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "call_h",
+              type: "function",
+              function: {
+                name: "read_file",
+                arguments: JSON.stringify({ filePath: smallFile, startLine: 1, endLine: 500 }),
+              },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_h", content: "a\nb\nc" },
+      ],
+    });
+    const first = intervene(body, "cline", config, db, { harness: "cursor" });
+    expect(first.harness).toBe("cursor");
+    expect(first.action).toBe("forward");
+    const second = intervene(body, "cline", config, db, { harness: "cursor" });
+    expect(second.harness).toBe("cursor");
+    expect(second.action).toBe("kill");
+  });
+
   it("runs sweep-duplicates when ampi is on the nudge rung", () => {
     const ampiConfig: ToolCircuitBreakerConfig = {
       tools: {

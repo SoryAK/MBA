@@ -9,6 +9,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import YAML from "yaml";
 import { defaultToolCircuitBreakerConfig } from "../bcb/default-config.js";
+import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
+import { mergeToolCircuitBreakerConfig } from "../mba/adapter-merge.js";
+import { selectEnvironmentFolder } from "../mba/adapter-loading.js";
+import type { MbaResolutionContext } from "../mba/types.js";
 import { findModelFiles } from "./model-config.js";
 
 export type WatchId = "clamp" | "eof" | "loop";
@@ -174,6 +178,70 @@ export function readModelWatches(adapterDir: string, modelId: string): ModelWatc
     tcbPath,
     watches: rowsToWatches(modelRows, familyRows),
   };
+}
+
+export interface WatchOverlayEnv {
+  readonly harness: string;
+  readonly ide?: string;
+  readonly serverRuntime?: string;
+}
+
+function mergeTcbFile(
+  base: ToolCircuitBreakerConfig,
+  path: string,
+): ToolCircuitBreakerConfig {
+  if (!existsSync(path)) return base;
+  let next = base;
+  for (const row of readJsonlRows(path)) {
+    const rule = typeof row.rule === "string" ? row.rule : undefined;
+    if (!rule) continue;
+    const overlay: Record<string, unknown> = { ...row };
+    delete overlay.tool;
+    delete overlay.rule;
+    next = mergeToolCircuitBreakerConfig(next, {
+      tools: { [row.tool as string]: { [rule]: overlay } },
+    } as ToolCircuitBreakerConfig);
+  }
+  return next;
+}
+
+function envTcbPath(scopeDir: string, env: WatchOverlayEnv, modelId: string): string | undefined {
+  const ctx: MbaResolutionContext = {
+    modelName: modelId,
+    harness: env.harness,
+    ide: env.ide,
+    serverRuntime: env.serverRuntime,
+  };
+  const folder = selectEnvironmentFolder(scopeDir, ctx);
+  if (!folder) return undefined;
+  return join(folder, "tcb.jsonl");
+}
+
+/**
+ * Live TCB for one model: HQ global, then family / model `tcb.jsonl`,
+ * then matching `environments/` overlays. Empty `{}` is inherit.
+ */
+export function overlayTcbForModel(
+  base: ToolCircuitBreakerConfig,
+  adapterDir: string,
+  modelId: string,
+  env?: WatchOverlayEnv,
+): ToolCircuitBreakerConfig {
+  const files = findModelFiles(adapterDir, modelId);
+  if (!files) return base;
+  const modelDir = dirname(files.yamlPath);
+  const familyDir = dirname(modelDir);
+  let next = mergeTcbFile(base, familyTcbPath(files.yamlPath));
+  if (env) {
+    const familyEnv = envTcbPath(familyDir, env, modelId);
+    if (familyEnv) next = mergeTcbFile(next, familyEnv);
+  }
+  next = mergeTcbFile(next, tcbPathForYaml(files.yamlPath));
+  if (env) {
+    const modelEnv = envTcbPath(modelDir, env, modelId);
+    if (modelEnv) next = mergeTcbFile(next, modelEnv);
+  }
+  return next;
 }
 
 function atomicWriteText(path: string, text: string): void {

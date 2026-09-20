@@ -55,8 +55,8 @@ import { probeEntryHealth, getServerTypeOps } from "./server-types.js";
 import { intervene } from "./intervention.js";
 import { appendHistoryFromChatRequest } from "./model-history.js";
 import type { ToolCircuitBreakerConfig } from "../bcb/types.js";
-import type { ReasoningGate } from "../cm/reasoning.js";
 import { daemonLog } from "../mba/daemon-log.js";
+import { resolveChatPolicy } from "./request-policy.js";
 import { authorizeChat, readSessions } from "./sessions.js";
 
 export interface ModelProxyOptions {
@@ -80,9 +80,10 @@ export interface ModelProxyOptions {
    */
   readonly sessionsPath?: string;
   /**
-   * TCB config getter (ADR-0101 Step 2). A getter — not a value — so the
-   * proxy always sees the latest config after a `/set_rules` mutation. When
-   * omitted, intervention is a no-op and the body forwards verbatim.
+   * HQ TCB getter (ADR-0101 Step 2). The proxy overlays the model's house
+   * and paired harness on this seed. A getter — not a value — so a
+   * `/set_rules` mutation is picked up. When omitted, intervention is a
+   * no-op and the body forwards verbatim.
    */
   readonly tcbConfig?: () => ToolCircuitBreakerConfig;
   /**
@@ -95,11 +96,6 @@ export interface ModelProxyOptions {
    * fail the chat.
    */
   readonly historyDb?: DatabaseSync;
-  /**
-   * Reasoning dial for the request's model (ADR-0105). Called only when an
-   * AMPI recipe is about to run. Unknown → compact may still try.
-   */
-  readonly reasoningGate?: (model: string | undefined) => ReasoningGate | undefined;
 }
 
 /** Strip trailing slashes so `${base}/v1/…` never double-slashes. */
@@ -238,17 +234,23 @@ export function createModelProxyRoutes(opts: ModelProxyOptions): Hono {
     let forwardBody = body;
     let eraseSlot = false;
     if (opts.tcbConfig) {
-      const result = intervene(
+      const ua = c.req.header("user-agent") ?? "";
+      const policy = resolveChatPolicy({
+        globalTcb: opts.tcbConfig(),
+        adapterDir: opts.adapterDir,
+        requestModel: model,
+        session: door.session,
+        ua,
         body,
-        c.req.header("user-agent") ?? "",
-        opts.tcbConfig(),
-        opts.bcbDb,
-        { reasoning: () => opts.reasoningGate?.(model) },
-      );
+      });
+      const result = intervene(body, ua, policy.tcb, opts.bcbDb, {
+        reasoning: policy.reasoning,
+        harness: policy.harness,
+      });
       appendHistoryFromChatRequest(opts.historyDb, {
-        modelId: model,
+        modelId: policy.modelId ?? model,
         body,
-        ua: c.req.header("user-agent") ?? "",
+        ua,
         trips: result.trips,
         harness: result.harness,
         lastTier: result.lastTier,

@@ -33,9 +33,12 @@ export function formatEofOverflowMessage(
 export function runEofOverflow(
   messages: readonly ChatMessage[],
   calls: readonly ToolCall[],
-  _ruleSet: ToolRuleSet,
+  ruleSet: ToolRuleSet,
   ctx: ToolCircuitBreakerContext,
 ): ToolCircuitBreakerResult {
+  if (!ruleSet.eofOverflow?.enabled) {
+    return { messages, tripped: false, trips: [], clamps: [], hints: [] };
+  }
   const reads = calls.filter((c): c is ToolCall & { read: NonNullable<ToolCall["read"]> } => c.read != null);
   if (reads.length === 0) return { messages, tripped: false, trips: [], clamps: [], hints: [] };
 

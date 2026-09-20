@@ -2,8 +2,10 @@ import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { defaultToolCircuitBreakerConfig } from "../bcb/default-config.js";
 import {
   defaultWatches,
+  overlayTcbForModel,
   parseWatchId,
   parseWatchMode,
   readModelWatches,
@@ -112,5 +114,55 @@ describe("defaultWatches", () => {
   it("is inherit and on for the three known watches", () => {
     expect(defaultWatches().modelId).toBeNull();
     expect(defaultWatches().watches.every((w) => w.mode === "inherit" && w.effective)).toBe(true);
+  });
+});
+
+describe("overlayTcbForModel", () => {
+  const seed = defaultToolCircuitBreakerConfig();
+
+  it("treats empty house as inherit of the live global", () => {
+    const dir = writeModel(mkdtempSync(join(tmpdir(), "mba-watch-")));
+    const globalOff = {
+      tools: {
+        read_file: {
+          ...seed.tools.read_file,
+          eofOverflow: { ...seed.tools.read_file?.eofOverflow, enabled: false },
+        },
+      },
+    };
+    const got = overlayTcbForModel(globalOff, dir, "qwen");
+    expect(got.tools.read_file?.eofOverflow?.enabled).toBe(false);
+    expect(got.tools.read_file?.repeatRun?.enabled).toBe(true);
+  });
+
+  it("applies a model off line over the live global", () => {
+    const dir = writeModel(mkdtempSync(join(tmpdir(), "mba-watch-")), {
+      tcb: JSON.stringify({ tool: "read_file", rule: "eofOverflow", enabled: false }) + "\n",
+    });
+    const got = overlayTcbForModel(seed, dir, "qwen");
+    expect(got.tools.read_file?.eofOverflow?.enabled).toBe(false);
+    expect(got.tools.read_file?.repeatRun?.enabled).toBe(true);
+  });
+
+  it("applies a family off line when the model inherits", () => {
+    const dir = writeModel(mkdtempSync(join(tmpdir(), "mba-watch-")), {
+      familyTcb: JSON.stringify({ tool: "read_file", rule: "repeatRun", enabled: false }) + "\n",
+    });
+    const got = overlayTcbForModel(seed, dir, "qwen");
+    expect(got.tools.read_file?.repeatRun?.enabled).toBe(false);
+    expect(got.tools.read_file?.eofOverflow?.enabled).toBe(true);
+  });
+
+  it("applies an environment overlay for the paired harness", () => {
+    const dir = writeModel(mkdtempSync(join(tmpdir(), "mba-watch-")));
+    mkdirSync(join(dir, "qwen", "qwen", "environments", "cursor"), { recursive: true });
+    writeFileSync(
+      join(dir, "qwen", "qwen", "environments", "cursor", "tcb.jsonl"),
+      JSON.stringify({ tool: "read_file", rule: "eofOverflow", enabled: false }) + "\n",
+    );
+    const cursor = overlayTcbForModel(seed, dir, "qwen", { harness: "cursor", ide: "cursor" });
+    const copilot = overlayTcbForModel(seed, dir, "qwen", { harness: "copilot", ide: "vscode" });
+    expect(cursor.tools.read_file?.eofOverflow?.enabled).toBe(false);
+    expect(copilot.tools.read_file?.eofOverflow?.enabled).toBe(true);
   });
 });
