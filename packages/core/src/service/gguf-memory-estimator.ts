@@ -336,12 +336,16 @@ export function estimateRecipeMemory(
 /**
  * Find the largest context size that fits the available RAM/VRAM, keeping all
  * other recipe fields fixed. Uses a simple binary search over the estimator.
+ *
+ * `opts.unified`: fit `totalBytes` against `availableRamBytes` (host RAM).
+ * Discrete GPUs keep the RAM/VRAM split.
  */
 export function findMaxFittingCtxSize(
   recipe: GgufRecipeShape,
   availableRamBytes: number,
   availableVramBytes: number | undefined,
   maxCtxSize?: number,
+  opts?: { readonly unified?: boolean },
 ): number | undefined {
   const upper = maxCtxSize ?? (recipe.ctxSize > 0 ? recipe.ctxSize * 2 : 131072);
   let low = 1;
@@ -353,11 +357,12 @@ export function findMaxFittingCtxSize(
     const estimate = estimateRecipeMemory({ ...recipe, ctxSize: mid });
     if (estimate === undefined) return undefined;
 
-    const fitsRam = estimate.ramBytes <= availableRamBytes;
-    const fitsVram =
-      availableVramBytes === undefined || estimate.vramBytes <= availableVramBytes;
+    const fits = opts?.unified
+      ? estimate.totalBytes <= availableRamBytes
+      : estimate.ramBytes <= availableRamBytes &&
+        (availableVramBytes === undefined || estimate.vramBytes <= availableVramBytes);
 
-    if (fitsRam && fitsVram) {
+    if (fits) {
       best = mid;
       low = mid + 1;
     } else {

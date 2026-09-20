@@ -8,6 +8,7 @@ import {
 } from "../service/gguf-memory-estimator.js";
 import { defaultStorePaths, type MbaStorePaths } from "../service/config-store.js";
 import { readMachineInfo } from "../service/machine-store.js";
+import { gpuMemoryKind } from "../service/machine-overlay.js";
 
 interface EstimateMemoryOptions {
   readonly modelPath: string;
@@ -87,25 +88,30 @@ export function runEstimateMemory(opts: EstimateMemoryOptions): EstimateMemoryRe
   if (profile !== undefined) {
       const RAM_HEADROOM = 0.85;
       const VRAM_HEADROOM = 0.9;
+      const kind = gpuMemoryKind(profile);
+      const unified = kind === "unified";
       const availableRamBytes = Math.floor(profile.totalRamBytes * RAM_HEADROOM);
       const gpuWithVram =
-        profile.gpus && profile.gpus.length > 0
-          ? profile.gpus.find((g) => g.vramBytes !== undefined && g.vramBytes > 0)
+        kind === "discrete"
+          ? profile.gpus?.find((g) => g.vramBytes !== undefined && g.vramBytes > 0)
           : undefined;
       const availableVramBytes =
         gpuWithVram?.vramBytes !== undefined
           ? Math.floor(gpuWithVram.vramBytes * VRAM_HEADROOM)
           : undefined;
-      const fits =
-        estimate.ramBytes <= availableRamBytes &&
-        (availableVramBytes === undefined || estimate.vramBytes <= availableVramBytes);
+      const fits = unified
+        ? estimate.totalBytes <= availableRamBytes
+        : estimate.ramBytes <= availableRamBytes &&
+          (availableVramBytes === undefined || estimate.vramBytes <= availableVramBytes);
       machineFits = {
         availableRamBytes,
         availableVramBytes,
         fits,
         maxCtxSize: fits
           ? undefined
-          : findMaxFittingCtxSize(recipe, availableRamBytes, availableVramBytes, recipe.ctxSize),
+          : findMaxFittingCtxSize(recipe, availableRamBytes, availableVramBytes, recipe.ctxSize, {
+              unified,
+            }),
       };
     }
 

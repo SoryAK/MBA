@@ -295,4 +295,25 @@ describe("findMaxFittingCtxSize", () => {
     const bad = join(dir, "missing.gguf");
     expect(findMaxFittingCtxSize(recipe(bad), 1e9, undefined)).toBeUndefined();
   });
+
+  it("on unified memory fits totalBytes against RAM, not the RAM/VRAM split", () => {
+    const path = createMinimalGgufFile(dir, {
+      blockCount: 8,
+      hiddenSize: 512,
+      headCount: 8,
+      headCountKv: 2,
+      fileSizeBytes: 100 * 1024 * 1024,
+    });
+    const shape = recipe(path, { ctxSize: 65536, gpuLayers: 8 });
+    const budget = 500 * 1024 * 1024;
+    const split = findMaxFittingCtxSize(shape, budget, undefined, 65536);
+    const unified = findMaxFittingCtxSize(shape, budget, undefined, 65536, { unified: true });
+    expect(unified).toBeDefined();
+    expect(unified).toBeLessThan(65536);
+    expect(estimateRecipeMemory({ ...shape, ctxSize: unified! })!.totalBytes).toBeLessThanOrEqual(
+      budget,
+    );
+    // Offloaded weights look like VRAM, so the RAM-only split check is too loose.
+    expect(split).toBeGreaterThan(unified!);
+  });
 });

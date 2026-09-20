@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   countPhysicalCores,
   detectMachineInfo,
@@ -11,6 +14,7 @@ import {
   parseSystemProfiler,
   parseVramString,
   parseWindowsVideoControllers,
+  readAmdgpuUmaVramBytes,
   resolveMachineInfo,
 } from "./machine-info.js";
 
@@ -249,6 +253,35 @@ describe("machineInfoFromEnv", () => {
 
   it("returns undefined when the env var is absent", () => {
     expect(machineInfoFromEnv({})).toBeUndefined();
+  });
+});
+
+describe("readAmdgpuUmaVramBytes", () => {
+  it("returns the carve-out when exactly one AMD drm card has VRAM", () => {
+    const root = mkdtempSync(join(tmpdir(), "mba-drm-"));
+    const card = join(root, "card5", "device");
+    mkdirSync(card, { recursive: true });
+    writeFileSync(join(card, "vendor"), "0x1002\n");
+    writeFileSync(join(card, "mem_info_vram_total"), "68719476736\n");
+    expect(readAmdgpuUmaVramBytes(root)).toBe(68719476736);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("ignores non-AMD cards and returns undefined when two AMD VRAM files exist", () => {
+    const root = mkdtempSync(join(tmpdir(), "mba-drm-"));
+    const evdi = join(root, "card1", "device");
+    mkdirSync(evdi, { recursive: true });
+    writeFileSync(join(evdi, "vendor"), "0x0000\n");
+    const a = join(root, "card5", "device");
+    mkdirSync(a, { recursive: true });
+    writeFileSync(join(a, "vendor"), "0x1002\n");
+    writeFileSync(join(a, "mem_info_vram_total"), "1000\n");
+    const b = join(root, "card6", "device");
+    mkdirSync(b, { recursive: true });
+    writeFileSync(join(b, "vendor"), "0x1002\n");
+    writeFileSync(join(b, "mem_info_vram_total"), "2000\n");
+    expect(readAmdgpuUmaVramBytes(root)).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
   });
 });
 

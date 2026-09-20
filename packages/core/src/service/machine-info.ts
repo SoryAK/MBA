@@ -11,12 +11,24 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { cpus, machine, totalmem } from "node:os";
 
 export interface GpuInfo {
   readonly name?: string;
+  /**
+   * VRAM figure when the detector has one. **discrete** (`nvidia-smi`) is a
+   * second pool. **uma** is an APU BIOS carve-out of host DRAM (Linux
+   * `mem_info_vram_total`) — same silicon as `totalRamBytes`, not extra.
+   */
   readonly vramBytes?: number;
+  /**
+   * How `vramBytes` was obtained. Missing + `vramBytes` set is discrete
+   * (`nvidia-smi` / older profiles). `uma` is an APU BIOS carve-out: overlay
+   * keeps layers and still budgets against host RAM, not this figure.
+   */
+  readonly vramSource?: "discrete" | "uma";
 }
 
 export interface CpuInfo {
@@ -180,7 +192,7 @@ function detectGpus(): readonly GpuInfo[] | undefined {
 
 function detectLinuxGpus(): readonly GpuInfo[] | undefined {
   // Prefer nvidia-smi because it gives accurate VRAM. If it is not present,
-  // fall back to lspci for names without VRAM.
+  // fall back to lspci for names, then amdgpu sysfs for a UMA carve-out.
   const nvidia = detectNvidiaSmi();
   if (nvidia !== undefined && nvidia.length > 0) {
     return nvidia;
@@ -289,10 +301,51 @@ function detectLspciGpus(): readonly GpuInfo[] | undefined {
       timeout: 5000,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return parseLspciGpus(output);
+    const gpus = parseLspciGpus(output);
+    if (gpus === undefined) return undefined;
+    const umaVram = readAmdgpuUmaVramBytes();
+    if (umaVram === undefined || gpus.length !== 1) return gpus;
+    const only = gpus[0];
+    if (only === undefined) return gpus;
+    return [{ ...only, vramBytes: umaVram, vramSource: "uma" }];
   } catch {
     return undefined;
   }
+}
+
+const AMD_PCI_VENDOR = "0x1002";
+
+/**
+ * Linux APU carve-out from amdgpu sysfs. One AMD card only — iGPU+dGPU is
+ * left name-only so overlay does not guess. GTT is not included (it overlaps
+ * `totalRamBytes`). Exported for tests.
+ */
+export function readAmdgpuUmaVramBytes(drmRoot = "/sys/class/drm"): number | undefined {
+  if (!existsSync(drmRoot)) return undefined;
+  const found: number[] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(drmRoot);
+  } catch {
+    return undefined;
+  }
+  for (const ent of names) {
+    if (!/^card\d+$/.test(ent)) continue;
+    const vendorPath = join(drmRoot, ent, "device", "vendor");
+    const vramPath = join(drmRoot, ent, "device", "mem_info_vram_total");
+    if (!existsSync(vendorPath) || !existsSync(vramPath)) continue;
+    let vendor: string;
+    try {
+      vendor = readFileSync(vendorPath, "utf8").trim().toLowerCase();
+    } catch {
+      continue;
+    }
+    if (vendor !== AMD_PCI_VENDOR) continue;
+    const n = Number(readFileSync(vramPath, "utf8").trim());
+    if (!Number.isFinite(n) || n <= 0) continue;
+    found.push(n);
+  }
+  return found.length === 1 ? found[0] : undefined;
 }
 
 function detectMacGpus(): readonly GpuInfo[] | undefined {
