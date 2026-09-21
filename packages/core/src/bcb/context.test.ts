@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildBcbContext } from "./context.js";
+import { buildBcbContext, countFileLines } from "./context.js";
 import type { ToolCircuitBreakerConfig } from "./types.js";
 import type { ChatMessage } from "../chat-message.js";
 
@@ -81,5 +81,23 @@ describe("buildBcbContext", () => {
   it("reads each file only once across duplicate calls", () => {
     const { ctx } = buildBcbContext([readCall(file3), readCall(file3)], config);
     expect(ctx.lineCounts[file3]).toBe(3);
+  });
+
+  it("counts an empty file as one element (split-on-newline)", () => {
+    const empty = join(dir, "empty.txt");
+    writeFileSync(empty, "");
+    const { ctx } = buildBcbContext([readCall(empty)], config);
+    expect(ctx.lineCounts[empty]).toBe(1);
+  });
+});
+
+describe("countFileLines", () => {
+  it("matches split-on-newline for a many-line file without loading it as one string", () => {
+    const path = join(dir, "many.txt");
+    const lines = 20_000;
+    writeFileSync(path, `${"x\n".repeat(lines)}`);
+    // "x\n" repeated N times is N newlines → split length N+1
+    expect(countFileLines(path)).toBe(lines + 1);
+    expect(buildBcbContext([readCall(path)], config).ctx.lineCounts[path]).toBe(lines + 1);
   });
 });
