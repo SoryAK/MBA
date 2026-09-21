@@ -5,10 +5,11 @@
  * current dial values, and validated single-field writes (atomic, with
  * before/after reporting and the restartRequired flag).
  */
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { writeMinimalGguf } from "../test-support/minimal-gguf.js";
 import {
   findModelFiles,
   notesPreview,
@@ -67,68 +68,11 @@ function writeFixture(root: string): void {
   );
 }
 
-function writeString(buf: Buffer, offset: number, value: string): number {
-  const bytes = Buffer.from(value, "utf8");
-  buf.writeBigUInt64LE(BigInt(bytes.length), offset);
-  bytes.copy(buf, offset + 8);
-  return 8 + bytes.length;
-}
-
-function writeUint32(buf: Buffer, offset: number, value: number): number {
-  buf.writeUInt32LE(value, offset);
-  return 4;
-}
-
-function writeUint64(buf: Buffer, offset: number, value: bigint): number {
-  buf.writeBigUInt64LE(value, offset);
-  return 8;
-}
-
-function writeKvUint32(buf: Buffer, offset: number, key: string, value: number): number {
-  let written = 0;
-  written += writeString(buf, offset + written, key);
-  buf.writeUInt32LE(4, offset + written); // GGUF value type uint32
-  written += 4;
-  written += writeUint32(buf, offset + written, value);
-  return written;
-}
-
-function createMinimalGgufFile(path: string, opts: { blockCount: number; hiddenSize: number; headCount: number; headCountKv: number; fileSizeBytes?: number }): void {
-  const metadata: { key: string; value: number | string; type: "uint32" | "string" }[] = [
-    { key: "general.architecture", value: "llama", type: "string" },
-    { key: "llama.block_count", value: opts.blockCount, type: "uint32" },
-    { key: "llama.embedding_length", value: opts.hiddenSize, type: "uint32" },
-    { key: "llama.attention.head_count", value: opts.headCount, type: "uint32" },
-    { key: "llama.attention.head_count_kv", value: opts.headCountKv, type: "uint32" },
-  ];
-  const buf = Buffer.alloc(4096);
-  let offset = 0;
-  buf.write("GGUF", offset, 4, "ascii");
-  offset += 4;
-  offset += writeUint32(buf, offset, 3);
-  offset += writeUint64(buf, offset, 0n);
-  offset += writeUint64(buf, offset, BigInt(metadata.length));
-  for (const entry of metadata) {
-    offset += writeString(buf, offset, entry.key);
-    buf.writeUInt32LE(entry.type === "uint32" ? 4 : 8, offset);
-    offset += 4;
-    if (entry.type === "uint32") {
-      offset += writeUint32(buf, offset, entry.value as number);
-    } else {
-      offset += writeString(buf, offset, entry.value as string);
-    }
-  }
-  const fileSize = opts.fileSizeBytes ?? 1 * 1024 * 1024;
-  const final = Buffer.alloc(fileSize);
-  buf.copy(final, 0, 0, offset);
-  writeFileSync(path, final);
-}
-
 function writeMachineHintFixture(root: string): void {
   const modelDir = join(root, "tiny", "tiny-model");
   mkdirSync(modelDir, { recursive: true });
   const modelPath = join(modelDir, "tiny.gguf");
-  createMinimalGgufFile(modelPath, {
+  writeMinimalGguf(modelPath, {
     blockCount: 8,
     hiddenSize: 512,
     headCount: 8,
@@ -166,6 +110,10 @@ describe("findModelFiles", () => {
     writeFixture(root);
   });
 
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("locates the yaml, server_setup.json (via binding), and env overrides", () => {
     const files = findModelFiles(root, "qwen3.8-27b");
     expect(files).not.toBeNull();
@@ -191,6 +139,10 @@ describe("readModelDials", () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "mba-model-config-"));
     writeFixture(root);
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("reads current values for server_setup and client fields", () => {
@@ -312,8 +264,14 @@ function writeShelfTree(adapterDir: string, opts?: { emptyNotes?: boolean; model
 }
 
 describe("readModelShelf", () => {
+  let root: string;
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("returns the model notes when the model file exists", () => {
-    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
     const adapterDir = join(root, "mba", "adapters");
     writeShelfTree(adapterDir);
     const shelf = readModelShelf(adapterDir, "qwen3-coder-30b");
@@ -328,7 +286,7 @@ describe("readModelShelf", () => {
   });
 
   it("marks an empty stub empty", () => {
-    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
     const adapterDir = join(root, "mba", "adapters");
     writeShelfTree(adapterDir, { emptyNotes: true });
     const shelf = readModelShelf(adapterDir, "qwen3-coder-30b");
@@ -338,7 +296,7 @@ describe("readModelShelf", () => {
   });
 
   it("inherits family notes when the model yaml omits the binding", () => {
-    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
     const adapterDir = join(root, "mba", "adapters");
     writeShelfTree(adapterDir, { modelNotes: false });
     const shelf = readModelShelf(adapterDir, "qwen3-coder-30b");
@@ -348,7 +306,7 @@ describe("readModelShelf", () => {
   });
 
   it("returns null for an unknown model", () => {
-    const root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
+    root = mkdtempSync(join(tmpdir(), "mba-shelf-"));
     const adapterDir = join(root, "mba", "adapters");
     writeShelfTree(adapterDir);
     expect(readModelShelf(adapterDir, "nope")).toBeNull();
@@ -361,6 +319,10 @@ describe("readModelDials machine hints", () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "mba-model-config-"));
     writeFixture(root);
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("includes machine-aware hints when machine info is provided", () => {
@@ -437,6 +399,10 @@ describe("setModelDial", () => {
     root = mkdtempSync(join(tmpdir(), "mba-model-config-"));
     writeFixture(root);
     modelDir = join(root, "qwen", "qwen3.8-27b");
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("writes a server_setup field atomically and reports before/after", () => {

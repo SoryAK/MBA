@@ -49,3 +49,6 @@ docs/backlog/
 .cursor/
 .cursorignore
 .cursorindexingignore
+
+# Isolated HOME used by local vitest runs
+.vitest-home/
