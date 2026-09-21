@@ -2,11 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  estimateRecipeMemory,
-  findMaxFittingCtxSize,
-  type GgufRecipeShape,
-} from "./gguf-memory-estimator.js";
+import { estimateRecipeMemory, findMaxFittingCtxSize, type GgufRecipeShape } from "./gguf-memory-estimator.js";
+import { writeMinimalGguf } from "../test-support/minimal-gguf.js";
 
 function writeString(buf: Buffer, offset: number, value: string): number {
   const bytes = Buffer.from(value, "utf8");
@@ -54,44 +51,8 @@ interface MinimalGgufOptions {
 }
 
 function createMinimalGgufFile(dir: string, opts: MinimalGgufOptions): string {
-  const metadata: { key: string; type: "uint32" | "string"; value: string | number }[] = [
-    { key: "general.architecture", type: "string", value: "llama" },
-    { key: "llama.block_count", type: "uint32", value: opts.blockCount },
-    { key: "llama.embedding_length", type: "uint32", value: opts.hiddenSize },
-    { key: "llama.attention.head_count", type: "uint32", value: opts.headCount },
-    { key: "llama.attention.head_count_kv", type: "uint32", value: opts.headCountKv },
-    ...(opts.vocabSize !== undefined ? [{ key: "llama.vocab_size", type: "uint32" as const, value: opts.vocabSize }] : []),
-    ...(opts.ffnDim !== undefined ? [{ key: "llama.feed_forward_length", type: "uint32" as const, value: opts.ffnDim }] : []),
-  ];
-
-  // Allocate generously.
-  const buf = Buffer.alloc(4096);
-  let offset = 0;
-
-  // Magic.
-  buf.write("GGUF", offset, 4, "ascii");
-  offset += 4;
-  // Version.
-  offset += writeUint32(buf, offset, 3);
-  // Tensor count.
-  offset += writeUint64(buf, offset, 0n);
-  // KV count.
-  offset += writeUint64(buf, offset, BigInt(metadata.length));
-
-  for (const entry of metadata) {
-    if (entry.type === "uint32") {
-      offset += writeKvUint32(buf, offset, entry.key, entry.value as number);
-    } else {
-      offset += writeKvString(buf, offset, entry.key, entry.value as string);
-    }
-  }
-
-  const fileSize = opts.fileSizeBytes ?? 1024 * 1024 * 1024; // 1 GB default dummy weight file.
-  // Pad the file to the requested size so statSync returns the expected size.
   const path = join(dir, "model.gguf");
-  const final = Buffer.alloc(fileSize);
-  buf.copy(final, 0, 0, offset);
-  writeFileSync(path, final);
+  writeMinimalGguf(path, opts);
   return path;
 }
 

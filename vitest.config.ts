@@ -6,5 +6,6 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     projects: ["packages/*"],
+    globalSetup: "./packages/core/src/test-support/cleanup-tmp.ts",
   },
 });

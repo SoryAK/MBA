@@ -6,15 +6,16 @@
  * status code, and report `modelLoaded` (probed from the upstream) so the
  * caller can decide about a restart. The route never restarts anything.
  */
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMbaServiceApp } from "./server.js";
 import { defaultStorePaths } from "./config-store.js";
 import { writeRegistry } from "./upstream-registry.js";
-import { machineInfoPath, writeMachineInfo } from "./machine-store.js";
+import { writeMachineInfo } from "./machine-store.js";
 import type { MachineInfo } from "./machine-info.js";
+import { writeMinimalGguf } from "../test-support/minimal-gguf.js";
 
 function writeConfigFixture(dir: string): void {
   const modelDir = join(dir, "qwen", "qwen3.8-27b");
@@ -72,68 +73,11 @@ function fixtureModelFile(adapterDir: string): string {
   return join(adapterDir, "qwen", "qwen3.8-27b", "Qwen3.8-27B-Q6_K.gguf");
 }
 
-function writeString(buf: Buffer, offset: number, value: string): number {
-  const bytes = Buffer.from(value, "utf8");
-  buf.writeBigUInt64LE(BigInt(bytes.length), offset);
-  bytes.copy(buf, offset + 8);
-  return 8 + bytes.length;
-}
-
-function writeUint32(buf: Buffer, offset: number, value: number): number {
-  buf.writeUInt32LE(value, offset);
-  return 4;
-}
-
-function writeUint64(buf: Buffer, offset: number, value: bigint): number {
-  buf.writeBigUInt64LE(value, offset);
-  return 8;
-}
-
-function writeKvUint32(buf: Buffer, offset: number, key: string, value: number): number {
-  let written = 0;
-  written += writeString(buf, offset + written, key);
-  buf.writeUInt32LE(4, offset + written); // GGUF value type uint32
-  written += 4;
-  written += writeUint32(buf, offset + written, value);
-  return written;
-}
-
-function createMinimalGgufFile(path: string, opts: { blockCount: number; hiddenSize: number; headCount: number; headCountKv: number; fileSizeBytes?: number }): void {
-  const metadata: { key: string; value: number | string; type: "uint32" | "string" }[] = [
-    { key: "general.architecture", value: "llama", type: "string" },
-    { key: "llama.block_count", value: opts.blockCount, type: "uint32" },
-    { key: "llama.embedding_length", value: opts.hiddenSize, type: "uint32" },
-    { key: "llama.attention.head_count", value: opts.headCount, type: "uint32" },
-    { key: "llama.attention.head_count_kv", value: opts.headCountKv, type: "uint32" },
-  ];
-  const buf = Buffer.alloc(4096);
-  let offset = 0;
-  buf.write("GGUF", offset, 4, "ascii");
-  offset += 4;
-  offset += writeUint32(buf, offset, 3);
-  offset += writeUint64(buf, offset, 0n);
-  offset += writeUint64(buf, offset, BigInt(metadata.length));
-  for (const entry of metadata) {
-    offset += writeString(buf, offset, entry.key);
-    buf.writeUInt32LE(entry.type === "uint32" ? 4 : 8, offset);
-    offset += 4;
-    if (entry.type === "uint32") {
-      offset += writeUint32(buf, offset, entry.value as number);
-    } else {
-      offset += writeString(buf, offset, entry.value as string);
-    }
-  }
-  const fileSize = opts.fileSizeBytes ?? 1 * 1024 * 1024;
-  const final = Buffer.alloc(fileSize);
-  buf.copy(final, 0, 0, offset);
-  writeFileSync(path, final);
-}
-
 function writeMachineHintFixture(adapterDir: string): string {
   const modelDir = join(adapterDir, "tiny", "tiny-model");
   mkdirSync(modelDir, { recursive: true });
   const modelPath = join(modelDir, "tiny.gguf");
-  createMinimalGgufFile(modelPath, {
+  writeMinimalGguf(modelPath, {
     blockCount: 8,
     hiddenSize: 512,
     headCount: 8,
@@ -183,6 +127,11 @@ describe("POST /models/config (ADR-0096)", () => {
     paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-svc-mcfg-")));
     adapterDir = mkdtempSync(join(tmpdir(), "mba-svc-mcfg-adapters-"));
     writeConfigFixture(adapterDir);
+  });
+
+  afterEach(() => {
+    rmSync(paths.baseDir, { recursive: true, force: true });
+    rmSync(adapterDir, { recursive: true, force: true });
   });
 
   it("writes a server_setup dial and reports before/after + restartRequired", async () => {
@@ -367,11 +316,19 @@ describe("POST /models/config (ADR-0096)", () => {
 describe("GET /models/config (ADR-0096)", () => {
   let paths: ReturnType<typeof defaultStorePaths>;
   let adapterDir: string;
+  let extraRoot: string | undefined;
 
   beforeEach(() => {
     paths = defaultStorePaths(mkdtempSync(join(tmpdir(), "mba-svc-mcfg-get-")));
     adapterDir = mkdtempSync(join(tmpdir(), "mba-svc-mcfg-get-adapters-"));
     writeConfigFixture(adapterDir);
+    extraRoot = undefined;
+  });
+
+  afterEach(() => {
+    rmSync(paths.baseDir, { recursive: true, force: true });
+    rmSync(adapterDir, { recursive: true, force: true });
+    if (extraRoot) rmSync(extraRoot, { recursive: true, force: true });
   });
 
   it("returns every known dial with its current value", async () => {
@@ -450,8 +407,10 @@ describe("GET /models/config (ADR-0096)", () => {
   });
 
   it("returns winning notes and instructions from the resolver", async () => {
-    const root = mkdtempSync(join(tmpdir(), "mba-svc-mcfg-shelf-"));
-    adapterDir = join(root, "mba", "adapters");
+    rmSync(paths.baseDir, { recursive: true, force: true });
+    rmSync(adapterDir, { recursive: true, force: true });
+    extraRoot = mkdtempSync(join(tmpdir(), "mba-svc-mcfg-shelf-"));
+    adapterDir = join(extraRoot, "mba", "adapters");
     mkdirSync(adapterDir, { recursive: true });
     const familyDir = join(adapterDir, "qwen3-coder");
     const modelDir = join(familyDir, "qwen3-coder-30b");
@@ -497,7 +456,7 @@ describe("GET /models/config (ADR-0096)", () => {
     writeFileSync(join(modelDir, "m.gguf"), "gguf");
     writeFileSync(join(modelDir, "notes.md"), "Prefers grep before glob.\n");
     writeFileSync(join(modelDir, "instructions.md"), "# model playbook\n");
-    paths = defaultStorePaths(join(root, "state"));
+    paths = defaultStorePaths(join(extraRoot, "state"));
     const app = createMbaServiceApp({ paths, adapterDir });
     const res = await app.request("/models/config?id=qwen3-coder-30b");
     expect(res.status).toBe(200);

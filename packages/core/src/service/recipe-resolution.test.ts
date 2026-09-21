@@ -4,23 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveRecipe } from "./recipe-resolution.js";
 import type { MachineInfo } from "./machine-info.js";
-
-function writeString(buf: Buffer, offset: number, value: string): number {
-  const bytes = Buffer.from(value, "utf8");
-  buf.writeBigUInt64LE(BigInt(bytes.length), offset);
-  bytes.copy(buf, offset + 8);
-  return 8 + bytes.length;
-}
-
-function writeUint32(buf: Buffer, offset: number, value: number): number {
-  buf.writeUInt32LE(value, offset);
-  return 4;
-}
-
-function writeUint64(buf: Buffer, offset: number, value: bigint): number {
-  buf.writeBigUInt64LE(value, offset);
-  return 8;
-}
+import { writeMinimalGguf } from "../test-support/minimal-gguf.js";
 
 function createMinimalGgufFile(
   dir: string,
@@ -32,35 +16,8 @@ function createMinimalGgufFile(
     fileSizeBytes?: number;
   },
 ): string {
-  const metadata: { key: string; type: "uint32" | "string"; value: string | number }[] = [
-    { key: "general.architecture", type: "string", value: "llama" },
-    { key: "llama.block_count", type: "uint32", value: opts.blockCount },
-    { key: "llama.embedding_length", type: "uint32", value: opts.hiddenSize },
-    { key: "llama.attention.head_count", type: "uint32", value: opts.headCount },
-    { key: "llama.attention.head_count_kv", type: "uint32", value: opts.headCountKv },
-  ];
-  const buf = Buffer.alloc(4096);
-  let offset = 0;
-  buf.write("GGUF", offset, 4, "ascii");
-  offset += 4;
-  offset += writeUint32(buf, offset, 3);
-  offset += writeUint64(buf, offset, 0n);
-  offset += writeUint64(buf, offset, BigInt(metadata.length));
-  for (const entry of metadata) {
-    offset += writeString(buf, offset, entry.key);
-    buf.writeUInt32LE(entry.type === "uint32" ? 4 : 8, offset);
-    offset += 4;
-    if (entry.type === "uint32") {
-      offset += writeUint32(buf, offset, entry.value as number);
-    } else {
-      offset += writeString(buf, offset, entry.value as string);
-    }
-  }
-  const fileSize = opts.fileSizeBytes ?? 1 * 1024 * 1024;
-  const final = Buffer.alloc(fileSize);
-  buf.copy(final, 0, 0, offset);
   const path = join(dir, "model.gguf");
-  writeFileSync(path, final);
+  writeMinimalGguf(path, opts);
   return path;
 }
 
